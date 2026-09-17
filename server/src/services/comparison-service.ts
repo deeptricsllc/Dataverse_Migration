@@ -1,7 +1,7 @@
 import { and, desc, eq, or } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
-import type { ComparisonRunDto, EnvRef, TableDiff } from '../../../shared/domain';
+import type { ComparisonRunDto, TableDiff } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { comparisonRuns, comparisonTableResults, environments, users } from '../db/schema';
 import type { ConnectionFactory } from '../dataverse/factory';
@@ -12,12 +12,7 @@ import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import { defaultComparisonScope, isMigratableTable, type MetadataService } from './metadata-service';
 import { compareSchemas } from './schema-diff';
-
-const envRef = (e: { id: string; displayName: string; url: string }): EnvRef => ({
-  id: e.id,
-  displayName: e.displayName,
-  url: e.url,
-});
+import { envRef } from './env-ref';
 
 export class ComparisonService {
   constructor(

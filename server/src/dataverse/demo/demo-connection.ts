@@ -199,6 +199,34 @@ export class DemoConnection implements DataverseConnection {
     return rows.find((r) => r.recordId !== excludeId)?.data ?? null;
   }
 
+  async findByFields(
+    tableMeta: TableMetadata,
+    criteria: Record<string, FieldValue>,
+    columns: string[],
+    limit: number,
+  ): Promise<DvRecord[]> {
+    await this.simulate();
+    const t = this.table(tableMeta.logicalName);
+    const conditions = Object.entries(criteria).map(([field, value]) => {
+      const scalar = isLookupValue(value) ? value.id : value === null ? null : String(value);
+      return scalar === null
+        ? sql`coalesce(${demoRecords.data}->${field}->>'id', ${demoRecords.data}->>${field}) is null`
+        : sql`coalesce(${demoRecords.data}->${field}->>'id', ${demoRecords.data}->>${field}) = ${scalar}`;
+    });
+    const rows = await this.db
+      .select()
+      .from(demoRecords)
+      .where(
+        and(
+          eq(demoRecords.environmentKey, this.env.key),
+          eq(demoRecords.logicalName, t.logicalName),
+          ...(conditions as never[]),
+        ),
+      )
+      .limit(Math.max(1, Math.min(limit, 50)));
+    return rows.map((r) => this.project(t, r.data, columns));
+  }
+
   // ---------------------------------------------------------------------------
   // Writes (validated like Dataverse)
   // ---------------------------------------------------------------------------

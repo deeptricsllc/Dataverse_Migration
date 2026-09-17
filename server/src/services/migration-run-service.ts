@@ -22,28 +22,53 @@ import {
   users,
   validationRuns,
 } from '../db/schema';
+import type { AppConfig } from '../config';
 import type { JobQueue } from '../jobs/queue';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
+import type { EnvironmentService } from './environment-service';
 import type { PlanningService } from './planning-service';
 import type { RunPlanSnapshot } from './run-snapshot';
+import { envRef } from './env-ref';
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({
-  id: e.id,
-  displayName: e.displayName,
-  url: e.url,
-});
 const ACTIVE = ['QUEUED', 'RUNNING', 'PAUSED'];
 
 export class MigrationRunService {
   constructor(
     private readonly db: AppDb,
+    private readonly config: AppConfig,
     private readonly planning: PlanningService,
+    private readonly environmentsSvc: EnvironmentService,
     private readonly queue: JobQueue,
     private readonly audit: AuditService,
     private readonly logger: Logger,
   ) {}
+
+  /**
+   * Refuses anything that would write to a real Dataverse environment while the deployment is
+   * in read-only certification mode. The Dataverse client refuses too; this gives the user a
+   * clear error before a run is even queued.
+   */
+  private async assertWritesAllowed(ctx: RequestContext, targetEnvironmentId: string, action: string) {
+    if (!this.config.REAL_TENANT_READ_ONLY) return;
+    const target = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
+    if (target.provider !== 'dataverse') return;
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'READ_ONLY_WRITE_BLOCKED',
+      outcome: 'FAILURE',
+      targetEnvironmentId,
+      requestId: ctx.requestId,
+      details: { action },
+    });
+    throw new AppError(
+      403,
+      'REAL_TENANT_READ_ONLY',
+      'REAL_TENANT_READ_ONLY is enabled. Dataverse write operations are disabled for this deployment.',
+    );
+  }
 
   async start(
     ctx: RequestContext,
@@ -70,6 +95,7 @@ export class MigrationRunService {
     if (plan.warningCount > 0 && !input.acknowledgeWarnings) {
       throw badRequest(`Acknowledge the ${plan.warningCount} warning(s) before executing`);
     }
+    await this.assertWritesAllowed(ctx, plan.targetEnvironment.id, 'EXECUTE');
     const [active] = await this.db
       .select({ id: migrationRuns.id })
       .from(migrationRuns)
@@ -85,27 +111,88 @@ export class MigrationRunService {
         runId: active.id,
       });
 
+    const snapshot = await this.buildSnapshot(planId);
+    const [run] = await this.db
+      .insert(migrationRuns)
+      .values({
+        organizationId: ctx.organizationId,
+        planId,
+        sourceEnvironmentId: plan.sourceEnvironment.id,
+        targetEnvironmentId: plan.targetEnvironment.id,
+        status: 'QUEUED',
+        options: plan.options,
+        planSnapshot: snapshot,
+        executedByUserId: ctx.userId,
+      })
+      .returning();
+    const planEntities = await this.db
+      .select({
+        logicalName: migrationPlanEntities.logicalName,
+        sourceCount: migrationPlanEntities.sourceCount,
+      })
+      .from(migrationPlanEntities)
+      .where(eq(migrationPlanEntities.planId, planId));
+    const sourceCounts = new Map(planEntities.map((e) => [e.logicalName, e.sourceCount ?? 0]));
+    await this.db.insert(migrationRunEntities).values(
+      snapshot.entities.map((e) => ({
+        runId: run.id,
+        logicalName: e.logicalName,
+        displayName: e.displayName,
+        orderIndex: e.orderIndex,
+        total: sourceCounts.get(e.logicalName) ?? 0,
+      })),
+    );
+    await this.queue.enqueue('MIGRATION', ctx.organizationId, run.id);
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'MIGRATION_EXECUTION_REQUESTED',
+      outcome: 'REQUESTED',
+      sourceEnvironmentId: plan.sourceEnvironment.id,
+      targetEnvironmentId: plan.targetEnvironment.id,
+      runId: run.id,
+      requestId: ctx.requestId,
+      details: {
+        planId,
+        tables: snapshot.entities.map((e) => e.logicalName),
+        conflictStrategy: plan.options.conflictStrategy,
+        bypassCustomBusinessLogic: plan.options.bypassCustomBusinessLogic,
+        acknowledgedWarnings: plan.warningCount,
+      },
+    });
+    this.logger.info({ migrationRunId: run.id, planId, requestId: ctx.requestId }, 'Migration run queued');
+    return this.get(ctx, run.id);
+  }
+
+  /**
+   * The immutable plan description a run (or a preflight) executes against. Both use this, so a
+   * dry run analyses exactly what the migration would do.
+   */
+  async buildSnapshot(planId: string): Promise<RunPlanSnapshot> {
     const entityRows = await this.db
       .select()
       .from(migrationPlanEntities)
       .where(eq(migrationPlanEntities.planId, planId))
       .orderBy(asc(migrationPlanEntities.orderIndex));
-    const mappingRows = await this.db
-      .select()
-      .from(fieldMappings)
-      .where(
-        inArray(
-          fieldMappings.planEntityId,
-          entityRows.map((e) => e.id),
-        ),
-      );
-    const snapshot: RunPlanSnapshot = {
+    const mappingRows = entityRows.length
+      ? await this.db
+          .select()
+          .from(fieldMappings)
+          .where(
+            inArray(
+              fieldMappings.planEntityId,
+              entityRows.map((e) => e.id),
+            ),
+          )
+      : [];
+    return {
       entities: entityRows.map((e) => ({
         logicalName: e.logicalName,
         displayName: e.displayName,
         orderIndex: e.orderIndex,
         matchStrategy: e.matchStrategy,
         alternateKey: e.alternateKey,
+        businessKeyFields: e.businessKeyFields ?? [],
         mappings: mappingRows
           .filter(
             (m) =>
@@ -129,49 +216,6 @@ export class MigrationRunService {
         },
       })),
     };
-
-    const [run] = await this.db
-      .insert(migrationRuns)
-      .values({
-        organizationId: ctx.organizationId,
-        planId,
-        sourceEnvironmentId: plan.sourceEnvironment.id,
-        targetEnvironmentId: plan.targetEnvironment.id,
-        status: 'QUEUED',
-        options: plan.options,
-        planSnapshot: snapshot,
-        executedByUserId: ctx.userId,
-      })
-      .returning();
-    await this.db.insert(migrationRunEntities).values(
-      entityRows.map((e) => ({
-        runId: run.id,
-        logicalName: e.logicalName,
-        displayName: e.displayName,
-        orderIndex: e.orderIndex,
-        total: e.sourceCount ?? 0,
-      })),
-    );
-    await this.queue.enqueue('MIGRATION', ctx.organizationId, run.id);
-    await this.audit.record({
-      organizationId: ctx.organizationId,
-      userId: ctx.userId,
-      action: 'MIGRATION_EXECUTION_REQUESTED',
-      outcome: 'REQUESTED',
-      sourceEnvironmentId: plan.sourceEnvironment.id,
-      targetEnvironmentId: plan.targetEnvironment.id,
-      runId: run.id,
-      requestId: ctx.requestId,
-      details: {
-        planId,
-        tables: entityRows.map((e) => e.logicalName),
-        conflictStrategy: plan.options.conflictStrategy,
-        bypassCustomBusinessLogic: plan.options.bypassCustomBusinessLogic,
-        acknowledgedWarnings: plan.warningCount,
-      },
-    });
-    this.logger.info({ migrationRunId: run.id, planId, requestId: ctx.requestId }, 'Migration run queued');
-    return this.get(ctx, run.id);
   }
 
   private async loadRun(organizationId: string, runId: string) {
@@ -216,9 +260,11 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_PAUSE_REQUESTED', outcome: 'REQUESTED' });
     } else if (action === 'resume') {
       if (run.status !== 'PAUSED') throw conflict(`Cannot resume a run in status ${run.status}`);
+      await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RESUME');
       await this.requeue(ctx, runId, false);
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
+      await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RETRY');
       if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
         throw conflict(
           `Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`,

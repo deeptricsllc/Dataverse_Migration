@@ -92,9 +92,16 @@ export interface AlternateKeyMeta {
   schemaName: string;
   displayName: string;
   attributes: string[];
-  /** Dataverse EntityKeyIndexStatus (Active, Pending, Failed ...). */
+  /**
+   * Dataverse EntityKeyIndexStatus: Pending, InProgress, Active or Failed. The unique index is
+   * only in place once the status is Active, so only Active keys are safe to match on.
+   * https://learn.microsoft.com/power-apps/developer/data-platform/define-alternate-keys-entity
+   */
   status?: string | null;
 }
+
+/** True when the alternate key's unique index is in place and can be relied on. */
+export const isKeyUsable = (key: AlternateKeyMeta) => (key.status ?? 'Active') === 'Active';
 
 export interface TableSummary {
   logicalName: string;

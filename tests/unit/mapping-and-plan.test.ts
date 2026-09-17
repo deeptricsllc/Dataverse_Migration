@@ -97,6 +97,7 @@ describe('migration plan validation', () => {
       targetCount: 0,
       matchStrategy: 'PRIMARY_ID',
       alternateKey: null,
+      businessKeyFields: [],
       automation: null,
       ...overrides,
     };

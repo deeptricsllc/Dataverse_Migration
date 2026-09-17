@@ -30,16 +30,12 @@ import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
-import type { PlanOptions } from '../../../shared/domain';
+import { auditFlags, type PlanOptions } from '../../../shared/domain';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { displayValue, transformValue, valuesEqual } from './values';
+import { envRef } from './env-ref';
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({
-  id: e.id,
-  displayName: e.displayName,
-  url: e.url,
-});
 const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
 const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
@@ -485,13 +481,16 @@ export class ValidationService {
     const bothHave = (name: string) =>
       source.attributes.some((a) => a.logicalName === name) &&
       target.attributes.some((a) => a.logicalName === name);
-    if (o?.preserveOwnership && auditEntity?.ownerField && bothHave('ownerid'))
+    const flags = o
+      ? auditFlags(o.auditPolicy)
+      : { owner: false, createdOn: false, createdBy: false, modifiedBy: false };
+    if (flags.owner && auditEntity?.ownerField && bothHave('ownerid'))
       auditChecks.push({ sourceField: 'ownerid', targetField: 'ownerid', isLookup: true });
-    if (o?.preserveCreatedOn && auditEntity?.overriddenCreatedOnField && bothHave('createdon'))
+    if (flags.createdOn && auditEntity?.overriddenCreatedOnField && bothHave('createdon'))
       auditChecks.push({ sourceField: 'createdon', targetField: 'createdon', isLookup: false });
-    if (o?.preserveCreatedBy && bothHave('createdby'))
+    if (flags.createdBy && bothHave('createdby'))
       auditChecks.push({ sourceField: 'createdby', targetField: 'createdby', isLookup: true });
-    if (o?.preserveModifiedBy && auditEntity?.touchField && bothHave('modifiedby'))
+    if (flags.modifiedBy && auditEntity?.touchField && bothHave('modifiedby'))
       auditChecks.push({ sourceField: 'modifiedby', targetField: 'modifiedby', isLookup: true });
     for (const check of auditChecks)
       if (!mappings.some((m) => m.targetField === check.targetField)) mappings.push(check);

@@ -1,8 +1,12 @@
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import { DEFAULT_PLAN_OPTIONS, type PlanOptions, type RecordOperation } from '../../../shared/domain';
 import {
-  LOOKUP_TYPES,
+  DEFAULT_PLAN_OPTIONS,
+  auditFlags,
+  type PlanOptions,
+  type RecordOperation,
+} from '../../../shared/domain';
+import {
   isLookupValue,
   type AttributeMeta,
   type DvRecord,
@@ -27,7 +31,8 @@ import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
 import type { PrincipalService } from './principal-service';
 import type { RunPlanSnapshot } from './run-snapshot';
-import { transformValue, valuesEqual } from './values';
+import { RecordMatcher } from './record-matcher';
+import { decideAction, prepareRecord, type PlannedAction, type PreparedRecord } from './record-planner';
 
 type RunRow = typeof migrationRuns.$inferSelect;
 type SnapshotEntity = RunPlanSnapshot['entities'][number];
@@ -51,7 +56,28 @@ interface RecordResult {
   deferred: Record<string, LookupValue> | null;
   /** Pass 3 work: re-stamp modifiedby as the mapped source user. */
   audit: { modifiedById: string; field: string; value: FieldValue } | null;
+  /** Ownership/audit fields where the fallback identity was substituted. */
+  fallbacks: string[];
   errors: RecordError[];
+}
+
+/** Issues the planner found while preparing a record become per-record error rows. */
+function toRecordErrors(prepared: PreparedRecord): RecordError[] {
+  return prepared.issues.map((i) => ({
+    operation: i.code === 'VALUE_CONVERSION' ? ('CREATE' as const) : ('RESOLVE_PRINCIPAL' as const),
+    severity: i.severity,
+    code: i.code,
+    field: i.field ?? null,
+    message: i.message,
+    retryable: i.retryable,
+  }));
+}
+
+/** Target columns to read for comparison: mapped columns plus the ownership column. */
+function compareColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
+  const columns = entity.mappings.map((m) => m.targetField);
+  if (auditFlags(options.auditPolicy).owner && entity.audit.ownerField) columns.push(entity.audit.ownerField);
+  return [...new Set(columns)];
 }
 
 class RunInterrupted extends Error {
@@ -61,28 +87,6 @@ class RunInterrupted extends Error {
 }
 
 class FatalRunError extends Error {}
-
-const SUCCESS_OUTCOMES = ['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED'] as const;
-
-/** Target columns to read for SYNC comparison (empty for every other strategy). */
-function syncCompareColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
-  if (options.conflictStrategy !== 'SYNC') return [];
-  const columns = entity.mappings.map((m) => m.targetField);
-  if (options.preserveOwnership && entity.audit.ownerField) columns.push(entity.audit.ownerField);
-  return [...new Set(columns)];
-}
-
-/** Source audit columns to read when ownership / audit preservation is enabled. */
-function auditSourceColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
-  const a = entity.audit;
-  const columns: (string | null)[] = [
-    options.preserveOwnership ? a.ownerField : null,
-    options.preserveCreatedOn ? a.createdOnField : null,
-    options.preserveCreatedBy ? a.createdByField : null,
-    options.preserveModifiedBy ? a.modifiedByField : null,
-  ];
-  return columns.filter((c): c is string => Boolean(c));
-}
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -96,6 +100,21 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
     }),
   );
   return results;
+}
+
+const SUCCESS_OUTCOMES = ['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED'] as const;
+
+/** Source audit columns to read when ownership / audit preservation is enabled. */
+function auditSourceColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
+  const a = entity.audit;
+  const flags = auditFlags(options.auditPolicy);
+  const columns: (string | null)[] = [
+    flags.owner ? a.ownerField : null,
+    flags.createdOn ? a.createdOnField : null,
+    flags.createdBy ? a.createdByField : null,
+    flags.modifiedBy ? a.modifiedByField : null,
+  ];
+  return columns.filter((c): c is string => Boolean(c));
 }
 
 /** Errors that stop the whole run (authentication/authorization), not a single record. */
@@ -210,6 +229,13 @@ export class MigrationEngine {
         heartbeat,
         lookupCache: new Map(principalMap),
         principalMap,
+        principalObjectIds: await this.principals.targetObjectIds(run.targetEnvironmentId),
+        matcher: new RecordMatcher(this.db, tConn, {
+          organizationId: run.organizationId,
+          sourceEnvironmentId: run.sourceEnvironmentId,
+          targetEnvironmentId: run.targetEnvironmentId,
+          runId: run.id,
+        }),
       };
 
       await this.db.update(migrationRuns).set({ phase: 'PASS_1' }).where(eq(migrationRuns.id, runId));
@@ -227,7 +253,7 @@ export class MigrationEngine {
         await this.resolveDeferred(ctx, entity);
       }
 
-      if (options.preserveModifiedBy) {
+      if (auditFlags(options.auditPolicy).modifiedBy) {
         await this.db
           .update(migrationRuns)
           .set({ phase: 'PASS_3_AUDIT', currentEntity: null })
@@ -457,292 +483,177 @@ export class MigrationEngine {
     t: TableMetadata,
     records: DvRecord[],
   ): Promise<RecordResult[]> {
-    // Batch-resolve lookups and existing target records before per-record writes.
+    // Batch-resolve lookups and candidate target records before any per-record write.
     await this.prefetchLookups(ctx, entity, records);
-    const existingById = new Set<string>();
-    const existingTargetRecords = new Map<string, DvRecord>();
-    // SYNC compares against the current target values, so read every column the run may write:
-    // the mapped ones plus the ownership column when ownership is preserved.
-    const compareColumns = syncCompareColumns(ctx.options, entity);
-    if (entity.matchStrategy === 'PRIMARY_ID') {
-      const found = await ctx.tConn.retrieveByIds(
-        t,
-        records.map((r) => r.id),
-        compareColumns,
-      );
-      for (const f of found) {
-        existingById.add(f.id.toLowerCase());
-        existingTargetRecords.set(f.id.toLowerCase(), f);
-      }
-    }
+    const columns = compareColumns(ctx.options, entity);
+    const prefetched = await ctx.matcher.prefetch(
+      entity,
+      t,
+      records.map((r) => r.id),
+      columns,
+    );
+    // The planner runs per record (pure); writes stay bounded by the connection semaphore.
     return mapLimit(records, 4, async (record) => {
-      const result = await this.processRecord(ctx, entity, s, t, record, existingById, existingTargetRecords);
-      // Alternate-key matches are resolved per record; fetch the match for SYNC comparison.
-      return result;
+      const prepared = prepareRecord({
+        entity,
+        options: ctx.options,
+        source: s,
+        target: t,
+        record,
+        principalMap: ctx.principalMap,
+        lookups: ctx.lookupCache,
+      });
+      let decision: PlannedAction;
+      try {
+        const match = await ctx.matcher.match(entity, t, record, prepared, prefetched, columns);
+        decision = decideAction(entity, ctx.options, t, prepared, match);
+      } catch (err) {
+        if (isFatal(err)) throw err;
+        return this.failedResult(prepared, toRecordError(err, 'MATCH'));
+      }
+      return this.applyDecision(ctx, entity, t, prepared, decision);
     });
   }
 
-  private async processRecord(
-    ctx: ExecContext,
-    entity: SnapshotEntity,
-    s: TableMetadata,
-    t: TableMetadata,
-    record: DvRecord,
-    existingById: Set<string>,
-    existingTargetRecords: Map<string, DvRecord>,
-  ): Promise<RecordResult> {
-    const result: RecordResult = {
-      sourceId: record.id,
+  private failedResult(prepared: PreparedRecord, error: RecordError): RecordResult {
+    return {
+      sourceId: prepared.sourceId,
       outcome: 'FAILED',
       targetId: null,
       matchMethod: null,
       deferred: null,
       audit: null,
-      errors: [],
+      fallbacks: prepared.principalFallbacks,
+      errors: [...toRecordErrors(prepared), error],
     };
-    const sAttrs = new Map(s.attributes.map((a) => [a.logicalName, a]));
-    const tAttrs = new Map(t.attributes.map((a) => [a.logicalName, a]));
-    const values: Record<string, FieldValue> = {};
-    const deferred: Record<string, LookupValue> = {};
+  }
 
-    for (const m of entity.mappings) {
-      const sAttr = sAttrs.get(m.sourceField);
-      const tAttr = tAttrs.get(m.targetField);
-      if (!sAttr || !tAttr) {
-        result.errors.push({
-          operation: 'CREATE',
-          severity: 'ERROR',
-          code: 'MAPPING_INVALID',
-          field: m.sourceField,
-          message: `Mapped column ${m.sourceField} → ${m.targetField} no longer exists`,
-          retryable: false,
-        });
-        return result;
-      }
-      const raw = record.values[m.sourceField];
-      if (LOOKUP_TYPES.has(tAttr.type)) {
-        if (raw === null || raw === undefined) {
-          values[tAttr.logicalName] = null;
-          continue;
-        }
-        if (!isLookupValue(raw)) continue;
-        if (m.deferredTargets?.includes(raw.logicalName)) {
-          deferred[tAttr.logicalName] = raw;
-          continue;
-        }
-        const resolved = await this.resolveLookup(ctx, raw);
-        if (resolved) {
-          values[tAttr.logicalName] = { id: resolved, logicalName: raw.logicalName };
-        } else if (
-          tAttr.requiredLevel === 'SystemRequired' ||
-          tAttr.requiredLevel === 'ApplicationRequired'
-        ) {
-          result.errors.push({
-            operation: 'RESOLVE_LOOKUP',
-            severity: 'ERROR',
-            code: 'LOOKUP_UNRESOLVED',
-            field: m.sourceField,
-            message: `Required lookup ${m.sourceField} references ${raw.logicalName} ${raw.id}, which was not migrated and does not exist in the target`,
-            retryable: true,
-          });
-          return result;
-        } else {
-          result.errors.push({
-            operation: 'RESOLVE_LOOKUP',
-            severity: 'WARNING',
-            code: 'LOOKUP_UNRESOLVED',
-            field: m.sourceField,
-            message: `Lookup ${m.sourceField} references ${raw.logicalName} ${raw.id}, which does not exist in the target; value left empty`,
-            retryable: true,
-          });
-        }
-        continue;
-      }
-      const converted = transformValue(sAttr, tAttr, raw);
-      if (!converted.ok) {
-        result.errors.push({
-          operation: 'CREATE',
-          severity: 'ERROR',
-          code: 'VALUE_CONVERSION',
-          field: m.sourceField,
-          message: converted.error,
-          retryable: false,
-        });
-        return result;
-      }
-      values[tAttr.logicalName] = converted.value;
-    }
-
-    // Identify an existing target record.
-    let existingId: string | null = null;
-    let matchMethod: string | null = null;
-    try {
-      if (entity.matchStrategy === 'ALTERNATE_KEY' && entity.alternateKey) {
-        const key = t.keys.find((k) => k.logicalName === entity.alternateKey);
-        if (!key)
-          throw new DataverseError(
-            'VALIDATION',
-            `Alternate key ${entity.alternateKey} is not defined in the target`,
-            400,
-          );
-        const match = await ctx.tConn.findByAlternateKey(
-          t,
-          key,
-          values,
-          syncCompareColumns(ctx.options, entity),
-        );
-        if (match) {
-          existingId = match.id;
-          matchMethod = `ALTERNATE_KEY:${key.logicalName}`;
-          existingTargetRecords.set(match.id, match);
-        }
-      } else if (existingById.has(record.id.toLowerCase())) {
-        existingId = record.id.toLowerCase();
-        matchMethod = 'PRIMARY_ID';
-      }
-    } catch (err) {
-      if (isFatal(err)) throw err;
-      result.errors.push(toRecordError(err, 'MATCH'));
-      return result;
-    }
-
-    // Ownership and audit preservation (only what Dataverse actually allows to be written).
-    const audit = entity.audit;
-    const principal = (field: string | null): { value: LookupValue | null; unmapped: boolean } => {
-      if (!field) return { value: null, unmapped: false };
-      const raw = record.values[field];
-      if (!isLookupValue(raw)) return { value: null, unmapped: false };
-      const mapped = ctx.principalMap.get(`${raw.logicalName}:${raw.id.toLowerCase()}`);
-      return mapped
-        ? { value: { id: mapped, logicalName: raw.logicalName }, unmapped: false }
-        : { value: null, unmapped: true };
+  /** Executes the action the planner decided on. The classification is never recomputed here. */
+  private async applyDecision(
+    ctx: ExecContext,
+    entity: SnapshotEntity,
+    t: TableMetadata,
+    prepared: PreparedRecord,
+    decision: PlannedAction,
+  ): Promise<RecordResult> {
+    const base: RecordResult = {
+      sourceId: prepared.sourceId,
+      outcome: 'FAILED',
+      targetId: null,
+      matchMethod: null,
+      deferred: null,
+      audit: null,
+      fallbacks: prepared.principalFallbacks,
+      errors: toRecordErrors(prepared),
     };
-    let impersonateUserId: string | null = null;
-    if (ctx.options.preserveOwnership && audit.ownerField) {
-      const owner = principal(audit.ownerField);
-      if (owner.value) values[audit.ownerField] = owner.value;
-      else if (owner.unmapped) {
-        result.errors.push({
-          operation: 'RESOLVE_PRINCIPAL',
-          severity: 'WARNING',
-          code: 'PRINCIPAL_UNMAPPED',
-          field: audit.ownerField,
-          message: `Owner is not mapped to a target user; the record is owned by the migrating user instead`,
-          retryable: true,
-        });
-      }
-    }
-    if (ctx.options.preserveCreatedOn && audit.createdOnField && audit.overriddenCreatedOnField) {
-      const createdOn = record.values[audit.createdOnField];
-      if (typeof createdOn === 'string') values[audit.overriddenCreatedOnField] = createdOn;
-    }
-    if (ctx.options.preserveCreatedBy && audit.createdByField) {
-      const createdBy = principal(audit.createdByField);
-      if (createdBy.value) impersonateUserId = createdBy.value.id;
-      else if (createdBy.unmapped) {
-        result.errors.push({
-          operation: 'RESOLVE_PRINCIPAL',
-          severity: 'WARNING',
-          code: 'PRINCIPAL_UNMAPPED',
-          field: audit.createdByField,
-          message: 'Created by is not mapped to a target user; the migrating user is recorded instead',
-          retryable: true,
-        });
-      }
-    }
-    let auditWork: RecordResult['audit'] = null;
-    if (ctx.options.preserveModifiedBy && audit.modifiedByField && audit.touchField) {
-      const modifiedBy = principal(audit.modifiedByField);
-      if (modifiedBy.value && modifiedBy.value.id !== impersonateUserId) {
-        auditWork = {
-          modifiedById: modifiedBy.value.id,
-          field: audit.touchField.target,
-          value: values[audit.touchField.target] ?? null,
-        };
-      }
-    }
-    const writeOptions: WriteOptions = impersonateUserId
-      ? { ...ctx.writeOptions, impersonateUserId }
+    const deferred = Object.keys(prepared.deferred).length ? prepared.deferred : null;
+    const writeOptions: WriteOptions = prepared.impersonateUserId
+      ? {
+          ...ctx.writeOptions,
+          impersonateUserId: prepared.impersonateUserId,
+          impersonateObjectId: ctx.principalObjectIds.get(prepared.impersonateUserId) ?? null,
+        }
       : ctx.writeOptions;
 
-    const strategy = ctx.options.conflictStrategy;
-    try {
-      if (existingId) {
-        if (strategy === 'SKIP_EXISTING') {
-          return { ...result, outcome: 'SKIPPED', targetId: existingId, matchMethod };
-        }
-        if (strategy === 'CREATE_ONLY') {
-          result.targetId = existingId;
-          result.matchMethod = matchMethod;
-          result.errors.push({
-            operation: 'CREATE',
-            severity: 'ERROR',
-            code: 'ALREADY_EXISTS',
-            message: `A matching record already exists in the target (${matchMethod}); CREATE_ONLY does not modify existing records`,
-            retryable: false,
-          });
-          return result;
-        }
-        let changes = values;
-        if (strategy === 'SYNC') {
-          // Compare with the target and write only what actually differs, so records that already
-          // match keep their modifiedon / modifiedby untouched.
-          const current = existingTargetRecords.get(existingId);
-          if (!current) {
-            result.errors.push({
-              operation: 'COMPARE',
-              severity: 'ERROR',
-              code: 'TARGET_READ_FAILED',
-              message: 'Could not read the existing target record to compare values',
-              retryable: true,
-            });
-            return result;
-          }
-          changes = {};
-          const tAttrsByName = new Map(t.attributes.map((a) => [a.logicalName, a]));
-          for (const [field, value] of Object.entries(values)) {
-            const attr = tAttrsByName.get(field);
-            if (!attr) continue;
-            // overriddencreatedon only applies to creates.
-            if (field === audit.overriddenCreatedOnField) continue;
-            if (!valuesEqual(attr, value, current.values[field] ?? null)) changes[field] = value;
-          }
-          if (Object.keys(changes).length === 0) {
-            return { ...result, outcome: 'UNCHANGED', targetId: existingId, matchMethod };
-          }
-        }
-        await ctx.tConn.updateRecord(t, existingId, { values: changes }, writeOptions);
+    switch (decision.action) {
+      case 'BLOCKED':
         return {
-          ...result,
-          outcome: 'UPDATED',
-          targetId: existingId,
-          matchMethod,
-          deferred: Object.keys(deferred).length ? deferred : null,
-          audit: auditWork,
+          ...base,
+          errors: base.errors.length
+            ? base.errors
+            : [
+                {
+                  operation: 'CREATE',
+                  severity: 'ERROR',
+                  code: decision.code,
+                  message: decision.reason,
+                  retryable:
+                    decision.code === 'PRINCIPAL_UNRESOLVED' || decision.code === 'LOOKUP_UNRESOLVED',
+                },
+              ],
         };
-      }
-      // Preserve the source identifier when creating so references and re-runs stay stable.
-      const createdId = await ctx.tConn.createRecord(t, { id: record.id, values }, writeOptions);
-      return {
-        ...result,
-        outcome: 'CREATED',
-        targetId: createdId,
-        matchMethod: 'PRESERVED_ID',
-        deferred: Object.keys(deferred).length ? deferred : null,
-        audit: auditWork,
-      };
-    } catch (err) {
-      if (isFatal(err)) throw err;
-      const e = toRecordError(err, existingId ? 'UPDATE' : 'CREATE');
-      if (e.code.startsWith('FORBIDDEN') && ctx.options.bypassCustomBusinessLogic) {
-        e.message = `${e.message} (bypassing custom business logic requires the prvBypassCustomBusinessLogic privilege)`;
-      }
-      if (e.code.startsWith('FORBIDDEN') && impersonateUserId) {
-        e.message = `${e.message} (preserving "created by" impersonates the mapped user and requires prvActOnBehalfOfAnotherUser)`;
-      }
-      result.errors.push(e);
-      return result;
+      case 'CONFLICT':
+        return {
+          ...base,
+          targetId: decision.targetId ?? null,
+          errors: [
+            ...base.errors,
+            {
+              operation: 'MATCH',
+              severity: 'ERROR',
+              code: decision.code,
+              message: decision.reason,
+              retryable: false,
+            },
+          ],
+        };
+      case 'SKIP':
+        return {
+          ...base,
+          outcome: 'SKIPPED',
+          targetId: decision.targetId,
+          matchMethod: decision.matchMethod,
+        };
+      case 'UNCHANGED':
+        // Identical in both environments: nothing is sent to Dataverse.
+        return {
+          ...base,
+          outcome: 'UNCHANGED',
+          targetId: decision.targetId,
+          matchMethod: decision.matchMethod,
+        };
+      case 'UPDATE':
+        try {
+          await ctx.tConn.updateRecord(t, decision.targetId, { values: decision.values }, writeOptions);
+          return {
+            ...base,
+            outcome: 'UPDATED',
+            targetId: decision.targetId,
+            matchMethod: decision.matchMethod,
+            deferred,
+            audit: prepared.auditWork,
+          };
+        } catch (err) {
+          if (isFatal(err)) throw err;
+          return { ...base, errors: [...base.errors, this.writeError(err, 'UPDATE', ctx, prepared)] };
+        }
+      default:
+        try {
+          // Preserve the source identifier so references and re-runs stay stable.
+          const createdId = await ctx.tConn.createRecord(
+            t,
+            { id: prepared.sourceId, values: decision.values },
+            writeOptions,
+          );
+          return {
+            ...base,
+            outcome: 'CREATED',
+            targetId: createdId,
+            matchMethod: 'PRESERVED_ID',
+            deferred,
+            audit: prepared.auditWork,
+          };
+        } catch (err) {
+          if (isFatal(err)) throw err;
+          return { ...base, errors: [...base.errors, this.writeError(err, 'CREATE', ctx, prepared)] };
+        }
     }
+  }
+
+  private writeError(
+    err: unknown,
+    operation: 'CREATE' | 'UPDATE',
+    ctx: ExecContext,
+    prepared: PreparedRecord,
+  ): RecordError {
+    const e = toRecordError(err, operation);
+    if (e.code.startsWith('FORBIDDEN') && ctx.options.bypassCustomBusinessLogic) {
+      e.message = `${e.message} (bypassing custom business logic requires the prvBypassCustomBusinessLogic privilege)`;
+    }
+    if (e.code.startsWith('FORBIDDEN') && prepared.impersonateUserId) {
+      e.message = `${e.message} (preserving "created by" impersonates the mapped user and requires prvActOnBehalfOfAnotherUser, which must be assigned directly and not through a team)`;
+    }
+    return e;
   }
 
   // ---------------------------------------------------------------------------
@@ -868,7 +779,8 @@ export class MigrationEngine {
       await mapLimit(batch, 4, async (map) => {
         const values: Record<string, FieldValue> = {};
         const errors: RecordError[] = [];
-        for (const [attr, lookup] of Object.entries(map.deferredLookups ?? {})) {
+        const deferredLookups: Record<string, LookupValue> = map.deferredLookups ?? {};
+        for (const [attr, lookup] of Object.entries(deferredLookups)) {
           const resolved = await this.resolveLookup(ctx, lookup);
           const tAttr: AttributeMeta | undefined = tAttrs.get(attr);
           if (resolved) values[attr] = { id: resolved, logicalName: lookup.logicalName };
@@ -959,7 +871,11 @@ export class MigrationEngine {
             t,
             map.targetId!,
             { values: { [work.field]: work.value as FieldValue } },
-            { ...ctx.writeOptions, impersonateUserId: work.modifiedById },
+            {
+              ...ctx.writeOptions,
+              impersonateUserId: work.modifiedById,
+              impersonateObjectId: ctx.principalObjectIds.get(work.modifiedById) ?? null,
+            },
           );
           await this.db
             .update(migrationRecordMaps)
@@ -1001,6 +917,7 @@ export class MigrationEngine {
           matchMethod: r.matchMethod,
           deferredLookups: r.deferred,
           deferredStatus: r.deferred ? 'PENDING' : null,
+          principalFallbacks: r.fallbacks.length ? r.fallbacks : null,
           auditPending: r.audit,
           auditStatus: r.audit ? 'PENDING' : null,
         })
@@ -1012,6 +929,7 @@ export class MigrationEngine {
             matchMethod: r.matchMethod,
             deferredLookups: r.deferred,
             deferredStatus: r.deferred ? 'PENDING' : null,
+            principalFallbacks: r.fallbacks.length ? r.fallbacks : null,
             auditPending: r.audit,
             auditStatus: r.audit ? 'PENDING' : null,
             attempts: sql`${migrationRecordMaps.attempts} + 1`,
@@ -1150,4 +1068,7 @@ interface ExecContext {
   lookupCache: Map<string, string | null>;
   /** `${logicalName}:${sourceId}` -> target id for users, teams and business units. */
   principalMap: ReadonlyMap<string, string>;
+  /** Target systemuser id -> Entra object id, for the preferred impersonation header. */
+  principalObjectIds: ReadonlyMap<string, string>;
+  matcher: RecordMatcher;
 }

@@ -5,7 +5,7 @@ import type { AppDb } from '../db/client';
 import { jobs } from '../db/schema';
 import { errorMessage } from '../lib/errors';
 
-export type JobType = 'COMPARISON' | 'MIGRATION' | 'VALIDATION';
+export type JobType = 'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT';
 export type JobRow = typeof jobs.$inferSelect;
 export type JobHandler = (job: JobRow, signal: { heartbeat: () => Promise<void> }) => Promise<void>;
 

@@ -41,7 +41,7 @@ export function UserMappingPage() {
   const qc = useQueryClient();
   const { source, target, ready } = useWorkspace();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'ALL' | 'UNMATCHED' | 'MATCHED'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'UNMATCHED' | 'AMBIGUOUS' | 'MATCHED'>('ALL');
   const key = ['principal-mappings', source?.id, target?.id];
   const params = qs({ sourceEnvironmentId: source?.id, targetEnvironmentId: target?.id });
 
@@ -104,7 +104,9 @@ export function UserMappingPage() {
       (filter === 'ALL' ||
         (filter === 'UNMATCHED'
           ? m.status === 'UNMATCHED'
-          : m.status === 'AUTO_MATCHED' || m.status === 'MANUAL')) &&
+          : filter === 'AMBIGUOUS'
+            ? m.status === 'AMBIGUOUS'
+            : m.status === 'AUTO_MATCHED' || m.status === 'MANUAL')) &&
       `${m.source.name} ${m.source.email ?? ''} ${m.source.login ?? ''}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -125,6 +127,7 @@ export function UserMappingPage() {
               options={[
                 { value: 'ALL', label: 'All' },
                 { value: 'UNMATCHED', label: 'Unmatched only' },
+                { value: 'AMBIGUOUS', label: 'Ambiguous only' },
                 { value: 'MATCHED', label: 'Matched only' },
               ]}
             />
@@ -186,9 +189,28 @@ export function UserMappingPage() {
               tone={data.counts.unmatched ? 'amber' : 'default'}
               value={data.counts.unmatched}
               onClick={() => setFilter('UNMATCHED')}
+              active={filter === 'UNMATCHED'}
+            />
+            <Stat
+              label="Ambiguous"
+              tone={data.counts.ambiguous ? 'red' : 'default'}
+              value={data.counts.ambiguous}
+              hint="never auto-mapped"
+              onClick={() => setFilter('AMBIGUOUS')}
+              active={filter === 'AMBIGUOUS'}
             />
             <Stat label="Excluded" tone="slate" value={data.counts.ignored} />
           </div>
+
+          {data.counts.ambiguous > 0 && (
+            <Callout
+              tone="warning"
+              title={`${data.counts.ambiguous} identity/identities match more than one target`}
+            >
+              The platform never picks a target when several match. Choose the correct one below — the
+              candidates are listed under each ambiguous row — or exclude the identity.
+            </Callout>
+          )}
 
           <Card
             title="Impersonation check"
@@ -260,6 +282,31 @@ export function UserMappingPage() {
                           </option>
                         ))}
                       </select>
+                      {m.status === 'AMBIGUOUS' && m.candidates.length > 0 && (
+                        <div className="mt-1 text-[11px] text-amber-800" data-testid="ambiguous-candidates">
+                          <span className="font-medium">{m.candidates.length} candidates:</span>
+                          <ul className="mt-0.5 space-y-0.5">
+                            {m.candidates.map((c) => (
+                              <li key={c.id}>
+                                <button
+                                  type="button"
+                                  className="underline hover:text-amber-900"
+                                  onClick={() =>
+                                    setMapping.mutate({
+                                      logicalName: m.logicalName,
+                                      sourceId: m.source.id,
+                                      targetId: c.id,
+                                    })
+                                  }
+                                >
+                                  Use {c.name}
+                                  {c.email ? ` (${c.email})` : ''}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </Td>
                     <Td>
                       <StatusBadge
@@ -270,9 +317,17 @@ export function UserMappingPage() {
                               ? 'MANUAL'
                               : m.status === 'IGNORED'
                                 ? 'IGNORED'
-                                : 'UNMAPPED'
+                                : m.status === 'AMBIGUOUS'
+                                  ? 'INCOMPATIBLE'
+                                  : 'UNMAPPED'
                         }
-                        label={m.status === 'UNMATCHED' ? 'Unmatched' : undefined}
+                        label={
+                          m.status === 'UNMATCHED'
+                            ? 'Unmatched'
+                            : m.status === 'AMBIGUOUS'
+                              ? 'Ambiguous'
+                              : undefined
+                        }
                       />
                       {m.note && <div className="mt-0.5 max-w-xs text-[11px] text-slate-500">{m.note}</div>}
                     </Td>
@@ -321,7 +376,13 @@ export function UserMappingPage() {
                 be set.
               </li>
               <li>
-                Unmatched users fall back to the migrating user, and every fallback is reported per record.
+                Unresolved users are handled by the plan&apos;s user resolution policy:{' '}
+                <strong>Strict</strong> blocks the record, <strong>Fallback</strong> uses an identity you
+                choose explicitly. Ownership is never silently reassigned to you.
+              </li>
+              <li>
+                An identity that matches several targets is marked <strong>ambiguous</strong> and is never
+                mapped automatically.
               </li>
             </ul>
           </Callout>

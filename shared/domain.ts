@@ -19,6 +19,14 @@ export interface SessionUser {
 export interface AuthConfigDto {
   microsoftEnabled: boolean;
   demoEnabled: boolean;
+  /** Certification mode: reads are allowed, every Dataverse write is blocked server-side. */
+  realTenantReadOnly: boolean;
+}
+
+export interface SessionResponseDto {
+  user: SessionUser | null;
+  csrfToken: string | null;
+  realTenantReadOnly: boolean;
 }
 
 export type EnvironmentProvider = 'dataverse' | 'demo';
@@ -41,6 +49,21 @@ export interface EnvironmentDto {
   connectionMessage: string | null;
   lastTestedAt: string | null;
   lastDiscoveredAt: string | null;
+}
+
+/** Safety classification derived from the environment type reported by Microsoft. */
+export type EnvironmentClass = 'PRODUCTION' | 'NON_PRODUCTION' | 'UNKNOWN';
+
+export function classifyEnvironment(environmentType: string | null | undefined): EnvironmentClass {
+  const t = (environmentType ?? '').trim().toLowerCase();
+  if (!t) return 'UNKNOWN';
+  if (t === 'production' || t === 'default') return 'PRODUCTION';
+  if (
+    ['sandbox', 'trial', 'developer', 'preview', 'teams', 'subscriptionbasedtrial', 'support'].includes(t)
+  ) {
+    return 'NON_PRODUCTION';
+  }
+  return 'UNKNOWN';
 }
 
 export interface WorkspaceDto {
@@ -136,6 +159,8 @@ export interface EnvRef {
   id: string;
   displayName: string;
   url: string;
+  /** Safety classification, so the UI can warn before writing to a production environment. */
+  environmentClass: EnvironmentClass;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +205,48 @@ export interface DependencyAnalysisDto {
 // ---------------------------------------------------------------------------
 
 export type ConflictStrategy = 'SKIP_EXISTING' | 'CREATE_ONLY' | 'UPSERT' | 'SYNC';
-export type MatchStrategy = 'PRIMARY_ID' | 'ALTERNATE_KEY';
+export type MatchStrategy = 'PRIMARY_ID' | 'ALTERNATE_KEY' | 'BUSINESS_KEY';
+
+/** How references to users/teams/business units that have no approved mapping are handled. */
+export type UserResolutionPolicy = 'STRICT' | 'FALLBACK';
+
+/**
+ * How much of the source audit trail the migration tries to reproduce.
+ *  NONE                 - platform defaults (migrating user owns and authors everything).
+ *  STANDARD             - owner + created on; no extra writes.
+ *  PRESERVE_ATTRIBUTION - owner + created on + created by + modified by (impersonated writes).
+ */
+export type AuditPolicy = 'NONE' | 'STANDARD' | 'PRESERVE_ATTRIBUTION';
+
+export interface FallbackPrincipalDto {
+  logicalName: PrincipalTable;
+  id: string;
+  name: string;
+}
+
+/** Effective audit behavior derived from the policy; the engine never reads the policy directly. */
+export interface AuditCapabilityFlags {
+  owner: boolean;
+  createdOn: boolean;
+  createdBy: boolean;
+  modifiedBy: boolean;
+}
+
+export function auditFlags(policy: AuditPolicy): AuditCapabilityFlags {
+  switch (policy) {
+    case 'STANDARD':
+      return { owner: true, createdOn: true, createdBy: false, modifiedBy: false };
+    case 'PRESERVE_ATTRIBUTION':
+      return { owner: true, createdOn: true, createdBy: true, modifiedBy: true };
+    default:
+      return { owner: false, createdOn: false, createdBy: false, modifiedBy: false };
+  }
+}
+
+/** True when the policy needs the mapped identities (and therefore a user mapping). */
+export const auditNeedsPrincipals = (policy: AuditPolicy) => policy !== 'NONE';
+/** True when the policy needs impersonation privileges in the target. */
+export const auditNeedsImpersonation = (policy: AuditPolicy) => policy === 'PRESERVE_ATTRIBUTION';
 export type IssueSeverity = 'BLOCKER' | 'WARNING' | 'INFO';
 export type MappingStatus = 'AUTO_MAPPED' | 'MANUAL' | 'UNMAPPED' | 'INCOMPATIBLE' | 'IGNORED';
 export type TableCategory = 'CONFIGURATION' | 'REFERENCE' | 'TRANSACTIONAL';
@@ -197,14 +263,12 @@ export interface PlanOptions {
   suppressFlowTriggers: boolean;
   /** Stop the whole run on first failure instead of continuing. */
   stopOnFirstError: boolean;
-  /** Assign migrated records to the mapped owner from the source instead of the migrating user. */
-  preserveOwnership: boolean;
-  /** Backdate created on via overriddencreatedon. */
-  preserveCreatedOn: boolean;
-  /** Create records impersonating the mapped source "created by" user (needs privilege). */
-  preserveCreatedBy: boolean;
-  /** Final pass impersonating the mapped "modified by" user (extra write per record). */
-  preserveModifiedBy: boolean;
+  /** How much of the source audit trail to reproduce in the target. */
+  auditPolicy: AuditPolicy;
+  /** What to do with user/team references that have no approved mapping. */
+  userResolutionPolicy: UserResolutionPolicy;
+  /** Identity used by the FALLBACK policy. Never defaults to the executing user implicitly. */
+  fallbackPrincipal: FallbackPrincipalDto | null;
 }
 
 /** Dataverse columns that only the audit/ownership options can write. */
@@ -222,10 +286,9 @@ export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
   bypassCustomBusinessLogic: false,
   suppressFlowTriggers: false,
   stopOnFirstError: false,
-  preserveOwnership: false,
-  preserveCreatedOn: false,
-  preserveCreatedBy: false,
-  preserveModifiedBy: false,
+  auditPolicy: 'NONE',
+  userResolutionPolicy: 'STRICT',
+  fallbackPrincipal: null,
 };
 
 export interface PlanIssue {
@@ -270,6 +333,10 @@ export interface PlanEntityDto {
   schemaStatus: DiffStatus | null;
   matchStrategy: MatchStrategy;
   alternateKey: string | null;
+  /** Columns forming a configured business key (MatchStrategy BUSINESS_KEY). */
+  businessKeyFields: string[];
+  /** Human readable summary shown in the plan, e.g. "accountnumber (alternate key)". */
+  matchDescription: string;
   availableKeys: { logicalName: string; attributes: string[] }[];
   dependsOn: DependencyEdgeDto[];
   cycleGroup: number | null;
@@ -369,7 +436,7 @@ export interface RunCounters {
 // ---------------------------------------------------------------------------
 
 export type PrincipalTable = 'systemuser' | 'team' | 'businessunit';
-export type PrincipalMatchStatus = 'AUTO_MATCHED' | 'MANUAL' | 'UNMATCHED' | 'IGNORED';
+export type PrincipalMatchStatus = 'AUTO_MATCHED' | 'MANUAL' | 'AMBIGUOUS' | 'UNMATCHED' | 'IGNORED';
 
 export interface PrincipalDto {
   id: string;
@@ -391,13 +458,25 @@ export interface PrincipalMappingDto {
   matchMethod: string | null;
   confidence: number;
   note: string | null;
+  /** Candidates when several targets matched; a human must choose (never auto-applied). */
+  candidates: PrincipalDto[];
+  /** Who decided (manual mappings/exclusions) and when the row was last written. */
+  decidedBy: string | null;
+  decidedAt: string;
 }
 
 export interface PrincipalMappingSummaryDto {
   sourceEnvironment: EnvRef;
   targetEnvironment: EnvRef;
   refreshedAt: string | null;
-  counts: { total: number; matched: number; unmatched: number; manual: number; ignored: number };
+  counts: {
+    total: number;
+    matched: number;
+    unmatched: number;
+    ambiguous: number;
+    manual: number;
+    ignored: number;
+  };
   mappings: PrincipalMappingDto[];
   /** Target principals available for manual selection. */
   targetPrincipals: Record<PrincipalTable, PrincipalDto[]>;
@@ -575,6 +654,125 @@ export interface ValidationDifferenceDto {
   targetValue: string | null;
   differenceType: DifferenceType;
   outcome: ValidationOutcome;
+}
+
+// ---------------------------------------------------------------------------
+// Preflight (dry run)
+// ---------------------------------------------------------------------------
+
+/** What the migration would do with a source record. No writes happen to determine this. */
+export type PreflightAction = 'CREATE' | 'UPDATE' | 'UNCHANGED' | 'CONFLICT' | 'BLOCKED';
+
+export interface PreflightTotals {
+  sourceRecords: number;
+  analyzed: number;
+  create: number;
+  update: number;
+  unchanged: number;
+  conflict: number;
+  blocked: number;
+}
+
+export interface PreflightEntityResultDto extends PreflightTotals {
+  logicalName: string;
+  displayName: string;
+  matchDescription: string;
+  /** True when only part of the table was analyzed (very large tables). */
+  sampled: boolean;
+}
+
+export interface FieldChangeDto {
+  field: string;
+  displayName: string;
+  sourceValue: string | null;
+  targetValue: string | null;
+  action: 'SET' | 'CLEAR' | 'UNCHANGED';
+}
+
+export interface PreflightRecordDto {
+  id: string;
+  entity: string;
+  sourceRecordId: string;
+  recordName: string | null;
+  action: PreflightAction;
+  targetRecordId: string | null;
+  matchMethod: string | null;
+  reasonCode: string | null;
+  reason: string | null;
+  changes: FieldChangeDto[];
+}
+
+export interface PreflightRunDto {
+  id: string;
+  planId: string;
+  planName: string;
+  status: JobRunStatus;
+  sourceEnvironment: EnvRef;
+  targetEnvironment: EnvRef;
+  options: PlanOptions;
+  totals: PreflightTotals;
+  entities: PreflightEntityResultDto[];
+  /** Unresolved/ambiguous identities found while analyzing, for the acknowledgement screen. */
+  identityImpact: IdentityImpactDto;
+  progressMessage: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  createdBy: string | null;
+}
+
+/** What an ownership substitution would actually do, shown before execution. */
+export interface IdentityImpactDto {
+  policy: UserResolutionPolicy;
+  fallbackPrincipal: FallbackPrincipalDto | null;
+  unresolvedPrincipals: {
+    logicalName: PrincipalTable;
+    id: string;
+    name: string | null;
+    records: number;
+    fields: string[];
+  }[];
+  recordsAffected: number;
+  fieldsAffected: string[];
+}
+
+/** One row of the remediation package. */
+export interface IssueRowDto {
+  severity: 'BLOCKER' | 'WARNING' | 'INFO';
+  category: string;
+  table: string | null;
+  sourceRecordId: string | null;
+  recordName: string | null;
+  field: string | null;
+  sourceValue: string | null;
+  targetValue: string | null;
+  issue: string;
+  resolution: string | null;
+  suggestedAction: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+export type DiagnosticStatus = 'PASS' | 'FAIL' | 'WARN' | 'NOT_TESTED';
+
+export interface DiagnosticCheckDto {
+  key: string;
+  label: string;
+  status: DiagnosticStatus;
+  message: string;
+  /** Actionable hint for failures; never contains tokens or raw payloads. */
+  resolution?: string | null;
+  durationMs?: number;
+}
+
+export interface DiagnosticsReportDto {
+  ranAt: string;
+  mode: { demoMode: boolean; realTenantReadOnly: boolean };
+  sourceEnvironment: EnvRef | null;
+  targetEnvironment: EnvRef | null;
+  checks: DiagnosticCheckDto[];
 }
 
 // ---------------------------------------------------------------------------

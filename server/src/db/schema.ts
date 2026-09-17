@@ -25,7 +25,15 @@ import type {
   ValidationSummary,
   AutomationInfo,
 } from '../../../shared/domain';
-import type { PrincipalDto, PrincipalMatchStatus, PrincipalTable } from '../../../shared/domain';
+import type {
+  FieldChangeDto,
+  IdentityImpactDto,
+  PreflightAction,
+  PreflightTotals,
+  PrincipalDto,
+  PrincipalMatchStatus,
+  PrincipalTable,
+} from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
@@ -219,7 +227,7 @@ export const jobs = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    type: text('type').$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION'>().notNull(),
+    type: text('type').$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT'>().notNull(),
     targetId: uuid('target_id').notNull(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'>().notNull().default('QUEUED'),
     attempts: integer('attempts').notNull().default(0),
@@ -340,10 +348,15 @@ export const migrationPlanEntities = pgTable(
     countApproximate: boolean('count_approximate').notNull().default(false),
     schemaStatus: text('schema_status'),
     matchStrategy: text('match_strategy')
-      .$type<'PRIMARY_ID' | 'ALTERNATE_KEY'>()
+      .$type<'PRIMARY_ID' | 'ALTERNATE_KEY' | 'BUSINESS_KEY'>()
       .notNull()
       .default('PRIMARY_ID'),
     alternateKey: text('alternate_key'),
+    /** Columns forming a configured business key when matchStrategy is BUSINESS_KEY. */
+    businessKeyFields: jsonb('business_key_fields')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     dependsOn: jsonb('depends_on')
       .$type<DependencyEdgeDto[]>()
       .notNull()
@@ -490,6 +503,8 @@ export const migrationRecordMaps = pgTable(
       { id: string; logicalName: string }
     > | null>(),
     deferredStatus: text('deferred_status').$type<'PENDING' | 'RESOLVED' | 'FAILED' | null>(),
+    /** Ownership/audit fields where the configured fallback identity was substituted. */
+    principalFallbacks: jsonb('principal_fallbacks').$type<string[] | null>(),
     /** Pass 3: re-stamp modifiedby as the mapped source user (impersonated update). */
     auditPending: jsonb('audit_pending').$type<{
       modifiedById: string;
@@ -583,6 +598,11 @@ export const principalMaps = pgTable(
     matchMethod: text('match_method'),
     confidence: integer('confidence').notNull().default(0),
     note: text('note'),
+    /** Target candidates when the match was ambiguous; a human must choose one. */
+    candidates: jsonb('candidates')
+      .$type<PrincipalDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     updatedByUserId: uuid('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: updatedAt(),
   },
@@ -594,6 +614,83 @@ export const principalMaps = pgTable(
       t.sourceId,
     ),
     index('principal_maps_org_idx').on(t.organizationId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Preflight (dry run)
+// ---------------------------------------------------------------------------
+
+export const preflightRuns = pgTable(
+  'preflight_runs',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => migrationPlans.id, { onDelete: 'cascade' }),
+    sourceEnvironmentId: uuid('source_environment_id')
+      .notNull()
+      .references(() => environments.id),
+    targetEnvironmentId: uuid('target_environment_id')
+      .notNull()
+      .references(() => environments.id),
+    status: text('status').$type<'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'>().notNull().default('QUEUED'),
+    options: jsonb('options').$type<PlanOptions>().notNull(),
+    totals: jsonb('totals').$type<PreflightTotals>(),
+    identityImpact: jsonb('identity_impact').$type<IdentityImpactDto>(),
+    progressMessage: text('progress_message'),
+    errorMessage: text('error_message'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    startedAt: ts('started_at'),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [index('preflight_runs_plan_idx').on(t.planId, t.createdAt)],
+);
+
+export const preflightEntityResults = pgTable(
+  'preflight_entity_results',
+  {
+    id: id(),
+    preflightRunId: uuid('preflight_run_id')
+      .notNull()
+      .references(() => preflightRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    displayName: text('display_name').notNull(),
+    matchDescription: text('match_description').notNull(),
+    sampled: boolean('sampled').notNull().default(false),
+    totals: jsonb('totals').$type<PreflightTotals>().notNull(),
+  },
+  (t) => [uniqueIndex('preflight_entity_results_uq').on(t.preflightRunId, t.logicalName)],
+);
+
+/** Per-record classification. Nothing here was written to Dataverse. */
+export const preflightRecords = pgTable(
+  'preflight_records',
+  {
+    id: id(),
+    preflightRunId: uuid('preflight_run_id')
+      .notNull()
+      .references(() => preflightRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    sourceRecordId: text('source_record_id').notNull(),
+    recordName: text('record_name'),
+    action: text('action').$type<PreflightAction>().notNull(),
+    targetRecordId: text('target_record_id'),
+    matchMethod: text('match_method'),
+    reasonCode: text('reason_code'),
+    reason: text('reason'),
+    changes: jsonb('changes')
+      .$type<FieldChangeDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+  },
+  (t) => [
+    index('preflight_records_run_idx').on(t.preflightRunId, t.action),
+    index('preflight_records_entity_idx').on(t.preflightRunId, t.logicalName, t.action),
   ],
 );
 

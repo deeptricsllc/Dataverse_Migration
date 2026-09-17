@@ -8,6 +8,8 @@ export interface RunPlanSnapshot {
     orderIndex: number;
     matchStrategy: MatchStrategy;
     alternateKey: string | null;
+    /** Columns forming the configured business key (MatchStrategy BUSINESS_KEY). */
+    businessKeyFields: string[];
     mappings: { sourceField: string; targetField: string; isLookup: boolean; deferredTargets: string[] }[];
     /** Source audit columns available for ownership/audit preservation. */
     audit: {

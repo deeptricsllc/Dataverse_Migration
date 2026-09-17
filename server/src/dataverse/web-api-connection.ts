@@ -33,7 +33,11 @@ export interface WebApiOptions {
   retryPolicy?: RetryPolicy;
   maxConcurrency?: number;
   timeoutMs?: number;
+  /** When true, every non-GET request is refused before it leaves this process. */
+  readOnly?: boolean;
 }
+
+const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE', 'MERGE']);
 
 interface RequestOptions {
   body?: unknown;
@@ -67,6 +71,12 @@ const ATTRIBUTE_CASTS: { cast: string; query: string }[] = [
 ];
 
 const odataString = (v: string) => `'${v.replace(/'/g, "''")}'`;
+/**
+ * Characters Dataverse rejects inside alternate-key URL segments; such values must be looked up
+ * with $filter instead.
+ * https://learn.microsoft.com/power-apps/developer/data-platform/use-alternate-key-reference-record
+ */
+const KEY_UNSUPPORTED_CHARS = /[/<>*%&:\\?+]/;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -98,6 +108,18 @@ export class WebApiConnection implements DataverseConnection {
     options: RequestOptions = {},
   ): Promise<{ data: T; headers: Headers }> {
     const url = options.absolute ? pathOrUrl : this.baseUrl + pathOrUrl;
+    // Read-only deployments refuse writes here, so no code path can reach Dataverse with a
+    // mutating request, regardless of what the UI or a service tried to do.
+    if (this.opts.readOnly && WRITE_METHODS.has(method.toUpperCase())) {
+      throw new DataverseError(
+        'READ_ONLY_MODE',
+        `REAL_TENANT_READ_ONLY is enabled. Dataverse write operations are disabled for this deployment (attempted ${method.toUpperCase()} ${pathOrUrl.split('?')[0]}).`,
+        403,
+        undefined,
+        undefined,
+        false,
+      );
+    }
     const startedAt = Date.now();
     return withRetry(
       () =>
@@ -238,8 +260,11 @@ export class WebApiConnection implements DataverseConnection {
       return { count: Number(data.value?.[0]?.c ?? 0), approximate: false };
     } catch (err) {
       const e = toDataverseError(err);
-      // Aggregate queries are limited to 50,000 rows; fall back to the platform snapshot count.
-      if (e.code !== 'VALIDATION' && e.code !== 'SERVER_ERROR') throw e;
+      // FetchXML aggregates are limited to 50,000 rows and fail with 0x8004E023
+      // (AggregateQueryRecordLimit exceeded). Fall back to the 24h snapshot count.
+      // https://learn.microsoft.com/power-apps/developer/data-platform/fetchxml/aggregate-data
+      const aggregateLimit = e.platformCode?.toLowerCase() === '0x8004e023';
+      if (!aggregateLimit && e.code !== 'VALIDATION' && e.code !== 'SERVER_ERROR') throw e;
       const { data } = await this.request<Raw>(
         'GET',
         `RetrieveTotalRecordCount(EntityNames=@p)?@p=${encodeURIComponent(JSON.stringify([table.logicalName]))}`,
@@ -261,10 +286,14 @@ export class WebApiConnection implements DataverseConnection {
     return { select, attrs };
   }
 
+  /** Dataverse ignores odata.maxpagesize above 5000; clamp so the preference is honoured. */
+  private readonly clampPageSize = (pageSize?: number) =>
+    pageSize ? Math.max(1, Math.min(pageSize, 5000)) : undefined;
+
   private readonly readHeaders = (pageSize?: number) => ({
     Prefer: [
       `odata.include-annotations="Microsoft.Dynamics.CRM.lookuplogicalname"`,
-      pageSize ? `odata.maxpagesize=${pageSize}` : '',
+      this.clampPageSize(pageSize) ? `odata.maxpagesize=${this.clampPageSize(pageSize)}` : '',
     ]
       .filter(Boolean)
       .join(','),
@@ -317,13 +346,23 @@ export class WebApiConnection implements DataverseConnection {
   ): Promise<DvRecord | null> {
     const byName = new Map(table.attributes.map((a) => [a.logicalName, a]));
     const parts: string[] = [];
+    const criteria: Record<string, FieldValue> = {};
+    let needsFilter = false;
     for (const attrName of key.attributes) {
       const v = values[attrName];
       const attr = byName.get(attrName);
       if (v === null || v === undefined || !attr) return null;
+      criteria[attrName] = v;
       if (isLookupValue(v)) parts.push(`_${attrName}_value=${v.id}`);
-      else if (typeof v === 'string') parts.push(`${attrName}=${encodeURIComponent(odataString(v))}`);
-      else parts.push(`${attrName}=${String(v)}`);
+      else if (typeof v === 'string') {
+        // Values containing /, <, >, *, %, &, :, \, ? or + cannot be expressed in a key segment.
+        if (KEY_UNSUPPORTED_CHARS.test(v)) needsFilter = true;
+        parts.push(`${attrName}=${odataString(v).replace(/ /g, '%20')}`);
+      } else parts.push(`${attrName}=${String(v)}`);
+    }
+    if (needsFilter) {
+      const matches = await this.findByFields(table, criteria, columns, 2);
+      return matches[0] ?? null;
     }
     const { select, attrs } = this.selectList(table, columns);
     try {
@@ -339,6 +378,37 @@ export class WebApiConnection implements DataverseConnection {
       if (err instanceof DataverseError && err.code === 'NOT_FOUND') return null;
       throw err;
     }
+  }
+
+  /** Business-key lookup via $filter; returns up to `limit` matches so ambiguity is detectable. */
+  async findByFields(
+    table: TableMetadata,
+    criteria: Record<string, FieldValue>,
+    columns: string[],
+    limit: number,
+  ): Promise<DvRecord[]> {
+    const byName = new Map(table.attributes.map((a) => [a.logicalName, a]));
+    const clauses: string[] = [];
+    for (const [field, value] of Object.entries(criteria)) {
+      const attr = byName.get(field);
+      if (!attr)
+        throw new DataverseError('VALIDATION', `Column ${field} does not exist on ${table.logicalName}`, 400);
+      if (value === null || value === undefined) {
+        clauses.push(`${LOOKUP_TYPES.has(attr.type) ? `_${field}_value` : field} eq null`);
+      } else if (isLookupValue(value)) {
+        clauses.push(`_${field}_value eq ${value.id}`);
+      } else if (typeof value === 'string') {
+        clauses.push(`${field} eq ${odataString(value)}`);
+      } else if (typeof value === 'boolean' || typeof value === 'number') {
+        clauses.push(`${field} eq ${String(value)}`);
+      } else {
+        throw new DataverseError('VALIDATION', `Column ${field} cannot be used as a business key`, 400);
+      }
+    }
+    const { select, attrs } = this.selectList(table, columns);
+    const query = `${table.entitySetName}?$select=${select}&$top=${Math.max(1, Math.min(limit, 50))}&$filter=${encodeURIComponent(clauses.join(' and '))}`;
+    const { data } = await this.request<Raw>('GET', query, { headers: this.readHeaders() });
+    return ((data.value ?? []) as Raw[]).map((r) => normalizeRecord(r, table.primaryIdAttribute, attrs));
   }
 
   private async toPayload(table: TableMetadata, record: WriteRecord, forCreate: boolean): Promise<Raw> {
@@ -385,8 +455,11 @@ export class WebApiConnection implements DataverseConnection {
       headers['MSCRM.BypassBusinessLogicExecution'] = 'CustomSync,CustomAsync';
     if (options.suppressFlowTriggers) headers['MSCRM.SuppressCallbackRegistrationExpanderJob'] = 'true';
     // Impersonation: the record is created/updated as this user, so createdby/modifiedby match
-    // the source. Requires prvActOnBehalfOfAnotherUser for the signed-in user.
-    if (options.impersonateUserId) headers['MSCRMCallerID'] = options.impersonateUserId;
+    // the source. CallerObjectId (Entra object id) is the form Microsoft prefers; MSCRMCallerID
+    // (systemuserid) is the documented legacy fallback.
+    // https://learn.microsoft.com/power-apps/developer/data-platform/webapi/impersonate-another-user-web-api
+    if (options.impersonateObjectId) headers['CallerObjectId'] = options.impersonateObjectId;
+    else if (options.impersonateUserId) headers['MSCRMCallerID'] = options.impersonateUserId;
     return headers;
   }
 
@@ -407,7 +480,10 @@ export class WebApiConnection implements DataverseConnection {
   /** Users, teams or business units for principal mapping (owner / created by / modified by). */
   async listPrincipals(table: PrincipalTable): Promise<PrincipalDto[]> {
     const q = WebApiConnection.PRINCIPAL_QUERIES[table];
-    const filter = table === 'team' ? '&$filter=teamtype eq 0' : '';
+    // Owner teams (0) and Microsoft Entra group teams (2 = security group, 3 = Office group)
+    // can own records; access teams (1) cannot and are excluded.
+    // https://learn.microsoft.com/power-platform/admin/manage-teams
+    const filter = table === 'team' ? '&$filter=teamtype eq 0 or teamtype eq 2 or teamtype eq 3' : '';
     const rows = await this.getAll(`${q.set}?$select=${q.select}${filter}`);
     return rows
       .filter((r) => !(table === 'systemuser' && r.applicationid))

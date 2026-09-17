@@ -45,6 +45,11 @@ const schema = z.object({
   DATAVERSE_API_VERSION: z.string().default('v9.2'),
   POWER_PLATFORM_ENRICHMENT: bool(false),
   ALLOW_BUSINESS_LOGIC_BYPASS: bool(false),
+  /**
+   * Certification safety switch: allow every read against a real tenant, block every write.
+   * Enforced server-side in the Dataverse client, not just in the UI.
+   */
+  REAL_TENANT_READ_ONLY: bool(false),
 
   RUN_WORKER: bool(true),
   WORKER_POLL_MS: z.coerce.number().int().positive().default(1000),

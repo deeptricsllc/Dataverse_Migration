@@ -1,5 +1,8 @@
-import type {
-  AutomationInfo,
+import {
+  auditFlags,
+  auditNeedsImpersonation,
+  auditNeedsPrincipals,
+  type AutomationInfo,
   DependencyAnalysisDto,
   DiffStatus,
   MatchStrategy,
@@ -7,7 +10,7 @@ import type {
   PlanOptions,
   TableDiff,
 } from '../../../shared/domain';
-import { SYSTEM_MANAGED_COLUMNS, type TableMetadata } from '../../../shared/metadata';
+import { SYSTEM_MANAGED_COLUMNS, isKeyUsable, type TableMetadata } from '../../../shared/metadata';
 import type { MappingProposal } from './mapping';
 import { isRequiredLevel } from './mapping';
 
@@ -22,6 +25,7 @@ export interface PlanValidationEntity {
   targetCount: number | null;
   matchStrategy: MatchStrategy;
   alternateKey: string | null;
+  businessKeyFields: string[];
   automation: AutomationInfo | null;
   audit?: {
     ownerField: string | null;
@@ -39,7 +43,7 @@ export interface PlanValidationInput {
   options: PlanOptions;
   bypassAllowed: boolean;
   /** Principal mapping state for ownership / audit preservation. */
-  principals?: { total: number; unmatched: number; canImpersonate: boolean | null };
+  principals?: { total: number; unmatched: number; ambiguous: number; canImpersonate: boolean | null };
 }
 
 const MAPPED = new Set(['AUTO_MAPPED', 'MANUAL']);
@@ -150,7 +154,16 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
           code: 'ALTERNATE_KEY_MISSING',
           table: t,
           message: `Alternate key ${e.alternateKey ?? '(none)'} is not defined in the target.`,
-          resolution: 'Choose a key that exists in both environments or match by primary ID.',
+          resolution: 'Choose a key that exists in both environments or match by record id.',
+        });
+      } else if (!isKeyUsable(key)) {
+        add({
+          severity: 'BLOCKER',
+          code: 'ALTERNATE_KEY_NOT_ACTIVE',
+          table: t,
+          message: `The alternate key ${key.logicalName} has index status ${key.status}; its uniqueness is not enforced yet, so it cannot be used to match records safely.`,
+          resolution:
+            'Wait for the key index to become Active in the target, or choose another match strategy.',
         });
       } else {
         const unmappedKeyAttrs = key.attributes.filter((a) => !mappedTargets.has(a));
@@ -162,6 +175,39 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
             message: `Alternate key columns are not mapped: ${unmappedKeyAttrs.join(', ')}.`,
           });
         }
+      }
+    }
+
+    if (e.matchStrategy === 'BUSINESS_KEY') {
+      const fields = e.businessKeyFields ?? [];
+      if (fields.length === 0) {
+        add({
+          severity: 'BLOCKER',
+          code: 'BUSINESS_KEY_NOT_CONFIGURED',
+          table: t,
+          message: 'Matching by business key is selected but no columns are configured.',
+          resolution: 'Choose the columns that identify a record uniquely, or match by record id.',
+        });
+      } else {
+        const unmapped = fields.filter((f) => !mappedTargets.has(f));
+        if (unmapped.length) {
+          add({
+            severity: 'BLOCKER',
+            code: 'BUSINESS_KEY_UNMAPPED',
+            table: t,
+            message: `Business key columns are not mapped: ${unmapped.join(', ')}.`,
+          });
+        }
+        const namedOnly = fields.length === 1 && fields[0] === e.target.primaryNameAttribute;
+        add({
+          severity: namedOnly ? 'WARNING' : 'INFO',
+          code: 'BUSINESS_KEY_UNIQUENESS',
+          table: t,
+          message: namedOnly
+            ? `Matching on the display name column ${fields[0]} alone is risky: Dataverse does not enforce its uniqueness. Duplicates are reported as conflicts and never written.`
+            : `Records are matched on ${fields.join(' + ')}. Dataverse does not enforce uniqueness for this combination; duplicates are reported as conflicts and never written.`,
+          resolution: 'Run a preflight to see whether any duplicates exist.',
+        });
       }
     }
 
@@ -260,10 +306,14 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
       message: 'Power Automate flows triggered by Dataverse events will not run for migrated records.',
     });
   }
-  // Ownership and audit preservation: state precisely what Dataverse can and cannot do.
-  const audit = input.options;
-  if (audit.preserveOwnership || audit.preserveCreatedBy || audit.preserveModifiedBy) {
-    const p = input.principals;
+  // ---------------------------------------------------------------------------
+  // Identity resolution and audit preservation policies
+  // ---------------------------------------------------------------------------
+  const flags = auditFlags(input.options.auditPolicy);
+  const identityNeeded = auditNeedsPrincipals(input.options.auditPolicy);
+  const p = input.principals;
+
+  if (identityNeeded) {
     if (!p || p.total === 0) {
       add({
         severity: 'BLOCKER',
@@ -271,30 +321,66 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
         table: null,
         message:
           'Ownership/audit preservation is enabled but users have not been mapped for this environment pair.',
-        resolution: 'Open User mapping and refresh the directories.',
+        resolution: 'Open User mapping and load the directories.',
       });
-    } else if (p.unmatched > 0) {
-      add({
-        severity: 'WARNING',
-        code: 'PRINCIPALS_UNMATCHED',
-        table: null,
-        message: `${p.unmatched} of ${p.total} source users/teams have no target match. Their records fall back to the migrating user and are reported per record.`,
-        resolution: 'Map them manually in User mapping, or accept the fallback.',
-      });
+    } else {
+      if (p.ambiguous > 0) {
+        add({
+          severity: 'BLOCKER',
+          code: 'PRINCIPALS_AMBIGUOUS',
+          table: null,
+          message: `${p.ambiguous} source user(s)/team(s) match more than one target principal. Ambiguous identities are never resolved automatically.`,
+          resolution: 'Choose the correct target on the User mapping page, or exclude the identity.',
+        });
+      }
+      if (p.unmatched > 0) {
+        if (input.options.userResolutionPolicy === 'STRICT') {
+          add({
+            severity: 'BLOCKER',
+            code: 'PRINCIPALS_UNRESOLVED_STRICT',
+            table: null,
+            message: `${p.unmatched} of ${p.total} source users/teams have no approved target mapping. Under the STRICT policy their records are blocked instead of being reassigned.`,
+            resolution:
+              'Map or exclude each identity on the User mapping page, or switch the user resolution policy to FALLBACK and choose a fallback identity.',
+          });
+        } else if (!input.options.fallbackPrincipal) {
+          add({
+            severity: 'BLOCKER',
+            code: 'FALLBACK_NOT_CONFIGURED',
+            table: null,
+            message:
+              'The FALLBACK user resolution policy is selected but no fallback identity has been chosen. Ownership is never silently reassigned to the executing user.',
+            resolution: 'Choose a fallback target user or team in the plan options.',
+          });
+        } else {
+          add({
+            severity: 'WARNING',
+            code: 'PRINCIPALS_FALLBACK',
+            table: null,
+            message: `${p.unmatched} of ${p.total} source users/teams have no approved mapping. Their records will be attributed to ${input.options.fallbackPrincipal.name}, and every substitution is recorded per record.`,
+            resolution: 'Run a preflight to see exactly how many records and fields are affected.',
+          });
+        }
+      }
     }
   }
-  if (audit.preserveCreatedBy || audit.preserveModifiedBy) {
-    const canImpersonate = input.principals?.canImpersonate;
+
+  if (auditNeedsImpersonation(input.options.auditPolicy)) {
+    const canImpersonate = p?.canImpersonate;
     add({
-      severity: canImpersonate === false ? 'BLOCKER' : 'WARNING',
+      severity: canImpersonate === false ? 'BLOCKER' : canImpersonate === true ? 'WARNING' : 'BLOCKER',
       code: 'AUDIT_IMPERSONATION',
       table: null,
       message:
-        canImpersonate === false
-          ? 'Preserving created by / modified by requires the "Act on Behalf of Another User" privilege (prvActOnBehalfOfAnotherUser) in the target, which this account does not have.'
-          : 'Records are written while impersonating the mapped source users so that created by / modified by match the source. Every write is audited.',
+        canImpersonate === true
+          ? 'Records are written while impersonating the mapped source users so that created by / modified by match the source. Every write is audited.'
+          : canImpersonate === false
+            ? 'PRESERVE_ATTRIBUTION requires the "Act on Behalf of Another User" privilege (prvActOnBehalfOfAnotherUser) in the target, which this account does not have. Microsoft requires it to be assigned directly, not through a team.'
+            : 'The impersonation privilege has not been verified for this target. Run the check before executing.',
       resolution:
-        canImpersonate === null ? 'Run the impersonation check on the User mapping page.' : undefined,
+        canImpersonate === true
+          ? undefined
+          : 'Open User mapping and run the impersonation check, or choose the STANDARD audit policy.',
     });
     add({
       severity: 'INFO',
@@ -302,18 +388,18 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
       table: null,
       message: 'Modified on always becomes the migration time: Dataverse does not allow it to be written.',
     });
-  }
-  if (audit.preserveModifiedBy) {
+    const records = input.entities.reduce((n, e) => n + (e.sourceCount ?? 0), 0);
     add({
       severity: 'INFO',
       code: 'AUDIT_EXTRA_WRITE',
       table: null,
-      message: 'Preserving "modified by" performs one extra update per record after the data passes.',
+      message: `Audit mode: Preserve attribution. Records: ${records.toLocaleString()}. Additional "modified by" writes: approximately ${records.toLocaleString()} (one extra update per migrated record).`,
     });
   }
+
   for (const e of input.entities) {
     if (!e.audit) continue;
-    if (audit.preserveOwnership && !e.audit.ownerField) {
+    if (flags.owner && !e.audit.ownerField) {
       add({
         severity: 'INFO',
         code: 'OWNERSHIP_NOT_APPLICABLE',
@@ -322,7 +408,7 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
           'This table has no owner column (organization-owned); ownership preservation does not apply.',
       });
     }
-    if (audit.preserveCreatedOn && !e.audit.overriddenCreatedOnField) {
+    if (flags.createdOn && !e.audit.overriddenCreatedOnField) {
       add({
         severity: 'WARNING',
         code: 'CREATED_ON_NOT_PRESERVABLE',
@@ -331,7 +417,7 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
           'The target does not expose overriddencreatedon for this table; created on will be the migration time.',
       });
     }
-    if (audit.preserveModifiedBy && !e.audit.touchField) {
+    if (flags.modifiedBy && !e.audit.touchField) {
       add({
         severity: 'WARNING',
         code: 'MODIFIED_BY_NOT_PRESERVABLE',
@@ -340,13 +426,24 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
       });
     }
   }
+
+  if (flags.createdOn) {
+    add({
+      severity: 'INFO',
+      code: 'CREATED_ON_PRIVILEGE',
+      table: null,
+      message:
+        'Backdating created on uses overriddencreatedon, which requires the "Override Created on or Created by for Records during Data Import" privilege (prvOverrideCreatedOnCreatedBy) in the target.',
+    });
+  }
+
   if (input.options.conflictStrategy === 'SYNC') {
     add({
       severity: 'INFO',
       code: 'SYNC_STRATEGY',
       table: null,
       message:
-        'Sync: missing records are created, changed records are updated field by field, and identical records are left untouched (their modified on / modified by stay as they are).',
+        'Sync: missing records are created, changed records are updated field by field, and identical records are left untouched (no Dataverse write, so their modified on / modified by stay as they are).',
     });
   }
   if (input.options.conflictStrategy === 'UPSERT') {

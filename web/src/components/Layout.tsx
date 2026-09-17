@@ -7,9 +7,11 @@ import {
   GitCompareArrows,
   History,
   LayoutDashboard,
+  Lock,
   LogOut,
   Settings,
   ShieldCheck,
+  Stethoscope,
   Truck,
   Users,
 } from 'lucide-react';
@@ -27,6 +29,7 @@ const NAV = [
   { to: '/migration', label: 'Migration', icon: Truck },
   { to: '/validation', label: 'Validation', icon: ShieldCheck },
   { to: '/runs', label: 'Runs', icon: History },
+  { to: '/diagnostics', label: 'Diagnostics', icon: Stethoscope },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -163,7 +166,7 @@ export function WorkspaceHeader() {
 }
 
 export function Layout() {
-  const { user } = useSession();
+  const { user, realTenantReadOnly } = useSession();
   const location = useLocation();
   const showWorkspace = !['/', '/settings'].includes(location.pathname);
   return (
@@ -201,10 +204,21 @@ export function Layout() {
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
+        {realTenantReadOnly && (
+          <div
+            className="flex items-center justify-center gap-2 bg-sky-800 px-4 py-1 text-center text-xs font-semibold text-white"
+            role="note"
+            data-testid="read-only-banner"
+          >
+            <Lock className="h-3.5 w-3.5" aria-hidden />
+            REAL TENANT — READ ONLY. Dataverse reads are allowed; every write is blocked by the server.
+          </div>
+        )}
         {user.organization.isDemo && (
           <div
             className="bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950"
             role="note"
+            data-testid="demo-banner"
           >
             DEMO MODE — simulated Dataverse environments. No Microsoft tenant is connected and no real data is
             read or written.
@@ -213,6 +227,11 @@ export function Layout() {
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">
           <div className="flex items-center gap-3">
             <span className="text-sm font-semibold text-slate-900">Dataverse Migration Platform</span>
+            {realTenantReadOnly && (
+              <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-sky-900">
+                READ ONLY
+              </span>
+            )}
             {user.organization.isDemo && (
               <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-amber-800">
                 DEMO MODE

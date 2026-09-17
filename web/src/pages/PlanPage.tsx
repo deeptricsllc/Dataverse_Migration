@@ -1,17 +1,22 @@
 import type {
+  AuditPolicy,
   ConflictStrategy,
   DependencyEdgeDto,
   FieldMappingDto,
   MappingStatus,
+  MatchStrategy,
   MigrationPlanDto,
   MigrationRunDto,
   PlanEntityDto,
   PlanIssue,
   PlanOptions,
+  PreflightRunDto,
+  PrincipalMappingSummaryDto,
   TableCandidateDto,
+  UserResolutionPolicy,
 } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Lightbulb, Play, RefreshCw, RotateCcw, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Lightbulb, ListChecks, Play, RefreshCw, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { TableSelector } from '../components/TableSelector';
@@ -411,8 +416,11 @@ function MappingStep({
     },
   });
   const updateEntity = useMutation({
-    mutationFn: (body: { matchStrategy: 'PRIMARY_ID' | 'ALTERNATE_KEY'; alternateKey: string | null }) =>
-      patch<MigrationPlanDto>(`/api/plans/${plan.id}/entities/${entityId}`, body),
+    mutationFn: (body: {
+      matchStrategy: MatchStrategy;
+      alternateKey: string | null;
+      businessKeyFields?: string[];
+    }) => patch<MigrationPlanDto>(`/api/plans/${plan.id}/entities/${entityId}`, body),
     onSuccess: onPlan,
   });
 
@@ -465,13 +473,23 @@ function MappingStep({
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <Select
                 label="Match strategy"
-                value={entity.matchStrategy === 'ALTERNATE_KEY' ? `KEY:${entity.alternateKey}` : 'PRIMARY_ID'}
+                value={
+                  entity.matchStrategy === 'ALTERNATE_KEY'
+                    ? `KEY:${entity.alternateKey}`
+                    : entity.matchStrategy
+                }
                 disabled={updateEntity.isPending}
                 onChange={(v) =>
                   updateEntity.mutate(
                     v === 'PRIMARY_ID'
                       ? { matchStrategy: 'PRIMARY_ID', alternateKey: null }
-                      : { matchStrategy: 'ALTERNATE_KEY', alternateKey: v.slice(4) },
+                      : v === 'BUSINESS_KEY'
+                        ? {
+                            matchStrategy: 'BUSINESS_KEY',
+                            alternateKey: null,
+                            businessKeyFields: entity.businessKeyFields,
+                          }
+                        : { matchStrategy: 'ALTERNATE_KEY', alternateKey: v.slice(4) },
                   )
                 }
                 options={[
@@ -480,14 +498,52 @@ function MappingStep({
                     value: `KEY:${k.logicalName}`,
                     label: `Match by alternate key ${k.logicalName} (${k.attributes.join(', ')})`,
                   })),
+                  { value: 'BUSINESS_KEY', label: 'Match by business key (choose columns)' },
                 ]}
               />
+              <span className="text-xs text-slate-600">{entity.matchDescription}</span>
               {entity.availableKeys.length === 0 && (
                 <span className="text-xs text-slate-500">
                   No alternate keys are defined in the target for this table.
                 </span>
               )}
             </div>
+            {entity.matchStrategy === 'BUSINESS_KEY' && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs text-amber-900">
+                  Dataverse does not enforce uniqueness for a business key. Records matching more than one
+                  target are reported as conflicts and never written. Pick columns that identify a record
+                  uniquely — a display name alone usually does not.
+                </p>
+                <div className="mt-2 flex max-h-40 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">
+                  {(mappings.data?.mappings ?? [])
+                    .filter((m) => m.targetField)
+                    .map((m) => {
+                      const field = m.targetField!;
+                      const checked = entity.businessKeyFields.includes(field);
+                      return (
+                        <label key={m.id} className="flex items-center gap-1.5 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={updateEntity.isPending}
+                            onChange={() =>
+                              updateEntity.mutate({
+                                matchStrategy: 'BUSINESS_KEY',
+                                alternateKey: null,
+                                businessKeyFields: checked
+                                  ? entity.businessKeyFields.filter((f) => f !== field)
+                                  : [...entity.businessKeyFields, field],
+                              })
+                            }
+                          />
+                          {m.sourceDisplayName} <Mono className="text-[11px] text-slate-400">{field}</Mono>
+                        </label>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
             {updateEntity.error && (
               <div className="mt-3">
                 <ErrorState error={updateEntity.error} />
@@ -800,9 +856,7 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
                     <Td>
                       <StatusBadge status={e.schemaStatus} />
                     </Td>
-                    <Td className="text-xs">
-                      {e.matchStrategy === 'ALTERNATE_KEY' ? `Key: ${e.alternateKey}` : 'Primary ID'}
-                    </Td>
+                    <Td className="text-xs">{e.matchDescription}</Td>
                     <Td className="text-xs text-slate-600">
                       {e.mappingSummary.AUTO_MAPPED + e.mappingSummary.MANUAL} mapped
                       {e.mappingSummary.UNMAPPED > 0 && (
@@ -909,80 +963,7 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
               />
               Suppress Power Automate flow triggers
             </label>
-            <fieldset
-              className="space-y-2 rounded-md border border-slate-200 p-2"
-              disabled={options.isPending}
-            >
-              <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-                Ownership & audit fields
-              </legend>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={o.preserveOwnership}
-                  onChange={(e) => options.mutate({ preserveOwnership: e.target.checked })}
-                  data-testid="preserve-ownership"
-                />
-                <span>
-                  Preserve <strong>owner</strong>
-                  <span className="block text-xs text-slate-500">
-                    Assigns each record to the mapped target user or team instead of you.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={o.preserveCreatedOn}
-                  onChange={(e) => options.mutate({ preserveCreatedOn: e.target.checked })}
-                />
-                <span>
-                  Preserve <strong>created on</strong>
-                  <span className="block text-xs text-slate-500">
-                    Backdates records via overriddencreatedon.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={o.preserveCreatedBy}
-                  onChange={(e) => options.mutate({ preserveCreatedBy: e.target.checked })}
-                />
-                <span>
-                  Preserve <strong>created by</strong>
-                  <span className="block text-xs text-slate-500">
-                    Creates each record while impersonating the mapped user (needs the “Act on Behalf of
-                    Another User” privilege).
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={o.preserveModifiedBy}
-                  onChange={(e) => options.mutate({ preserveModifiedBy: e.target.checked })}
-                />
-                <span>
-                  Preserve <strong>modified by</strong>
-                  <span className="block text-xs text-slate-500">
-                    Adds one impersonated update per record after the data passes.
-                  </span>
-                </span>
-              </label>
-              <p className="px-1 text-xs text-slate-500">
-                <strong>Modified on</strong> cannot be preserved: Dataverse always stamps it with the
-                migration time.{' '}
-                <Link to="/users" className="font-medium text-brand-700 underline">
-                  Map users
-                </Link>{' '}
-                first; unmapped users fall back to you and are reported per record.
-              </p>
-            </fieldset>
+            <PolicyControls plan={plan} options={options} />
             <div className="rounded-md border border-slate-200 p-2">
               <label
                 className={cx(
@@ -1019,6 +1000,10 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
         actions={
           <>
             <ExportButton href={`/api/plans/${plan.id}/issues.csv`} label="Export issues" />
+            <ExportButton
+              href={`/api/plans/${plan.id}/issues-package.csv`}
+              label="Export all issues (remediation package)"
+            />
             <Button
               icon={<RefreshCw className="h-4 w-4" />}
               loading={revalidate.isPending}
@@ -1037,6 +1022,14 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
         <IssueList issues={plan.issues} />
       </Card>
 
+      {plan.targetEnvironment.environmentClass === 'PRODUCTION' && (
+        <Callout tone="danger" title="Production target">
+          {plan.targetEnvironment.displayName} is classified by Microsoft as a production environment.
+          Executing this plan writes to live business data. Run the preflight first and confirm this is a
+          planned cutover.
+        </Callout>
+      )}
+
       <div className="flex flex-wrap items-center justify-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         {plan.blockerCount > 0 ? (
           <span className="text-sm text-red-700">
@@ -1048,6 +1041,13 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
             <strong className="text-[var(--color-target)]">{plan.targetEnvironment.displayName}</strong>.
           </span>
         )}
+        <Link
+          to={`/migration/plans/${plan.id}/preflight`}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          data-testid="open-preflight"
+        >
+          <ListChecks className="h-4 w-4" aria-hidden /> Preflight (dry run)
+        </Link>
         <Button
           variant="primary"
           icon={<Play className="h-4 w-4" />}
@@ -1080,6 +1080,18 @@ function ExecuteModal({
 }) {
   const [typed, setTyped] = useState('');
   const [ack, setAck] = useState(false);
+  const [ackIdentity, setAckIdentity] = useState(false);
+  const preflight = useQuery({
+    queryKey: ['preflight', plan.id],
+    queryFn: () => get<PreflightRunDto | null>(`/api/plans/${plan.id}/preflight`),
+    enabled: open,
+  });
+  const impact = preflight.data?.status === 'COMPLETED' ? preflight.data.identityImpact : null;
+  const substitutions =
+    impact && impact.policy === 'FALLBACK' && impact.fallbackPrincipal && impact.recordsAffected > 0
+      ? impact
+      : null;
+  const isProduction = plan.targetEnvironment.environmentClass === 'PRODUCTION';
   const execute = useMutation({
     mutationFn: () =>
       post<MigrationRunDto>(`/api/plans/${plan.id}/execute`, {
@@ -1090,7 +1102,10 @@ function ExecuteModal({
     onSuccess: onStarted,
   });
   const totalSource = plan.entities.reduce((n, e) => n + (e.sourceCount ?? 0), 0);
-  const canRun = typed.trim() === plan.targetEnvironment.displayName && (plan.warningCount === 0 || ack);
+  const canRun =
+    typed.trim() === plan.targetEnvironment.displayName &&
+    (plan.warningCount === 0 || ack) &&
+    (!substitutions || ackIdentity);
   return (
     <Modal
       open={open}
@@ -1128,6 +1143,13 @@ function ExecuteModal({
             <div className="truncate font-mono text-[11px] text-slate-500">{plan.targetEnvironment.url}</div>
           </div>
         </div>
+        {isProduction && (
+          <Callout tone="danger" title="The target is a PRODUCTION environment">
+            Microsoft reports {plan.targetEnvironment.displayName} as a production environment. Records
+            written here affect live business data and cannot be rolled back automatically. Migrate to a
+            sandbox first unless this is a planned production cutover.
+          </Callout>
+        )}
         <ul className="list-disc space-y-1 pl-5 text-slate-700">
           <li>
             {plan.entities.length} table(s), up to {fmtNumber(totalSource)} source record(s), in dependency
@@ -1145,6 +1167,43 @@ function ExecuteModal({
             run{plan.options.stopOnFirstError ? ' (except: stop on first error is enabled)' : ''}.
           </li>
         </ul>
+        {substitutions && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+            <p className="font-medium">Ownership substitutions will be applied</p>
+            <p className="mt-0.5 text-xs">
+              {fmtNumber(substitutions.recordsAffected)} record(s) reference{' '}
+              {substitutions.unresolvedPrincipals.length} identity/identities that do not exist in the target.
+              They will be attributed to <strong>{substitutions.fallbackPrincipal!.name}</strong> in{' '}
+              {substitutions.fieldsAffected.join(', ')}. Every substitution is recorded per record.
+            </p>
+            <ul className="mt-2 max-h-32 space-y-0.5 overflow-y-auto text-xs">
+              {substitutions.unresolvedPrincipals.slice(0, 10).map((u) => (
+                <li key={`${u.logicalName}:${u.id}`}>
+                  {u.name ?? u.id} — {fmtNumber(u.records)} record(s) · {u.fields.join(', ')}
+                </li>
+              ))}
+              {substitutions.unresolvedPrincipals.length > 10 && (
+                <li>…and {substitutions.unresolvedPrincipals.length - 10} more (see the preflight).</li>
+              )}
+            </ul>
+            <label className="mt-2 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={ackIdentity}
+                onChange={(e) => setAckIdentity(e.target.checked)}
+                className="mt-0.5"
+                data-testid="ack-identity"
+              />
+              I understand these records will not keep their original ownership/attribution.
+            </label>
+          </div>
+        )}
+        {plan.options.userResolutionPolicy === 'FALLBACK' && !preflight.data && (
+          <Callout tone="warning" title="No preflight has been run">
+            Run a preflight to see exactly which records and fields would have their ownership substituted
+            before executing.
+          </Callout>
+        )}
         {plan.warningCount > 0 && (
           <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
             <input
@@ -1172,5 +1231,157 @@ function ExecuteModal({
         {execute.error && <ErrorState error={execute.error} />}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Audit and user-resolution policy controls. Both policies are explicit: ownership is never
+ * silently reassigned to the executing user, and the fallback identity must be chosen by hand.
+ */
+function PolicyControls({
+  plan,
+  options,
+}: {
+  plan: MigrationPlanDto;
+  options: { mutate: (p: Partial<PlanOptions>) => void; isPending: boolean };
+}) {
+  const o = plan.options;
+  const principals = useQuery({
+    queryKey: ['principal-mappings', plan.sourceEnvironment.id, plan.targetEnvironment.id],
+    queryFn: () =>
+      get<PrincipalMappingSummaryDto>(
+        `/api/principal-mappings${qs({ sourceEnvironmentId: plan.sourceEnvironment.id, targetEnvironmentId: plan.targetEnvironment.id })}`,
+      ),
+  });
+  const targets = principals.data?.targetPrincipals;
+  const fallbackOptions = [
+    { value: '', label: 'Choose a fallback identity…' },
+    ...(['systemuser', 'team'] as const).flatMap((table) =>
+      (targets?.[table] ?? []).map((p) => ({
+        value: `${table}:${p.id}`,
+        label: `${p.name} (${table === 'team' ? 'team' : 'user'})`,
+      })),
+    ),
+  ];
+  const fallbackValue = o.fallbackPrincipal
+    ? `${o.fallbackPrincipal.logicalName}:${o.fallbackPrincipal.id}`
+    : '';
+
+  return (
+    <>
+      <fieldset className="space-y-2 rounded-md border border-slate-200 p-2" disabled={options.isPending}>
+        <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+          Audit preservation policy
+        </legend>
+        {(
+          [
+            ['NONE', 'None', 'Records are owned and stamped by the executing user. No user mapping needed.'],
+            [
+              'STANDARD',
+              'Standard (owner + created on)',
+              'Assigns each record to the mapped owner and backdates created on. No extra Dataverse writes.',
+            ],
+            [
+              'PRESERVE_ATTRIBUTION',
+              'Preserve attribution (adds created by / modified by)',
+              'Writes each record while impersonating the mapped user, then re-stamps modified by — approximately one extra write per record. Requires the “Act on Behalf of Another User” privilege.',
+            ],
+          ] as [AuditPolicy, string, string][]
+        ).map(([value, label, help]) => (
+          <label
+            key={value}
+            className="flex cursor-pointer gap-2 rounded-md border border-slate-200 p-2 text-sm has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50"
+          >
+            <input
+              type="radio"
+              name="auditPolicy"
+              value={value}
+              checked={o.auditPolicy === value}
+              onChange={() => options.mutate({ auditPolicy: value })}
+              className="mt-0.5"
+              data-testid={`audit-policy-${value}`}
+            />
+            <span>
+              <span className="font-medium">{label}</span>
+              <span className="block text-xs text-slate-500">{help}</span>
+            </span>
+          </label>
+        ))}
+        <p className="px-1 text-xs text-slate-500">
+          <strong>Modified on</strong> cannot be preserved: Dataverse always stamps it with the migration
+          time.{' '}
+          <Link to="/users" className="font-medium text-brand-700 underline">
+            Map users
+          </Link>{' '}
+          before choosing anything other than None.
+        </p>
+      </fieldset>
+
+      {o.auditPolicy !== 'NONE' && (
+        <fieldset className="space-y-2 rounded-md border border-slate-200 p-2" disabled={options.isPending}>
+          <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+            Unresolved user references
+          </legend>
+          {(
+            [
+              [
+                'STRICT',
+                'Strict — block the record',
+                'A record whose owner or user field cannot be mapped is not written at all. Nothing is silently reassigned.',
+              ],
+              [
+                'FALLBACK',
+                'Fallback — use a chosen identity',
+                'Unresolved references use the identity you pick below. Every substitution is recorded per record and exported.',
+              ],
+            ] as [UserResolutionPolicy, string, string][]
+          ).map(([value, label, help]) => (
+            <label
+              key={value}
+              className="flex cursor-pointer gap-2 rounded-md border border-slate-200 p-2 text-sm has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50"
+            >
+              <input
+                type="radio"
+                name="userResolutionPolicy"
+                value={value}
+                checked={o.userResolutionPolicy === value}
+                onChange={() => options.mutate({ userResolutionPolicy: value })}
+                className="mt-0.5"
+                data-testid={`user-policy-${value}`}
+              />
+              <span>
+                <span className="font-medium">{label}</span>
+                <span className="block text-xs text-slate-500">{help}</span>
+              </span>
+            </label>
+          ))}
+          {o.userResolutionPolicy === 'FALLBACK' && (
+            <div className="px-1">
+              <Select
+                label="Fallback identity"
+                className="w-full"
+                value={fallbackValue}
+                disabled={principals.isLoading}
+                onChange={(v) => {
+                  if (!v) return options.mutate({ fallbackPrincipal: null });
+                  const [logicalName, id] = v.split(':');
+                  const name =
+                    fallbackOptions.find((opt) => opt.value === v)?.label.replace(/ \((user|team)\)$/, '') ??
+                    id;
+                  options.mutate({
+                    fallbackPrincipal: { logicalName: logicalName as 'systemuser' | 'team', id, name },
+                  });
+                }}
+                options={fallbackOptions}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                The executing user is never used automatically. Run a preflight to see exactly which records
+                and fields would be attributed to this identity.
+              </p>
+            </div>
+          )}
+        </fieldset>
+      )}
+    </>
   );
 }

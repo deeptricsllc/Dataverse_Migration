@@ -16,12 +16,32 @@ import { SecretBox } from '../lib/crypto';
 import { AppError } from '../lib/errors';
 import { scrubSecrets } from '../logger';
 
-/** Delegated scope used at sign-in: Global Discovery Service (lists Dataverse instances). */
+/**
+ * Dataverse resource scopes.
+ *
+ * Microsoft documents `<resource>/.default` for confidential clients and
+ * `<resource>/user_impersonation` for public clients, and the official Global Discovery sample
+ * builds the scope as `<resource>//user_impersonation` (the resource URI carries a trailing
+ * slash). Rather than guessing which form a tenant accepts, we try the documented candidates in
+ * order and remember the one that worked per resource.
+ * https://learn.microsoft.com/power-apps/developer/data-platform/authenticate-oauth
+ * https://learn.microsoft.com/entra/identity-platform/scopes-oidc
+ */
+export const scopeCandidates = (resourceUrl: string): string[] => {
+  const base = resourceUrl.replace(/\/+$/, '');
+  return [
+    `${base}/.default`,
+    `${base}//.default`,
+    `${base}/user_impersonation`,
+    `${base}//user_impersonation`,
+  ];
+};
+
+/** Scope requested interactively at sign-in. `.default` cannot be combined with OIDC scopes. */
 export const discoveryScope = (discoveryUrl: string) =>
   `${discoveryUrl.replace(/\/+$/, '')}/user_impersonation`;
-/** Delegated scope for a specific Dataverse environment. */
-export const dataverseScope = (environmentUrl: string) =>
-  `${environmentUrl.replace(/\/+$/, '')}/user_impersonation`;
+/** Delegated scope for a specific Dataverse environment (first candidate; see scopeCandidates). */
+export const dataverseScope = (environmentUrl: string) => scopeCandidates(environmentUrl)[0];
 export const POWER_PLATFORM_SCOPE = 'https://service.powerapps.com//.default';
 
 export interface SignInResult {
@@ -40,6 +60,8 @@ export interface SignInResult {
  * browser or written to logs.
  */
 export class MicrosoftIdentityService {
+  /** Resource URL -> scope form accepted by this tenant. */
+  private static readonly resourceScopes = new Map<string, string>();
   private readonly box: SecretBox;
   private readonly crypto = new CryptoProvider();
 
@@ -169,6 +191,33 @@ export class MicrosoftIdentityService {
         if (ctx.cacheHasChanged) await this.saveCache(userId, ctx.tokenCache.serialize());
       },
     };
+  }
+
+  /**
+   * Acquires a token for a Dataverse resource, trying the documented scope forms in order and
+   * caching the one the tenant accepts. Refresh tokens are not bound to a resource, so the same
+   * sign-in can produce tokens for discovery and for each environment.
+   * https://learn.microsoft.com/entra/identity-platform/refresh-tokens
+   */
+  async getResourceToken(userId: string, resourceUrl: string): Promise<string> {
+    const cached = MicrosoftIdentityService.resourceScopes.get(resourceUrl);
+    const candidates = cached ? [cached] : scopeCandidates(resourceUrl);
+    let lastError: unknown;
+    for (const scope of candidates) {
+      try {
+        const token = await this.getAccessToken(userId, [scope]);
+        MicrosoftIdentityService.resourceScopes.set(resourceUrl, scope);
+        return token;
+      } catch (err) {
+        lastError = err;
+        // Only a scope/consent problem is worth retrying with a different form.
+        if (err instanceof AppError && err.code !== 'REAUTH_REQUIRED') throw err;
+        this.logger.debug({ resourceUrl, scope }, 'Scope form rejected; trying the next documented form');
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new AppError(401, 'REAUTH_REQUIRED', 'Could not obtain a Dataverse access token');
   }
 
   /** Acquires a delegated access token for the user silently (refreshing when needed). */

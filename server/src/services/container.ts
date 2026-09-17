@@ -13,6 +13,9 @@ import { MetadataService } from './metadata-service';
 import { MigrationEngine } from './migration-engine';
 import { MigrationRunService } from './migration-run-service';
 import { PlanningService } from './planning-service';
+import { DiagnosticsService } from './diagnostics-service';
+import { PreflightService } from './preflight-service';
+import { RemediationService } from './remediation-service';
 import { PrincipalService } from './principal-service';
 import { ValidationService } from './validation-service';
 
@@ -39,9 +42,30 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
-  const runs = new MigrationRunService(db, planning, queue, audit, logger);
+  const runs = new MigrationRunService(db, config, planning, environments, queue, audit, logger);
   const engine = new MigrationEngine(db, environments, metadata, connections, principals, audit, logger);
   const validation = new ValidationService(db, environments, metadata, connections, queue, audit, logger);
+  const preflight = new PreflightService(
+    db,
+    environments,
+    metadata,
+    connections,
+    principals,
+    runs,
+    queue,
+    audit,
+    logger,
+  );
+  const diagnostics = new DiagnosticsService(
+    config,
+    environments,
+    metadata,
+    connections,
+    principals,
+    identity,
+    logger,
+  );
+  const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
     environments,
@@ -59,6 +83,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
         COMPARISON: (job) => comparisons.execute(job.targetId),
         MIGRATION: (job, s) => engine.execute(job.targetId, s.heartbeat),
         VALIDATION: (job, s) => validation.execute(job.targetId, s.heartbeat),
+        PREFLIGHT: (job, s) => preflight.execute(job.targetId, s.heartbeat),
       },
       logger.child({ component: 'worker' }),
       { pollMs: config.WORKER_POLL_MS, concurrency: 2, staleMs: 90_000 },
@@ -81,6 +106,9 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     runs,
     engine,
     validation,
+    preflight,
+    diagnostics,
+    remediation,
     insights,
     createWorker,
   };

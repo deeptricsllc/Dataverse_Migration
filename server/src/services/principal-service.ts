@@ -15,6 +15,7 @@ import { badRequest, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { integrationError, type EnvironmentRow, type EnvironmentService } from './environment-service';
+import { envRef } from './env-ref';
 
 const PRINCIPAL_TABLES: PrincipalTable[] = ['systemuser', 'team', 'businessunit'];
 const DIRECTORY_TTL_MS = 60 * 60 * 1000;
@@ -24,6 +25,8 @@ interface Match {
   method: string | null;
   confidence: number;
   note: string | null;
+  /** Populated when several targets matched equally well; a human must choose. */
+  candidates?: PrincipalDto[];
 }
 
 /**
@@ -33,31 +36,51 @@ interface Match {
  */
 export function matchPrincipal(source: PrincipalDto, targets: PrincipalDto[]): Match {
   const norm = (v: string | null | undefined) => (v ? v.trim().toLowerCase() : null);
-  const byEntra =
-    source.entraObjectId && targets.find((t) => norm(t.entraObjectId) === norm(source.entraObjectId));
-  if (byEntra) return { targetId: byEntra.id, method: 'ENTRA_OBJECT_ID', confidence: 100, note: null };
-  const byLogin = source.login && targets.find((t) => norm(t.login) === norm(source.login));
-  if (byLogin) return { targetId: byLogin.id, method: 'LOGIN', confidence: 95, note: null };
-  const byEmail = source.email && targets.find((t) => norm(t.email) === norm(source.email));
-  if (byEmail) return { targetId: byEmail.id, method: 'EMAIL', confidence: 90, note: null };
+  // Each tier must identify exactly one target; two equally good candidates are ambiguous and
+  // are never resolved automatically.
+  const unique = (
+    matches: PrincipalDto[],
+    method: string,
+    confidence: number,
+    note: string | null,
+  ): Match | null => {
+    if (matches.length === 1) return { targetId: matches[0].id, method, confidence, note };
+    if (matches.length > 1) {
+      return {
+        targetId: null,
+        method: null,
+        confidence: 0,
+        note: `${matches.length} target principals match on ${method.replace(/_/g, ' ').toLowerCase()}; choose one manually.`,
+        candidates: matches,
+      };
+    }
+    return null;
+  };
+
+  const byEntra = source.entraObjectId
+    ? targets.filter((t) => norm(t.entraObjectId) === norm(source.entraObjectId))
+    : [];
+  const entra = unique(byEntra, 'ENTRA_OBJECT_ID', 100, null);
+  if (entra) return entra;
+
+  const byLogin = source.login ? targets.filter((t) => norm(t.login) === norm(source.login)) : [];
+  const login = unique(byLogin, 'LOGIN', 95, null);
+  if (login) return login;
+
+  const byEmail = source.email ? targets.filter((t) => norm(t.email) === norm(source.email)) : [];
+  const email = unique(byEmail, 'EMAIL', 90, null);
+  if (email) return email;
+
   const byName = targets.filter((t) => norm(t.name) === norm(source.name));
-  if (byName.length === 1) {
-    return {
-      targetId: byName[0].id,
-      method: 'NAME',
-      confidence: 70,
-      note: 'Matched on display name only; confirm before migrating.',
-    };
-  }
-  if (byName.length > 1) {
-    return {
-      targetId: null,
-      method: null,
-      confidence: 0,
-      note: `${byName.length} target users share this name; choose one manually.`,
-    };
-  }
-  return { targetId: null, method: null, confidence: 0, note: 'No matching user in the target environment.' };
+  const name = unique(byName, 'NAME', 70, 'Matched on display name only; confirm before migrating.');
+  if (name) return name;
+
+  return {
+    targetId: null,
+    method: null,
+    confidence: 0,
+    note: 'No matching principal in the target environment.',
+  };
 }
 
 /**
@@ -158,7 +181,11 @@ export class PrincipalService {
           const key = `${table}:${sourcePrincipal.id}`;
           if (manual.has(key)) continue;
           const match = matchPrincipal(sourcePrincipal, targetDir[table]);
-          const status: PrincipalMatchStatus = match.targetId ? 'AUTO_MATCHED' : 'UNMATCHED';
+          const status: PrincipalMatchStatus = match.targetId
+            ? 'AUTO_MATCHED'
+            : match.candidates?.length
+              ? 'AMBIGUOUS'
+              : 'UNMATCHED';
           await this.db
             .insert(principalMaps)
             .values({
@@ -172,6 +199,7 @@ export class PrincipalService {
               matchMethod: match.method,
               confidence: match.confidence,
               note: match.note,
+              candidates: match.candidates ?? [],
             })
             .onConflictDoUpdate({
               target: [
@@ -186,6 +214,7 @@ export class PrincipalService {
                 matchMethod: match.method,
                 confidence: match.confidence,
                 note: match.note,
+                candidates: match.candidates ?? [],
                 updatedAt: new Date(),
               },
             });
@@ -219,6 +248,7 @@ export class PrincipalService {
   ): Promise<PrincipalMappingSummaryDto> {
     const source = await this.environmentsSvc.getAccessible(ctx, sourceEnvironmentId);
     const target = await this.environmentsSvc.getAccessible(ctx, targetEnvironmentId);
+    const decisionUsers = new Map<string, string>();
     const [sourceRows, targetRows, maps] = await Promise.all([
       this.db.select().from(principalDirectory).where(eq(principalDirectory.environmentId, source.id)),
       this.db.select().from(principalDirectory).where(eq(principalDirectory.environmentId, target.id)),
@@ -245,6 +275,9 @@ export class PrincipalService {
           matchMethod: m?.matchMethod ?? null,
           confidence: m?.confidence ?? 0,
           note: m?.note ?? null,
+          candidates: m?.candidates ?? [],
+          decidedBy: m?.updatedByUserId ? (decisionUsers.get(m.updatedByUserId) ?? 'a user') : null,
+          decidedAt: (m?.updatedAt ?? row.fetchedAt).toISOString(),
         };
       })
       .sort(
@@ -257,13 +290,14 @@ export class PrincipalService {
     for (const row of targetRows) targetPrincipals[row.logicalName].push(row.data);
     for (const list of Object.values(targetPrincipals)) list.sort((a, b) => a.name.localeCompare(b.name));
     return {
-      sourceEnvironment: { id: source.id, displayName: source.displayName, url: source.url },
-      targetEnvironment: { id: target.id, displayName: target.displayName, url: target.url },
+      sourceEnvironment: envRef(source),
+      targetEnvironment: envRef(target),
       refreshedAt: sourceRows[0]?.fetchedAt.toISOString() ?? null,
       counts: {
         total: mappings.length,
         matched: mappings.filter((m) => m.status === 'AUTO_MATCHED' || m.status === 'MANUAL').length,
         unmatched: mappings.filter((m) => m.status === 'UNMATCHED').length,
+        ambiguous: mappings.filter((m) => m.status === 'AMBIGUOUS').length,
         manual: mappings.filter((m) => m.status === 'MANUAL').length,
         ignored: mappings.filter((m) => m.status === 'IGNORED').length,
       },
@@ -323,7 +357,10 @@ export class PrincipalService {
         status,
         matchMethod: input.ignore ? null : input.targetId ? 'MANUAL' : null,
         confidence: input.targetId && !input.ignore ? 100 : 0,
-        note: input.ignore ? 'Excluded by a user: records keep the migrating user instead.' : null,
+        note: input.ignore
+          ? 'Excluded by a user: records referencing it follow the user resolution policy.'
+          : null,
+        candidates: [],
         updatedByUserId: ctx.userId,
       })
       .onConflictDoUpdate({
@@ -338,7 +375,10 @@ export class PrincipalService {
           status,
           matchMethod: input.ignore ? null : input.targetId ? 'MANUAL' : null,
           confidence: input.targetId && !input.ignore ? 100 : 0,
-          note: input.ignore ? 'Excluded by a user: records keep the migrating user instead.' : null,
+          note: input.ignore
+            ? 'Excluded by a user: records referencing it follow the user resolution policy.'
+            : null,
+          candidates: [],
           updatedByUserId: ctx.userId,
           updatedAt: new Date(),
         },
@@ -380,6 +420,24 @@ export class PrincipalService {
     return new Map(
       rows.filter((r) => r.targetId).map((r) => [`${r.logicalName}:${r.sourceId}`, r.targetId!]),
     );
+  }
+
+  /**
+   * Target systemuser id -> Entra object id. Microsoft prefers the CallerObjectId impersonation
+   * header (Entra object id) over the legacy MSCRMCallerID (systemuserid).
+   * https://learn.microsoft.com/power-apps/developer/data-platform/impersonate-another-user
+   */
+  async targetObjectIds(targetEnvironmentId: string): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.db
+      .select({ id: principalDirectory.principalId, data: principalDirectory.data })
+      .from(principalDirectory)
+      .where(
+        and(
+          eq(principalDirectory.environmentId, targetEnvironmentId),
+          eq(principalDirectory.logicalName, 'systemuser'),
+        ),
+      );
+    return new Map(rows.filter((r) => r.data.entraObjectId).map((r) => [r.id, r.data.entraObjectId!]));
   }
 
   /** Verifies impersonation against the target using any mapped user (read-only). */

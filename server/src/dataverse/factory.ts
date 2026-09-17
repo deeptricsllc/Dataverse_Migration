@@ -1,7 +1,7 @@
 import { and, count, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
-import { POWER_PLATFORM_SCOPE, dataverseScope, discoveryScope } from '../auth/microsoft-identity';
+import { POWER_PLATFORM_SCOPE } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import { demoRecords, type environments } from '../db/schema';
@@ -36,6 +36,8 @@ export class ConnectionFactory {
       if (!this.config.DEMO_MODE) throw new AppError(400, 'DEMO_DISABLED', 'Demo environments are disabled');
       const def = DEMO_ENVIRONMENTS.find((d) => d.key === env.uniqueName);
       if (!def) throw new AppError(404, 'NOT_FOUND', 'Demo environment not found');
+      // Demo environments are simulated and hold no tenant data, so REAL_TENANT_READ_ONLY
+      // (which protects real Dataverse) does not disable them.
       return new DemoConnection(
         def,
         this.db,
@@ -44,10 +46,13 @@ export class ConnectionFactory {
       );
     }
     return new WebApiConnection({
-      url: env.url,
+      // The Global Discovery Service returns both Url (application) and ApiUrl (web API).
+      // https://learn.microsoft.com/power-apps/developer/data-platform/discovery-service
+      url: env.apiUrl || env.url,
       apiVersion: this.config.DATAVERSE_API_VERSION,
       logger,
-      getAccessToken: () => this.identity.getAccessToken(userId, [dataverseScope(env.url)]),
+      readOnly: this.config.REAL_TENANT_READ_ONLY,
+      getAccessToken: () => this.identity.getResourceToken(userId, env.apiUrl || env.url),
     });
   }
 
@@ -74,8 +79,7 @@ export class ConnectionFactory {
     return new GlobalDiscoveryProvider({
       discoveryUrl: this.config.DATAVERSE_DISCOVERY_URL,
       logger: this.logger.child({ userId }),
-      getDiscoveryToken: () =>
-        this.identity.getAccessToken(userId, [discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)]),
+      getDiscoveryToken: () => this.identity.getResourceToken(userId, this.config.DATAVERSE_DISCOVERY_URL),
       getPowerPlatformToken: this.config.POWER_PLATFORM_ENRICHMENT
         ? () => this.identity.getAccessToken(userId, [POWER_PLATFORM_SCOPE])
         : undefined,

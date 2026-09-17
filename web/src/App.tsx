@@ -4,11 +4,13 @@ import { Spinner } from './components/ui';
 import { SessionProvider, useSessionQuery } from './lib/session';
 import { ComparePage } from './pages/ComparePage';
 import { DashboardPage } from './pages/DashboardPage';
+import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { EnvironmentsPage } from './pages/EnvironmentsPage';
 import { LoginPage } from './pages/LoginPage';
 import { MigrationPage } from './pages/MigrationPage';
 import { NewMigrationPage } from './pages/NewMigrationPage';
 import { PlanPage } from './pages/PlanPage';
+import { PreflightPage } from './pages/PreflightPage';
 import { RunDetailPage } from './pages/RunDetailPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -26,7 +28,7 @@ function Protected() {
     );
   }
   return (
-    <SessionProvider user={session.data.user}>
+    <SessionProvider user={session.data.user} realTenantReadOnly={session.data.realTenantReadOnly}>
       <Layout />
     </SessionProvider>
   );
@@ -45,6 +47,8 @@ export function App() {
         <Route path="migration" element={<MigrationPage />} />
         <Route path="migration/new" element={<NewMigrationPage />} />
         <Route path="migration/plans/:planId" element={<PlanPage />} />
+        <Route path="migration/plans/:planId/preflight" element={<PreflightPage />} />
+        <Route path="diagnostics" element={<DiagnosticsPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:runId" element={<RunDetailPage />} />
         <Route path="validation" element={<ValidationPage />} />

@@ -79,19 +79,33 @@ describe('ownership/audit preservation, sync strategy and exports', () => {
       targetEnvironmentId: uat.id,
       tables: ['dtx_region', 'dtx_office'],
     });
-    plan = await api.patch<MigrationPlanDto>(`/api/plans/${plan.id}/options`, {
+    // STRICT is the default: the unmapped Development service account blocks the plan rather than
+    // having its records silently reassigned.
+    const strict = await api.patch<MigrationPlanDto>(`/api/plans/${plan.id}/options`, {
       conflictStrategy: 'SYNC',
-      preserveOwnership: true,
-      preserveCreatedOn: true,
-      preserveCreatedBy: true,
-      preserveModifiedBy: true,
+      auditPolicy: 'PRESERVE_ATTRIBUTION',
+    });
+    expect(strict.options.userResolutionPolicy).toBe('STRICT');
+    expect(strict.issues.map((i) => i.code)).toContain('PRINCIPALS_UNRESOLVED_STRICT');
+    expect(strict.blockerCount).toBeGreaterThan(0);
+
+    // FALLBACK requires an explicitly chosen identity; the executing user is never assumed.
+    const noFallback = await api.patch<MigrationPlanDto>(`/api/plans/${plan.id}/options`, {
+      userResolutionPolicy: 'FALLBACK',
+    });
+    expect(noFallback.issues.map((i) => i.code)).toContain('FALLBACK_NOT_CONFIGURED');
+
+    const fallbackUser = mapping.targetPrincipals.systemuser.find((p) => !p.disabled)!;
+    plan = await api.patch<MigrationPlanDto>(`/api/plans/${plan.id}/options`, {
+      fallbackPrincipal: { logicalName: 'systemuser', id: fallbackUser.id, name: fallbackUser.name },
     });
     expect(plan.blockerCount).toBe(0);
     expect(plan.issues.map((i) => i.code)).toEqual(
       expect.arrayContaining([
-        'PRINCIPALS_UNMATCHED',
+        'PRINCIPALS_FALLBACK',
         'AUDIT_IMPERSONATION',
         'MODIFIED_ON_NOT_PRESERVABLE',
+        'AUDIT_EXTRA_WRITE',
         'SYNC_STRATEGY',
       ]),
     );
@@ -133,11 +147,12 @@ describe('ownership/audit preservation, sync strategy and exports', () => {
     // modifiedon is always the migration time: Dataverse does not allow writing it.
     expect(targetRow.modifiedon).not.toBe(sourceRow.modifiedon);
 
-    // Records owned by the unmapped account fall back to the migrating user, with a warning.
+    // Records owned by the unmapped account use the configured fallback identity, and every
+    // substitution is reported: an ownership substitution is never hidden.
     const warnings = await api.get(`/api/runs/${run.id}/errors?severity=WARNING`);
-    expect(warnings.items.some((w: { errorCode: string }) => w.errorCode === 'PRINCIPAL_UNMAPPED')).toBe(
-      true,
-    );
+    expect(
+      warnings.items.some((w: { errorCode: string }) => w.errorCode === 'PRINCIPAL_FALLBACK_APPLIED'),
+    ).toBe(true);
   });
 
   it('sync leaves identical records untouched and updates only what changed', async () => {
@@ -207,7 +222,9 @@ describe('ownership/audit preservation, sync strategy and exports', () => {
     expect(records).toContain('Table,Source id,Target id,Outcome');
     expect(records.split('\r\n').length).toBeGreaterThan(21);
 
-    expect(await csv(`/api/runs/${run.id}/errors.csv?severity=WARNING`)).toContain('PRINCIPAL_UNMAPPED');
+    expect(await csv(`/api/runs/${run.id}/errors.csv?severity=WARNING`)).toContain(
+      'PRINCIPAL_FALLBACK_APPLIED',
+    );
     expect(await csv(`/api/plans/${plan.id}/issues.csv`)).toContain('MODIFIED_ON_NOT_PRESERVABLE');
     expect(await csv(`/api/validations/${validation.id}/summary.csv`)).toContain('dtx_office');
     expect(await csv(`/api/validations/${validation.id}/differences.csv`)).toContain('Source value');

@@ -1,6 +1,7 @@
 import { scrubSecrets } from '../logger';
 
 export type DataverseErrorCode =
+  | 'READ_ONLY_MODE'
   | 'NETWORK'
   | 'TIMEOUT'
   | 'THROTTLED'

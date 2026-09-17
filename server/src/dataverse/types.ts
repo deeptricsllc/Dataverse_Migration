@@ -30,10 +30,14 @@ export interface WriteOptions {
   bypassCustomBusinessLogic: boolean;
   suppressFlowTriggers: boolean;
   /**
-   * Execute the write as this target user (Dataverse MSCRMCallerID). Used to preserve
-   * "created by" / "modified by". Requires prvActOnBehalfOfAnotherUser in the target.
+   * Execute the write as this target user, to preserve "created by" / "modified by".
+   * Requires the "Act on Behalf of Another User" privilege (prvActOnBehalfOfAnotherUser),
+   * which Microsoft documents must be assigned directly (not inherited through a team).
+   * https://learn.microsoft.com/power-apps/developer/data-platform/impersonate-another-user
    */
   impersonateUserId?: string | null;
+  /** Entra object id of the same user. Preferred by Microsoft over the legacy systemuserid. */
+  impersonateObjectId?: string | null;
 }
 
 /**
@@ -62,6 +66,17 @@ export interface DataverseConnection {
     values: Record<string, FieldValue>,
     columns: string[],
   ): Promise<DvRecord | null>;
+
+  /**
+   * Finds records matching every supplied column value (configured business keys).
+   * Returns at most `limit` records so the caller can detect ambiguity instead of guessing.
+   */
+  findByFields(
+    table: TableMetadata,
+    criteria: Record<string, FieldValue>,
+    columns: string[],
+    limit: number,
+  ): Promise<DvRecord[]>;
 
   createRecord(table: TableMetadata, record: WriteRecord, options: WriteOptions): Promise<string>;
   updateRecord(table: TableMetadata, id: string, record: WriteRecord, options: WriteOptions): Promise<void>;

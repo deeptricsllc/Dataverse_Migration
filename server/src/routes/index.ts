@@ -32,11 +32,13 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/auth/config', async () => ({
     microsoftEnabled: config.microsoftEnabled,
     demoEnabled: config.DEMO_MODE,
+    realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
   }));
 
   app.get('/api/auth/session', async (req) => {
-    if (!req.session) return { user: null, csrfToken: null };
-    return { user: req.session.user, csrfToken: req.session.csrfToken };
+    const readOnly = config.REAL_TENANT_READ_ONLY;
+    if (!req.session) return { user: null, csrfToken: null, realTenantReadOnly: readOnly };
+    return { user: req.session.user, csrfToken: req.session.csrfToken, realTenantReadOnly: readOnly };
   });
 
   app.get(
@@ -232,10 +234,16 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         bypassCustomBusinessLogic: z.boolean().optional(),
         suppressFlowTriggers: z.boolean().optional(),
         stopOnFirstError: z.boolean().optional(),
-        preserveOwnership: z.boolean().optional(),
-        preserveCreatedOn: z.boolean().optional(),
-        preserveCreatedBy: z.boolean().optional(),
-        preserveModifiedBy: z.boolean().optional(),
+        auditPolicy: z.enum(['NONE', 'STANDARD', 'PRESERVE_ATTRIBUTION']).optional(),
+        userResolutionPolicy: z.enum(['STRICT', 'FALLBACK']).optional(),
+        fallbackPrincipal: z
+          .object({
+            logicalName: z.enum(['systemuser', 'team', 'businessunit']),
+            id: z.string().max(80),
+            name: z.string().max(200),
+          })
+          .nullable()
+          .optional(),
       })
       .strict()
       .parse(req.body);
@@ -245,8 +253,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
     const body = z
       .object({
-        matchStrategy: z.enum(['PRIMARY_ID', 'ALTERNATE_KEY']),
+        matchStrategy: z.enum(['PRIMARY_ID', 'ALTERNATE_KEY', 'BUSINESS_KEY']),
         alternateKey: z.string().max(200).nullable(),
+        businessKeyFields: z.array(tableName).max(10).optional(),
       })
       .parse(req.body);
     return s.planning.updateEntity(req.ctx, id, entityId, body);
@@ -280,6 +289,43 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.body);
     return s.runs.start(req.ctx, idParams.parse(req.params).id, body);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Preflight (dry run) — reads only, never writes to Dataverse
+  // ---------------------------------------------------------------------------
+
+  app.post('/api/plans/:id/preflight', async (req) =>
+    s.preflight.create(req.ctx, idParams.parse(req.params).id),
+  );
+
+  // Returns null (not 404) when no preflight has been run, so the UI can ask without an error.
+  app.get('/api/plans/:id/preflight', async (req) =>
+    s.preflight.latestForPlan(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.get('/api/preflight/:id', async (req) => s.preflight.get(req.ctx, idParams.parse(req.params).id));
+
+  app.get('/api/preflight/:id/records', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const q = page
+      .extend({
+        action: z.enum(['CREATE', 'UPDATE', 'UNCHANGED', 'CONFLICT', 'BLOCKED']).optional(),
+        entity: tableName.optional(),
+      })
+      .parse(req.query);
+    return s.preflight.records(req.ctx, id, q);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Diagnostics — read-only checks against the configured environments
+  // ---------------------------------------------------------------------------
+
+  app.post('/api/diagnostics', async (req) => {
+    const body = z
+      .object({ sourceEnvironmentId: uuid.optional(), targetEnvironmentId: uuid.optional() })
+      .parse(req.body ?? {});
+    return s.diagnostics.run(req.ctx, { ...body, authProvider: req.session!.user.authProvider });
   });
 
   // ---------------------------------------------------------------------------
@@ -550,6 +596,88 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     );
   });
 
+  app.get('/api/preflight/:id/records.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        action: z.enum(['CREATE', 'UPDATE', 'UNCHANGED', 'CONFLICT', 'BLOCKED']).optional(),
+        entity: tableName.optional(),
+      })
+      .parse(req.query);
+    const run = await s.preflight.get(req.ctx, id);
+    const { items } = await s.preflight.records(req.ctx, id, { ...q, limit: 50_000, offset: 0 });
+    return sendCsv(
+      reply,
+      csvFileName(['preflight', q.action ?? 'all', run.planName]),
+      [
+        'Table',
+        'Source record id',
+        'Record name',
+        'Action',
+        'Target record id',
+        'Matched by',
+        'Reason',
+        'Field',
+        'Source value',
+        'Target value',
+      ],
+      items.flatMap((r) => {
+        const head = [
+          r.entity,
+          r.sourceRecordId,
+          r.recordName,
+          r.action,
+          r.targetRecordId,
+          r.matchMethod,
+          r.reason,
+        ];
+        const changes = r.changes.filter((c) => c.action !== 'UNCHANGED');
+        return changes.length
+          ? changes.map((c) => [...head, c.field, c.sourceValue, c.targetValue])
+          : [[...head, null, null, null]];
+      }),
+    );
+  });
+
+  /** The remediation package: every issue a migration team must fix, in one file. */
+  app.get('/api/plans/:id/issues-package.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const [plan, rows] = await Promise.all([
+      s.planning.get(req.ctx, id),
+      s.remediation.buildIssueRows(req.ctx, id),
+    ]);
+    return sendCsv(
+      reply,
+      csvFileName(['remediation-package', plan.name]),
+      [
+        'Severity',
+        'Category',
+        'Table',
+        'Source Record ID',
+        'Record Name',
+        'Field',
+        'Source Value',
+        'Target Value',
+        'Issue',
+        'Resolution',
+        'Suggested Action',
+      ],
+      rows.map((r) => [
+        r.severity,
+        r.category,
+        r.table,
+        r.sourceRecordId,
+        r.recordName,
+        r.field,
+        r.sourceValue,
+        r.targetValue,
+        r.issue,
+        r.resolution,
+        r.suggestedAction,
+      ]),
+    );
+  });
+
   app.get('/api/principal-mappings.csv', async (req, reply) => {
     const q = z.object({ sourceEnvironmentId: uuid, targetEnvironmentId: uuid }).parse(req.query);
     const summary = await s.principals.list(req.ctx, q.sourceEnvironmentId, q.targetEnvironmentId);
@@ -695,6 +823,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     safety: {
       businessLogicBypassAllowed: config.ALLOW_BUSINESS_LOGIC_BYPASS,
       canBypass: s.planning.bypassAllowed(req.ctx),
+      realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
     },
     database: s.db ? (config.DATABASE_URL ? 'postgres' : 'pglite') : 'unknown',
   }));

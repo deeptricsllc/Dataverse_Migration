@@ -3,6 +3,8 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
+  auditNeedsImpersonation,
+  auditNeedsPrincipals,
   type DiffStatus,
   type FieldMappingDto,
   type MappingStatus,
@@ -12,7 +14,12 @@ import {
   type TableCandidateDto,
   type TableCategory,
 } from '../../../shared/domain';
-import { LOOKUP_TYPES, SYSTEM_MANAGED_COLUMNS, type TableMetadata } from '../../../shared/metadata';
+import {
+  LOOKUP_TYPES,
+  SYSTEM_MANAGED_COLUMNS,
+  isKeyUsable,
+  type TableMetadata,
+} from '../../../shared/metadata';
 import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import {
@@ -44,17 +51,14 @@ import {
 import { isMigratableTable, type MetadataService } from './metadata-service';
 import { countBySeverity, validatePlan } from './plan-validation';
 import type { PrincipalService } from './principal-service';
+import { describeMatchStrategy } from './record-matcher';
 import { diffTableDeep } from './schema-diff';
+import { envRef } from './env-ref';
 
 type PlanRow = typeof migrationPlans.$inferSelect;
 type EntityRow = typeof migrationPlanEntities.$inferSelect;
 type MappingRow = typeof fieldMappings.$inferSelect;
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({
-  id: e.id,
-  displayName: e.displayName,
-  url: e.url,
-});
 const MAPPED = new Set<MappingStatus>(['AUTO_MAPPED', 'MANUAL']);
 
 export class PlanningService {
@@ -293,6 +297,14 @@ export class PlanningService {
       );
     }
     const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...plan.options, ...patch };
+    if (options.userResolutionPolicy === 'FALLBACK' && options.fallbackPrincipal) {
+      // The fallback identity must be a real principal in the target; it is never assumed.
+      const known = await this.principals.list(ctx, plan.sourceEnvironmentId, plan.targetEnvironmentId);
+      const fallback = options.fallbackPrincipal;
+      const exists = known.targetPrincipals[fallback.logicalName]?.some((x) => x.id === fallback.id);
+      if (!exists) throw badRequest('The fallback identity does not exist in the target environment');
+    }
+    if (options.userResolutionPolicy === 'STRICT') options.fallbackPrincipal = null;
     await this.db
       .update(migrationPlans)
       .set({ options, updatedAt: new Date() })
@@ -317,7 +329,11 @@ export class PlanningService {
     ctx: RequestContext,
     planId: string,
     entityId: string,
-    patch: { matchStrategy: 'PRIMARY_ID' | 'ALTERNATE_KEY'; alternateKey: string | null },
+    patch: {
+      matchStrategy: 'PRIMARY_ID' | 'ALTERNATE_KEY' | 'BUSINESS_KEY';
+      alternateKey: string | null;
+      businessKeyFields?: string[];
+    },
   ) {
     const plan = await this.loadPlan(ctx.organizationId, planId);
     await this.assertEditable(ctx.organizationId, plan);
@@ -331,6 +347,7 @@ export class PlanningService {
       .set({
         matchStrategy: patch.matchStrategy,
         alternateKey: patch.matchStrategy === 'ALTERNATE_KEY' ? patch.alternateKey : null,
+        businessKeyFields: patch.matchStrategy === 'BUSINESS_KEY' ? (patch.businessKeyFields ?? []) : [],
       })
       .where(eq(migrationPlanEntities.id, entityId));
     await this.auditUpdate(ctx, plan, { table: entity.logicalName, ...patch });
@@ -432,12 +449,18 @@ export class PlanningService {
         const displayName = s?.displayName ?? name;
         let entity = existingEntities.get(name);
         if (!entity) {
+          // Only an Active key index is enforced by Dataverse, so only those are chosen by default.
           const sharedKey =
             s && t
-              ? s.keys.find((k) =>
-                  t.keys.some(
-                    (tk) => tk.logicalName === k.logicalName && tk.attributes.join() === k.attributes.join(),
-                  ),
+              ? s.keys.find(
+                  (k) =>
+                    isKeyUsable(k) &&
+                    t.keys.some(
+                      (tk) =>
+                        tk.logicalName === k.logicalName &&
+                        tk.attributes.join() === k.attributes.join() &&
+                        isKeyUsable(tk),
+                    ),
                 )
               : undefined;
           [entity] = await this.db
@@ -527,15 +550,17 @@ export class PlanningService {
       }
 
       const opts = { ...DEFAULT_PLAN_OPTIONS, ...plan.options };
-      let principals: { total: number; unmatched: number; canImpersonate: boolean | null } | undefined;
-      if (opts.preserveOwnership || opts.preserveCreatedBy || opts.preserveModifiedBy) {
+      let principals:
+        { total: number; unmatched: number; ambiguous: number; canImpersonate: boolean | null } | undefined;
+      if (auditNeedsPrincipals(opts.auditPolicy)) {
         const summary = await this.principals.list(ctx, source.id, target.id);
         principals = {
           total: summary.counts.total,
           unmatched: summary.counts.unmatched,
+          ambiguous: summary.counts.ambiguous,
           canImpersonate: null,
         };
-        if (opts.preserveCreatedBy || opts.preserveModifiedBy) {
+        if (auditNeedsImpersonation(opts.auditPolicy)) {
           try {
             principals.canImpersonate = (
               await this.principals.checkImpersonation(ctx, source.id, target.id)
@@ -569,6 +594,7 @@ export class PlanningService {
             targetCount: e.targetCount,
             matchStrategy: e.matchStrategy,
             alternateKey: e.alternateKey,
+            businessKeyFields: e.businessKeyFields ?? [],
             automation: e.automation ?? null,
             audit: e.audit ?? null,
           };
@@ -875,6 +901,12 @@ export class PlanningService {
         schemaStatus: e.schemaStatus as DiffStatus | null,
         matchStrategy: e.matchStrategy,
         alternateKey: e.alternateKey,
+        businessKeyFields: e.businessKeyFields ?? [],
+        matchDescription: describeMatchStrategy({
+          matchStrategy: e.matchStrategy,
+          alternateKey: e.alternateKey,
+          businessKeyFields: e.businessKeyFields ?? [],
+        }),
         availableKeys: sourceMetaRows.get(e.logicalName) ?? [],
         dependsOn: e.dependsOn,
         cycleGroup: e.cycleGroup,

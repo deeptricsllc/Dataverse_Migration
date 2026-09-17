@@ -5,9 +5,20 @@ export interface RetryPolicy {
   maxAttempts: number;
   baseDelayMs: number;
   maxDelayMs: number;
+  /**
+   * Upper bound for a server-provided Retry-After. Dataverse service protection limits are
+   * evaluated over a five minute window, so waiting the full advertised delay is correct.
+   * https://learn.microsoft.com/power-apps/developer/data-platform/api-limits
+   */
+  maxRetryAfterMs?: number;
 }
 
-export const DEFAULT_RETRY_POLICY: RetryPolicy = { maxAttempts: 5, baseDelayMs: 500, maxDelayMs: 30_000 };
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxAttempts: 5,
+  baseDelayMs: 500,
+  maxDelayMs: 30_000,
+  maxRetryAfterMs: 300_000,
+};
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -18,7 +29,10 @@ export function backoffDelay(
   err?: DataverseError,
   random = Math.random,
 ): number {
-  if (err?.retryAfterSeconds) return Math.min(err.retryAfterSeconds * 1000, policy.maxDelayMs);
+  // Honour Retry-After as advertised: Dataverse tells us exactly how long to wait.
+  if (err?.retryAfterSeconds) {
+    return Math.min(err.retryAfterSeconds * 1000, policy.maxRetryAfterMs ?? 300_000);
+  }
   const exp = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** (attempt - 1));
   return Math.round(exp / 2 + random() * (exp / 2));
 }

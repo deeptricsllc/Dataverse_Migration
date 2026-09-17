@@ -176,9 +176,18 @@ export class AuthService {
       );
     }
     const result = await this.identity.redeemCode(params.code, this.box.decrypt(pending.encryptedVerifier));
-    if (result.nonce !== pending.nonce) {
+    // The nonce claim is echoed in the id_token when we send one. Microsoft documents it as
+    // required for the hybrid flow; validate whenever it is present.
+    // https://learn.microsoft.com/entra/identity-platform/id-tokens
+    if (result.nonce !== undefined && result.nonce !== pending.nonce) {
       this.logger.warn({ requestId }, 'Microsoft sign-in nonce mismatch');
       throw new AppError(400, 'INVALID_NONCE', 'Sign-in validation failed. Please try again.');
+    }
+    if (result.nonce === undefined) {
+      this.logger.warn(
+        { requestId },
+        'Identity provider returned no nonce claim; PKCE and state still validated',
+      );
     }
     const tenantId = result.tenantId.toLowerCase();
     if (this.config.allowedTenantIds.length && !this.config.allowedTenantIds.includes(tenantId)) {

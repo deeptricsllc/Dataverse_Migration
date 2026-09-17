@@ -155,19 +155,30 @@ export function normalizeRecord(raw: Raw, primaryId: string, attributes: Attribu
   return { id: String(raw[primaryId]).toLowerCase(), values };
 }
 
-/** Maps Global Discovery OrganizationType to a readable environment type. */
+/**
+ * Maps the Global Discovery Service OrganizationType enum to a readable environment type.
+ * Values and descriptions come from the documented OrganizationType EnumType.
+ * https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/organizationtype
+ */
 export function organizationTypeName(t: unknown): string | null {
   const map: Record<number, string> = {
-    0: 'Production',
-    5: 'Sandbox',
-    6: 'Sandbox',
+    0: 'Customer', // Primary organization
+    1: 'Monitoring',
+    2: 'Support',
+    3: 'BackEnd',
+    4: 'Production', // "Production instances"
+    5: 'Sandbox', // "Sandbox instances"
+    6: 'Sandbox', // "Sandbox instances that do not consume the sandbox instances"
     7: 'Preview',
-    9: 'Trial',
-    11: 'Trial',
+    8: 'Placeholder',
+    9: 'Trial', // TestDrive
+    10: 'Support',
+    11: 'Trial', // EmailTrial
     12: 'Default',
     13: 'Developer',
     14: 'Trial',
     15: 'Teams',
+    16: 'Platform',
   };
   return typeof t === 'number' ? (map[t] ?? `Type ${t}`) : typeof t === 'string' ? t : null;
 }

@@ -88,7 +88,11 @@ describe('Microsoft sign-in endpoints', () => {
 
   it('advertises Microsoft sign-in and redirects with PKCE, state and nonce', async () => {
     const config = await t.app.inject({ method: 'GET', url: '/api/auth/config' });
-    expect(config.json()).toEqual({ microsoftEnabled: true, demoEnabled: true });
+    expect(config.json()).toEqual({
+      microsoftEnabled: true,
+      demoEnabled: true,
+      realTenantReadOnly: false,
+    });
     const res = await t.app.inject({ method: 'GET', url: '/api/auth/login?returnTo=/compare' });
     expect(res.statusCode).toBe(302);
     const location = new URL(res.headers.location as string);

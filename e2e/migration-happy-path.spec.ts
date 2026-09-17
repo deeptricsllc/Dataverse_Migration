@@ -100,9 +100,27 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await page.getByRole('button', { name: 'Continue: Review plan' }).click();
   await expect(page.getByRole('heading', { name: 'Issues' })).toBeVisible();
   await expect(page.getByTestId('issue-WARNING').first()).toBeVisible();
-  await page.getByTestId('preserve-ownership').click();
-  await expect(page.getByTestId('preserve-ownership')).toBeChecked();
-  await expect(page.getByTestId('issue-INFO').first()).toBeVisible();
+  // Audit preservation and unresolved-user handling are explicit policies.
+  await page.getByTestId('audit-policy-STANDARD').click();
+  // STRICT is the default: the unmapped service account blocks the plan instead of being
+  // silently replaced by the executing user.
+  await expect(page.getByTestId('issue-BLOCKER').first()).toBeVisible();
+  await expect(page.getByText(/records are blocked instead of being reassigned/)).toBeVisible();
+  await page.getByTestId('user-policy-FALLBACK').click();
+  await expect(page.getByText(/no fallback identity has been chosen/)).toBeVisible();
+  await page.getByLabel('Fallback identity').selectOption({ index: 1 });
+  await expect(page.getByTestId('issue-BLOCKER')).toHaveCount(0);
+
+  // 7b. Preflight: the dry run says exactly what would happen, and writes nothing.
+  await page.getByTestId('open-preflight').click();
+  await page.getByTestId('run-preflight').click();
+  await expect(page.getByRole('heading', { name: 'By table' })).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByText('Create', { exact: true }).first()).toBeVisible();
+  await page.getByText('Create', { exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: 'Records' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Export preflight CSV' })).toBeVisible();
+  await page.goBack();
+
   await page.getByRole('button', { name: 'Execute migration' }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   await expect(dialog.getByText('DeepTrics Development').first()).toBeVisible();
@@ -110,6 +128,8 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   const runButton = dialog.getByRole('button', { name: 'Write data to DeepTrics QA' });
   await expect(runButton).toBeDisabled();
   await dialog.getByTestId('ack-warnings').check();
+  const identityAck = dialog.getByTestId('ack-identity');
+  if (await identityAck.isVisible().catch(() => false)) await identityAck.check();
   await dialog.getByLabel(/Type the target environment name/).fill('DeepTrics QA');
   await runButton.click();
 
@@ -166,3 +186,19 @@ async function selectTable(page: Page, logicalName: string) {
   await row.getByRole('checkbox').check();
   await expect(row.getByRole('checkbox')).toBeChecked();
 }
+
+/**
+ * Diagnostics are read-only: they must run without ever probing write permission.
+ */
+test('diagnostics report read-only checks without testing writes', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Continue with demo account' }).click();
+  await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
+
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Diagnostics' }).click();
+  await page.getByTestId('run-diagnostics').click();
+  await expect(page.getByTestId('diagnostic-authentication')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('diagnostic-discovery')).toContainText(/environment/i);
+  await expect(page.getByTestId('diagnostic-write')).toContainText(/never probed|disabled/);
+  await expect(page.getByTestId('diagnostic-write').getByLabel('Not tested')).toBeVisible();
+});
