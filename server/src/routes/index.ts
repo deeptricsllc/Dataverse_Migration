@@ -30,8 +30,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/auth/config', async () => ({ microsoftEnabled: config.microsoftEnabled, demoEnabled: config.DEMO_MODE }));
 
-  app.get('/api/auth/session', async (req, reply) => {
-    if (!req.session) return reply.status(401).send({ error: { code: 'UNAUTHENTICATED', message: 'Not signed in', requestId: req.id } });
+  app.get('/api/auth/session', async (req) => {
+    if (!req.session) return { user: null, csrfToken: null };
     return { user: req.session.user, csrfToken: req.session.csrfToken };
   });
 

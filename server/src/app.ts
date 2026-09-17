@@ -142,9 +142,10 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
 
   const webDist = opts.webDist ?? path.resolve('dist/web');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
-    await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false, index: ['index.html'] });
+    await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: true, index: ['index.html'] });
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api/') || req.method !== 'GET') {
+      // Unknown API routes and missing static assets are real 404s; everything else is the SPA.
+      if (req.url.startsWith('/api/') || req.method !== 'GET' || /\.[a-z0-9]+(\?|$)/i.test(req.url)) {
         void reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.id } });
         return;
       }
