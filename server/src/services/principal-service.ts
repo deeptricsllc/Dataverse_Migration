@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type {
   ImpersonationCapabilityDto,
@@ -191,6 +191,21 @@ export class PrincipalService {
             });
         }
       }
+      // Drop mappings for principals that no longer exist in the source directory, so stale
+      // rows cannot resolve to users that were deleted or renamed away.
+      for (const table of PRINCIPAL_TABLES) {
+        const currentIds = sourceDir[table].map((p) => p.id);
+        await this.db
+          .delete(principalMaps)
+          .where(
+            and(
+              eq(principalMaps.sourceEnvironmentId, source.id),
+              eq(principalMaps.targetEnvironmentId, target.id),
+              eq(principalMaps.logicalName, table),
+              currentIds.length ? notInArray(principalMaps.sourceId, currentIds) : undefined,
+            ),
+          );
+      }
       return this.list(ctx, source.id, target.id);
     } catch (err) {
       throw integrationError(err, 'Reading users and teams');
@@ -375,7 +390,21 @@ export class PrincipalService {
   ): Promise<ImpersonationCapabilityDto> {
     const target = await this.environmentsSvc.getAccessible(ctx, targetEnvironmentId);
     const map = await this.resolutionMap(ctx.organizationId, sourceEnvironmentId, target.id);
-    const candidate = [...map.entries()].find(([k]) => k.startsWith('systemuser:'))?.[1];
+    // Only test with a user that still exists in the target directory.
+    const known = new Set(
+      (
+        await this.db
+          .select({ id: principalDirectory.principalId })
+          .from(principalDirectory)
+          .where(
+            and(
+              eq(principalDirectory.environmentId, target.id),
+              eq(principalDirectory.logicalName, 'systemuser'),
+            ),
+          )
+      ).map((r) => r.id),
+    );
+    const candidate = [...map.entries()].find(([k, v]) => k.startsWith('systemuser:') && known.has(v))?.[1];
     if (!candidate) {
       return {
         checkedAt: new Date().toISOString(),
