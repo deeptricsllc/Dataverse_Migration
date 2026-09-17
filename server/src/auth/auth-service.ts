@@ -129,7 +129,7 @@ export class AuthService {
         set: { lastLoginAt: new Date() },
       })
       .returning();
-    await seedDemoData(this.db);
+    await seedDemoData(this.db, { logger: this.logger });
     await this.audit.record({
       organizationId: org.id,
       userId: user.id,

@@ -24,6 +24,12 @@ import type { AutomationInfo } from '../../../../shared/domain';
 
 export type DemoEnvKey = 'demo-dev' | 'demo-qa' | 'demo-uat' | 'demo-prod';
 
+/**
+ * Bump when the demo metadata or data changes: environments seeded from an older version are
+ * re-seeded on the next start so an existing installation picks the new fixtures up.
+ */
+export const DEMO_DATA_VERSION = '2026-09-17.2';
+
 export interface DemoEnvironmentDef {
   key: DemoEnvKey;
   displayName: string;
