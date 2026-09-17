@@ -62,7 +62,7 @@ export function DiagnosticsPage() {
         }
       />
 
-      {realTenantReadOnly && (
+      {realTenantReadOnly && !user.organization.isDemo && (
         <div className="mb-4">
           <Callout tone="info" title="REAL TENANT — READ ONLY">
             This deployment blocks every Dataverse write in the server. Diagnostics, discovery, comparison,

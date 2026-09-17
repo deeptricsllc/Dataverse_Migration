@@ -6,6 +6,11 @@ delegated migrations. About 10 minutes in the Microsoft Entra admin center.
 The application never asks for or stores Dataverse passwords. It uses the OAuth 2.0
 authorization code flow with PKCE as a **confidential client**. Tokens stay on the server.
 
+Connecting to a real tenant for the first time? Follow
+[REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md) after this guide: it walks through a
+read-only certification (`REAL_TENANT_READ_ONLY=true`) that proves the connection works without
+writing anything to Dataverse.
+
 ---
 
 ## 1. Create the app registration
@@ -65,6 +70,10 @@ ADMIN_EMAILS=srinivas@deeptrics.com
 Restart the server. The login page now shows **Continue with Microsoft**. Demo mode can stay
 enabled alongside it (`DEMO_MODE=true`) or be turned off.
 
+For the first connection to a real tenant, also set `REAL_TENANT_READ_ONLY=true`. Every read keeps
+working; every Dataverse write is refused by the server, so nothing can be changed while you are
+still verifying the setup.
+
 ## 5. Dataverse permissions for users
 
 Discovery lists only environments where the signed-in user has access. For each environment:
@@ -74,19 +83,30 @@ Discovery lists only environments where the signed-in user has access. For each 
   `sdkmessageprocessingstep` and `workflow`. Without it the plan shows "detection unavailable" instead of failing.
 - **Target:** **Create**, **Write** and **Read** on the migrated tables, plus **Append / Append To**
   for lookups. Preserving record IDs (the default) needs no extra privilege.
-- **Ownership and audit preservation** (optional, off by default):
-  - reading both user directories needs read access to `systemuser`, `team` and `businessunit`;
-  - preserving **created on** needs "Override Created on or Created by for Records during Data Import"
+- **Audit policy** (`NONE` by default; chosen per plan):
+  - any policy other than `NONE` needs read access to `systemuser`, `team` and `businessunit` in
+    **both** environments so the user mapping can be built;
+  - `STANDARD` preserves **owner** and **created on**. Created on is written through
+    `overriddencreatedon`, which Dataverse only accepts on create and only from a user holding
+    "Override Created on or Created by for Records during Data Import"
     (`prvOverrideCreatedOnCreatedBy`) in the target;
-  - preserving **created by / modified by** writes records while impersonating the mapped user and needs
-    "Act on Behalf of Another User" (`prvActOnBehalfOfAnotherUser`) in the target. The User mapping page
-    runs a read-only check for this before you execute;
+  - `PRESERVE_ATTRIBUTION` additionally preserves **created by / modified by** by writing each
+    record while impersonating the mapped user. That needs "Act on Behalf of Another User"
+    (`prvActOnBehalfOfAnotherUser`) in the target. Microsoft requires this privilege to be assigned
+    **directly to the user**: it cannot be inherited through a team. The User mapping page runs a
+    read-only check before you execute, and the plan blocks execution until the check passes;
   - **modified on** can never be preserved: Dataverse always stamps it with the migration time.
 - **Bypass custom business logic** (optional, off by default): the target user needs
   `prvBypassCustomBusinessLogic`. The server also requires `ALLOW_BUSINESS_LOGIC_BYPASS=true`
   and the app **ADMIN** role, and every use is audited.
 
 The platform never changes security roles, plug-in registrations or flows.
+
+### Read-only deployments
+
+With `REAL_TENANT_READ_ONLY=true` the target privileges above are not exercised at all: the server
+refuses every Dataverse write regardless of what the signed-in user is allowed to do. Use it while
+you are validating a tenant connection.
 
 ## 6. How the pieces work
 
@@ -128,3 +148,8 @@ Verify these against current Microsoft documentation before production use in so
 | Login succeeds, no environments                     | The user has no Dataverse security role in any environment, or the tenant has no Dataverse environments.   |
 | Test connection: "not a member of the organization" | Add the user to the environment with a security role.                                                      |
 | "Sign in again" errors in runs                      | The refresh token expired or was revoked (password reset, Conditional Access). Sign in and use **Retry**.  |
+| `REAL_TENANT_READ_ONLY` when starting a migration   | The deployment is in read-only certification mode. This is deliberate; see REAL_TENANT_CERTIFICATION.md.   |
+| Impersonation check fails despite the privilege     | `prvActOnBehalfOfAnotherUser` must be assigned directly to the user, not through a team.                   |
+
+The **Diagnostics** page runs all of these checks in one place and explains each failure, without
+ever displaying a token or a raw response.

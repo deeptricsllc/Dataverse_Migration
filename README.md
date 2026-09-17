@@ -16,15 +16,27 @@ Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 | Compare           | Table catalog diff plus column/relationship/alternate-key comparison with MATCH / SOURCE_ONLY / TARGET_ONLY / DIFFERENT / INCOMPATIBLE, drill-down, data profiling (counts, null statistics, sample records)                                                                                                                                |
 | Users             | User/team/business-unit mapping between environments (matched on Entra object id, login, email or name) with manual override, CSV export and an impersonation privilege check                                                                                                                                                               |
 | Plan              | Table selection with explicit dependency hints, dependency graph (topological order, cycle detection, two-pass strategy), deterministic field mapping with manual override and suggestions that need confirmation, match strategy (primary ID or alternate key), conflict strategy, BLOCKER / WARNING / INFO issues, plug-in/flow detection |
-| Ownership & audit | Optional preservation of **owner**, **created on** (overriddencreatedon) and **created by / modified by** (impersonation), resolved through the user mapping; unmapped users fall back to the migrating user and are reported per record                                                                                                    |
+| Ownership & audit | **Audit policy** — `NONE`, `STANDARD` (owner + created on via overriddencreatedon, no extra writes) or `PRESERVE_ATTRIBUTION` (adds created by / modified by through impersonation, ~1 extra write per record, blocked unless the privilege is verified)                                                                                    |
+| Identity policy   | **User resolution policy** — `STRICT` blocks records whose user references cannot be resolved; `FALLBACK` uses an identity you choose explicitly. Ownership is never silently reassigned to the executing user, ambiguous matches are never auto-mapped, and every substitution is reported per record                                      |
+| Preflight         | **Dry run** classifying every source record as CREATE / UPDATE / UNCHANGED / CONFLICT / BLOCKED with field-level drill-down (source value, target value, proposed action). Reads only — no Dataverse writes — and shares its decision code with the migration engine so the two cannot diverge                                              |
+| Matching          | Deterministic hierarchy: migration identity map → primary id → **active** alternate key → configured business key. Two candidates are a conflict, never a guess; duplicate source keys are reported                                                                                                                                         |
+| Safety            | `REAL_TENANT_READ_ONLY` blocks every Dataverse write inside the client and before a run is queued, a read-only **Diagnostics** page explains each connection check, and production targets are flagged before execution                                                                                                                     |
 | Sync              | `SKIP_EXISTING`, `CREATE_ONLY`, `UPSERT` or **`SYNC`**: create missing records, update only columns that differ, and leave identical records untouched so their modified on / modified by do not change                                                                                                                                     |
-| Exports           | CSV download of schema differences, plan issues, migration errors, the record inventory, validation summary and validation differences, plus the user mapping                                                                                                                                                                               |
+| Exports           | CSV download of schema differences, plan issues, migration errors, the record inventory, validation summary and validation differences, the user mapping, the preflight, and a single **remediation package** (severity, category, table, record, field, source/target value, issue, resolution, suggested action)                          |
 | Execute           | Persisted, resumable, dependency-ordered batch migration in a background worker. Identity map, lookup resolution, deferred lookups (pass 2), retries with backoff and throttling handling, per-record structured errors, pause/resume/cancel/retry, audited confirmation                                                                    |
 | Validate          | Schema, row counts, record existence, normalized field-level comparison, broken-reference checks, drill-down with masking                                                                                                                                                                                                                   |
 | History           | Runs, validation runs, record inventory, rollback impact preview (execution intentionally _not yet supported_), audit trail, dashboard                                                                                                                                                                                                      |
 | Platform          | Multi-tenant data model, CSRF/origin/session security, structured logs with request/run IDs, PostgreSQL or embedded PGlite                                                                                                                                                                                                                  |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/MICROSOFT_SETUP.md](docs/MICROSOFT_SETUP.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/MICROSOFT_SETUP.md](docs/MICROSOFT_SETUP.md) and
+[docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) (how to test against a real
+Microsoft tenant without writing to it).
+
+> **Not yet certified against a real Microsoft tenant.** Every Dataverse integration in this
+> repository is written against the current Microsoft documentation and is covered by tests using
+> simulated environments, but it has not been exercised against a real tenant. Follow
+> [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) before trusting it with
+> customer data.
 
 ## Quick start (demo, no external dependencies)
 
@@ -49,7 +61,8 @@ automatically and runs the job worker in-process. Demo mode is on by default out
 3. **Select tables:** Account, Contact, Region, Office, Application Config, Product. The page shows what each table requires before you add it.
 4. **Dependencies:** Region → Office and Account ↔ Contact cycles are resolved in two passes.
 5. **Field mapping:** `dtx_tier` is unmapped (missing in QA), `dtx_warrantymonths` is incompatible, and Product/Config match by alternate key.
-6. **Review:** warnings for server-side logic in QA, schema risks and more. Optionally switch the strategy to **Sync** and turn on ownership/audit preservation (map users first on the **User mapping** page). Execute, acknowledge the warnings, and type `DeepTrics QA`.
+6. **Review:** warnings for server-side logic in QA, schema risks and more. Optionally switch the strategy to **Sync** and choose an audit policy (map users first on the **User mapping** page). With `STANDARD` or `PRESERVE_ATTRIBUTION` the unmatched Development-only service account becomes a **blocker** under the default `STRICT` user resolution policy; switch to `FALLBACK` and pick a fallback identity to continue.
+   6b. **Preflight (dry run):** from the review step, open **Preflight** and run it. It reads both environments and reports how many records would be created, updated, left unchanged, or blocked, with the field-level changes. Nothing is written.
 7. **Run:** live progress per table. Expect real failures: over-length website and routing-rule values, and industry value 7 missing in QA. Pre-existing QA records are skipped. Throttling is simulated and retried automatically.
 8. **Validate:** the report shows missing records (the failed ones), pre-existing differences and zero broken references. Every table, error and difference list has an **Export CSV** button.
 9. **Re-run** the same plan with the Sync strategy: everything that already matches is reported as _unchanged_ and nothing is written, so target audit stamps stay put.
@@ -85,6 +98,7 @@ All options are documented in [.env.example](.env.example). The important ones:
 | `DATAVERSE_DISCOVERY_URL`                 | `https://globaldisco.crm.dynamics.com`                   | Global Discovery endpoint (sovereign clouds differ)       |
 | `POWER_PLATFORM_ENRICHMENT`               | `false`                                                  | Environment SKU/region from the Power Platform admin API  |
 | `ALLOW_BUSINESS_LOGIC_BYPASS`             | `false`                                                  | Allow audited plug-in bypass for ADMINs                   |
+| `REAL_TENANT_READ_ONLY`                   | `false`                                                  | Allow all reads, block every Dataverse write server-side  |
 | `RUN_WORKER`                              | `true`                                                   | Run background jobs in the web process                    |
 | `COOKIE_SECURE`                           | `true` in production                                     | Secure cookies (HTTPS)                                    |
 
@@ -150,6 +164,8 @@ The repo ships a `Dockerfile` and `railway.json` (health check `/api/health`). I
 1. Add a PostgreSQL service. On the app service set `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 2. Set `SESSION_SECRET` (48+ random characters), `APP_BASE_URL=https://<service domain>` and `COOKIE_SECURE=true`.
 3. Without Entra credentials set `DEMO_MODE=true`. For Microsoft sign-in add `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` and register `https://<service domain>/api/auth/callback`.
+   When you first point a deployment at a real tenant, also set `REAL_TENANT_READ_ONLY=true` so
+   the deployment can read but never write while you certify it.
 4. Deploy (`railway up` or a GitHub-connected service). Migrations run on start; `PORT` is provided by Railway.
 
 ## Production considerations
