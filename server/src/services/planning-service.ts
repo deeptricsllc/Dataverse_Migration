@@ -95,41 +95,40 @@ export class PlanningService {
         this.metadata.getCatalog(target.id, tConn),
       ]);
       const comparisonId = await this.comparisons.latestCompleted(ctx.organizationId, source.id, target.id);
-      const statusByTable = new Map<string, { status: DiffStatus; deep: boolean }>();
+      type Analyzed = {
+        status: DiffStatus;
+        deep: boolean;
+        sourceCount: number | null;
+        targetCount: number | null;
+        approximate: boolean;
+      };
+      const statusByTable = new Map<string, Analyzed>();
       if (comparisonId) {
         const rows = await this.db
           .select({
             name: comparisonTableResults.logicalName,
             status: comparisonTableResults.status,
             deep: comparisonTableResults.deep,
+            sourceCount: comparisonTableResults.sourceCount,
+            targetCount: comparisonTableResults.targetCount,
+            approximate: comparisonTableResults.countApproximate,
           })
           .from(comparisonTableResults)
           .where(eq(comparisonTableResults.comparisonRunId, comparisonId));
-        for (const r of rows) statusByTable.set(r.name, { status: r.status as DiffStatus, deep: r.deep });
+        for (const r of rows) statusByTable.set(r.name, { ...r, status: r.status as DiffStatus });
       }
       const targetByName = new Map(targetCatalog.map((t) => [t.logicalName, t]));
       const migratable = sourceCatalog.filter(isMigratableTable);
-      // Counts and lookups only for analyzed (deep compared) tables to avoid thousands of calls.
+      // Counts were captured by the (background) analysis; lookups come from cached metadata.
       const analyzed = migratable.filter((t) => statusByTable.get(t.logicalName)?.deep);
-      const [sourceCounts, targetCounts, sourceMeta] = await Promise.all([
-        this.metadata.counts(source.id, sConn, analyzed),
-        this.metadata.counts(
-          target.id,
-          tConn,
-          analyzed
-            .filter((t) => targetByName.has(t.logicalName))
-            .map((t) => targetByName.get(t.logicalName)!),
-        ),
-        this.metadata.getTables(
-          source.id,
-          sConn,
-          analyzed.map((t) => t.logicalName),
-        ),
-      ]);
+      const sourceMeta = await this.metadata.getTables(
+        source.id,
+        sConn,
+        analyzed.map((t) => t.logicalName),
+      );
       const categories = await this.categoryMap(ctx.organizationId);
       return migratable.map((t) => {
-        const sc = sourceCounts.get(t.logicalName);
-        const tc = targetCounts.get(t.logicalName);
+        const analysis = statusByTable.get(t.logicalName);
         const meta = sourceMeta.get(t.logicalName);
         return {
           logicalName: t.logicalName,
@@ -139,9 +138,9 @@ export class PlanningService {
           schemaStatus:
             statusByTable.get(t.logicalName)?.status ??
             (targetByName.has(t.logicalName) ? null : 'SOURCE_ONLY'),
-          sourceCount: sc?.count ?? null,
-          targetCount: tc?.count ?? null,
-          countApproximate: Boolean(sc?.approximate || tc?.approximate),
+          sourceCount: analysis?.sourceCount ?? null,
+          targetCount: analysis?.targetCount ?? null,
+          countApproximate: Boolean(analysis?.approximate),
           lookups: (meta?.attributes ?? [])
             .filter(
               (a) => LOOKUP_TYPES.has(a.type) && !a.attributeOf && (a.isValidForCreate || a.isValidForUpdate),

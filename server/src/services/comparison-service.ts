@@ -113,6 +113,12 @@ export class ComparisonService {
         this.metadata.getTables(target.id, tConn, deepNames, { refresh: run.refreshMetadata, onProgress }),
       ]);
 
+      await progress('Counting records');
+      const [sourceCounts, targetCounts] = await Promise.all([
+        this.metadata.counts(source.id, sConn, [...sourceDeep.values()], true),
+        this.metadata.counts(target.id, tConn, [...targetDeep.values()], true),
+      ]);
+
       await progress('Comparing schemas');
       const { tables, summary } = compareSchemas({
         sourceCatalog: migratable(sourceCatalog),
@@ -134,6 +140,11 @@ export class ComparisonService {
             columns: t.columns,
             relationships: t.relationships,
             keys: t.keys,
+            sourceCount: sourceCounts.get(t.logicalName)?.count ?? null,
+            targetCount: targetCounts.get(t.logicalName)?.count ?? null,
+            countApproximate: Boolean(
+              sourceCounts.get(t.logicalName)?.approximate || targetCounts.get(t.logicalName)?.approximate,
+            ),
           })),
         );
       }

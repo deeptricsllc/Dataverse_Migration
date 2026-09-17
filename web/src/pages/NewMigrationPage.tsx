@@ -55,7 +55,7 @@ export function NewMigrationPage() {
       <WizardSteps current={3} links={{ 1: '/environments', 2: '/compare' }} />
       <PageHeader
         title="Select tables to migrate"
-        description="Choose the tables whose data should be copied from the source to the target. Dependencies are shown but never selected automatically."
+        description="Choose the tables whose data should be copied from the source to the target. Record counts are as of the last analysis; the plan refreshes them. Dependencies are shown but never selected automatically."
         actions={
           <Button
             variant="primary"

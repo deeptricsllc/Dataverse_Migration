@@ -282,6 +282,10 @@ export const comparisonTableResults = pgTable(
     columns: jsonb('columns').$type<ColumnDiff[]>().notNull(),
     relationships: jsonb('relationships').$type<RelationshipDiff[]>().notNull(),
     keys: jsonb('keys').$type<KeyDiff[]>().notNull(),
+    /** Record counts captured during analysis (deep-compared tables only). */
+    sourceCount: integer('source_count'),
+    targetCount: integer('target_count'),
+    countApproximate: boolean('count_approximate').notNull().default(false),
   },
   (t) => [uniqueIndex('comparison_table_results_uq').on(t.comparisonRunId, t.logicalName)],
 );
