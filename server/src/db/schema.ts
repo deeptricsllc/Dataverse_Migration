@@ -127,7 +127,10 @@ export const environments = pgTable(
     version: text('version'),
     state: text('state'),
     dataverseAvailable: boolean('dataverse_available').notNull().default(true),
-    connectionStatus: text('connection_status').$type<'UNKNOWN' | 'CONNECTED' | 'FAILED'>().notNull().default('UNKNOWN'),
+    connectionStatus: text('connection_status')
+      .$type<'UNKNOWN' | 'CONNECTED' | 'FAILED'>()
+      .notNull()
+      .default('UNKNOWN'),
     connectionMessage: text('connection_message'),
     lastTestedAt: ts('last_tested_at'),
     lastDiscoveredAt: ts('last_discovered_at'),
@@ -155,8 +158,12 @@ export const userPreferences = pgTable('user_preferences', {
   userId: uuid('user_id')
     .primaryKey()
     .references(() => users.id, { onDelete: 'cascade' }),
-  sourceEnvironmentId: uuid('source_environment_id').references(() => environments.id, { onDelete: 'set null' }),
-  targetEnvironmentId: uuid('target_environment_id').references(() => environments.id, { onDelete: 'set null' }),
+  sourceEnvironmentId: uuid('source_environment_id').references(() => environments.id, {
+    onDelete: 'set null',
+  }),
+  targetEnvironmentId: uuid('target_environment_id').references(() => environments.id, {
+    onDelete: 'set null',
+  }),
   updatedAt: updatedAt(),
 });
 
@@ -222,7 +229,10 @@ export const jobs = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('jobs_status_run_after_idx').on(t.status, t.runAfter), index('jobs_target_idx').on(t.targetId)],
+  (t) => [
+    index('jobs_status_run_after_idx').on(t.status, t.runAfter),
+    index('jobs_target_idx').on(t.targetId),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -297,7 +307,10 @@ export const migrationPlans = pgTable(
       .references(() => environments.id),
     comparisonRunId: uuid('comparison_run_id').references(() => comparisonRuns.id, { onDelete: 'set null' }),
     options: jsonb('options').$type<PlanOptions>().notNull(),
-    issues: jsonb('issues').$type<PlanIssue[]>().notNull().default(sql`'[]'::jsonb`),
+    issues: jsonb('issues')
+      .$type<PlanIssue[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     dependencyAnalysis: jsonb('dependency_analysis').$type<DependencyAnalysisDto>(),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
@@ -321,9 +334,15 @@ export const migrationPlanEntities = pgTable(
     targetCount: integer('target_count'),
     countApproximate: boolean('count_approximate').notNull().default(false),
     schemaStatus: text('schema_status'),
-    matchStrategy: text('match_strategy').$type<'PRIMARY_ID' | 'ALTERNATE_KEY'>().notNull().default('PRIMARY_ID'),
+    matchStrategy: text('match_strategy')
+      .$type<'PRIMARY_ID' | 'ALTERNATE_KEY'>()
+      .notNull()
+      .default('PRIMARY_ID'),
     alternateKey: text('alternate_key'),
-    dependsOn: jsonb('depends_on').$type<DependencyEdgeDto[]>().notNull().default(sql`'[]'::jsonb`),
+    dependsOn: jsonb('depends_on')
+      .$type<DependencyEdgeDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     cycleGroup: integer('cycle_group'),
     automation: jsonb('automation').$type<AutomationInfo | null>(),
   },
@@ -348,11 +367,17 @@ export const fieldMappings = pgTable(
     confidence: integer('confidence').notNull().default(0),
     reason: text('reason').notNull(),
     isLookup: boolean('is_lookup').notNull().default(false),
-    lookupTargets: jsonb('lookup_targets').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    lookupTargets: jsonb('lookup_targets')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     required: boolean('required').notNull().default(false),
     deferred: boolean('deferred').notNull().default(false),
     /** Lookup target tables whose references are set in pass 2 (circular dependencies). */
-    deferredTargets: jsonb('deferred_targets').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    deferredTargets: jsonb('deferred_targets')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     updatedByUserId: uuid('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: updatedAt(),
   },
@@ -451,7 +476,10 @@ export const migrationRecordMaps = pgTable(
     outcome: text('outcome').$type<'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED'>().notNull(),
     matchMethod: text('match_method'),
     /** Lookups deferred to pass 2: attribute -> source lookup value. */
-    deferredLookups: jsonb('deferred_lookups').$type<Record<string, { id: string; logicalName: string }> | null>(),
+    deferredLookups: jsonb('deferred_lookups').$type<Record<
+      string,
+      { id: string; logicalName: string }
+    > | null>(),
     deferredStatus: text('deferred_status').$type<'PENDING' | 'RESOLVED' | 'FAILED' | null>(),
     attempts: integer('attempts').notNull().default(1),
     createdAt: createdAt(),

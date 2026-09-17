@@ -7,7 +7,10 @@ import { createServices } from './services/container';
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL, config.LOG_PRETTY);
 
-const database = await createDatabase({ databaseUrl: config.DATABASE_URL, pgliteDataDir: config.PGLITE_DATA_DIR });
+const database = await createDatabase({
+  databaseUrl: config.DATABASE_URL,
+  pgliteDataDir: config.PGLITE_DATA_DIR,
+});
 await database.migrate(config.MIGRATIONS_DIR);
 logger.info({ database: database.kind }, 'Database ready (migrations applied)');
 
@@ -16,7 +19,9 @@ const app = await buildApp(services, { logger });
 
 const worker = config.RUN_WORKER ? services.createWorker() : null;
 if (!config.RUN_WORKER && database.kind === 'pglite') {
-  logger.warn('RUN_WORKER=false with embedded PGlite: jobs will not run (PGlite cannot be shared with a separate worker process).');
+  logger.warn(
+    'RUN_WORKER=false with embedded PGlite: jobs will not run (PGlite cannot be shared with a separate worker process).',
+  );
 }
 
 await app.listen({ host: config.HOST, port: config.PORT });

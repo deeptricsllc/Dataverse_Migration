@@ -61,7 +61,9 @@ function UserMenu() {
         aria-haspopup="menu"
         className="flex items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-slate-100"
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-700 text-xs font-semibold text-white">{initials}</span>
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-700 text-xs font-semibold text-white">
+          {initials}
+        </span>
         <span className="hidden sm:block">
           <span className="block text-sm font-medium leading-tight text-slate-900">{user.displayName}</span>
           <span className="block text-xs leading-tight text-slate-500">{user.organization.name}</span>
@@ -69,19 +71,33 @@ function UserMenu() {
         <ChevronDown className="h-4 w-4 text-slate-400" />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-40 mt-2 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+        <div
+          role="menu"
+          className="absolute right-0 z-40 mt-2 w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
+        >
           <div className="px-3 py-2">
             <p className="text-sm font-medium text-slate-900">{user.displayName}</p>
             <p className="truncate text-xs text-slate-500">{user.email}</p>
             <p className="mt-1 text-xs text-slate-500">
-              {user.organization.name} · {user.role === 'ADMIN' ? 'Administrator' : 'Member'} · {user.authProvider === 'demo' ? 'Demo sign-in' : 'Microsoft'}
+              {user.organization.name} · {user.role === 'ADMIN' ? 'Administrator' : 'Member'} ·{' '}
+              {user.authProvider === 'demo' ? 'Demo sign-in' : 'Microsoft'}
             </p>
           </div>
           <div className="my-1 border-t border-slate-100" />
-          <Link role="menuitem" to="/settings" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <Link
+            role="menuitem"
+            to="/settings"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
             <Settings className="h-4 w-4" /> Settings
           </Link>
-          <button role="menuitem" type="button" onClick={() => logout.mutate()} className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => logout.mutate()}
+            className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
             <LogOut className="h-4 w-4" /> Sign out
           </button>
         </div>
@@ -90,7 +106,13 @@ function UserMenu() {
   );
 }
 
-function EnvCard({ role, env }: { role: 'SOURCE' | 'TARGET'; env: { displayName: string; url: string } | null }) {
+function EnvCard({
+  role,
+  env,
+}: {
+  role: 'SOURCE' | 'TARGET';
+  env: { displayName: string; url: string } | null;
+}) {
   const isSource = role === 'SOURCE';
   return (
     <div
@@ -100,7 +122,14 @@ function EnvCard({ role, env }: { role: 'SOURCE' | 'TARGET'; env: { displayName:
       )}
       data-testid={`workspace-${role.toLowerCase()}`}
     >
-      <div className={cx('text-[10px] font-bold tracking-widest', isSource ? 'text-[var(--color-source)]' : 'text-[var(--color-target)]')}>{role}</div>
+      <div
+        className={cx(
+          'text-[10px] font-bold tracking-widest',
+          isSource ? 'text-[var(--color-source)]' : 'text-[var(--color-target)]',
+        )}
+      >
+        {role}
+      </div>
       {env ? (
         <>
           <div className="truncate text-sm font-semibold text-slate-900">{env.displayName}</div>
@@ -121,7 +150,10 @@ export function WorkspaceHeader() {
       <EnvCard role="SOURCE" env={source} />
       <ArrowRight className="h-5 w-5 flex-none text-slate-400" aria-label="migrates to" />
       <EnvCard role="TARGET" env={target} />
-      <Link to="/environments" className="flex-none whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+      <Link
+        to="/environments"
+        className="flex-none whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+      >
         Change Environments
       </Link>
     </div>
@@ -151,7 +183,10 @@ export function Layout() {
               to={to}
               end={end}
               className={({ isActive }) =>
-                cx('flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors', isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/60 hover:text-white')
+                cx(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/60 hover:text-white',
+                )
               }
             >
               <Icon className="h-4 w-4" aria-hidden />
@@ -165,18 +200,33 @@ export function Layout() {
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         {user.organization.isDemo && (
-          <div className="bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950" role="note">
-            DEMO MODE — simulated Dataverse environments. No Microsoft tenant is connected and no real data is read or written.
+          <div
+            className="bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950"
+            role="note"
+          >
+            DEMO MODE — simulated Dataverse environments. No Microsoft tenant is connected and no real data is
+            read or written.
           </div>
         )}
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">
           <div className="flex items-center gap-3">
             <span className="text-sm font-semibold text-slate-900">Dataverse Migration Platform</span>
-            {user.organization.isDemo && <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-amber-800">DEMO MODE</span>}
+            {user.organization.isDemo && (
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-amber-800">
+                DEMO MODE
+              </span>
+            )}
           </div>
           <nav className="flex gap-1 overflow-x-auto md:hidden" aria-label="Main mobile">
             {NAV.map(({ to, label, end }) => (
-              <NavLink key={to} to={to} end={end} className={({ isActive }) => cx('rounded px-2 py-1 text-xs', isActive ? 'bg-slate-900 text-white' : 'text-slate-600')}>
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  cx('rounded px-2 py-1 text-xs', isActive ? 'bg-slate-900 text-white' : 'text-slate-600')
+                }
+              >
                 {label}
               </NavLink>
             ))}

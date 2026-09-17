@@ -58,7 +58,10 @@ const ATTRIBUTE_CASTS: { cast: string; query: string }[] = [
   { cast: 'DateTimeAttributeMetadata', query: '$select=LogicalName,Format,DateTimeBehavior' },
   { cast: 'LookupAttributeMetadata', query: '$select=LogicalName,Targets' },
   { cast: 'PicklistAttributeMetadata', query: '$select=LogicalName&$expand=OptionSet,GlobalOptionSet' },
-  { cast: 'MultiSelectPicklistAttributeMetadata', query: '$select=LogicalName&$expand=OptionSet,GlobalOptionSet' },
+  {
+    cast: 'MultiSelectPicklistAttributeMetadata',
+    query: '$select=LogicalName&$expand=OptionSet,GlobalOptionSet',
+  },
   { cast: 'StateAttributeMetadata', query: '$select=LogicalName&$expand=OptionSet' },
   { cast: 'StatusAttributeMetadata', query: '$select=LogicalName&$expand=OptionSet' },
 ];
@@ -89,7 +92,11 @@ export class WebApiConnection implements DataverseConnection {
   // HTTP core
   // ---------------------------------------------------------------------------
 
-  async request<T = Raw>(method: string, pathOrUrl: string, options: RequestOptions = {}): Promise<{ data: T; headers: Headers }> {
+  async request<T = Raw>(
+    method: string,
+    pathOrUrl: string,
+    options: RequestOptions = {},
+  ): Promise<{ data: T; headers: Headers }> {
     const url = options.absolute ? pathOrUrl : this.baseUrl + pathOrUrl;
     const startedAt = Date.now();
     return withRetry(
@@ -130,10 +137,17 @@ export class WebApiConnection implements DataverseConnection {
       {
         policy: this.opts.retryPolicy ?? DEFAULT_RETRY_POLICY,
         logger: this.opts.logger,
-        context: { dataverseUrl: this.url, method, path: options.absolute ? '(nextLink)' : pathOrUrl.split('?')[0] },
+        context: {
+          dataverseUrl: this.url,
+          method,
+          path: options.absolute ? '(nextLink)' : pathOrUrl.split('?')[0],
+        },
       },
     ).finally(() => {
-      this.opts.logger.debug({ method, path: pathOrUrl.split('?')[0], ms: Date.now() - startedAt }, 'dataverse request');
+      this.opts.logger.debug(
+        { method, path: pathOrUrl.split('?')[0], ms: Date.now() - startedAt },
+        'dataverse request',
+      );
     });
   }
 
@@ -188,11 +202,16 @@ export class WebApiConnection implements DataverseConnection {
       this.getAll(
         `${entityPath}/ManyToManyRelationships?$select=SchemaName,Entity1LogicalName,Entity2LogicalName,Entity1IntersectAttribute,Entity2IntersectAttribute,IntersectEntityName,IsCustomRelationship`,
       ),
-      this.getAll(`${entityPath}/Keys?$select=LogicalName,SchemaName,DisplayName,KeyAttributes,EntityKeyIndexStatus`),
-      ...ATTRIBUTE_CASTS.map((c) => this.getAll(`${entityPath}/Attributes/Microsoft.Dynamics.CRM.${c.cast}?${c.query}`)),
+      this.getAll(
+        `${entityPath}/Keys?$select=LogicalName,SchemaName,DisplayName,KeyAttributes,EntityKeyIndexStatus`,
+      ),
+      ...ATTRIBUTE_CASTS.map((c) =>
+        this.getAll(`${entityPath}/Attributes/Microsoft.Dynamics.CRM.${c.cast}?${c.query}`),
+      ),
     ]);
     const extras = new Map<string, Raw>();
-    for (const rows of casts) for (const r of rows) extras.set(r.LogicalName, { ...extras.get(r.LogicalName), ...r });
+    for (const rows of casts)
+      for (const r of rows) extras.set(r.LogicalName, { ...extras.get(r.LogicalName), ...r });
     const summary = normalizeTableSummary(entity);
     return {
       ...summary,
@@ -212,7 +231,10 @@ export class WebApiConnection implements DataverseConnection {
   async countRecords(table: TableSummary): Promise<RecordCount> {
     const fetchXml = `<fetch aggregate="true"><entity name="${table.logicalName}"><attribute name="${table.primaryIdAttribute}" aggregate="count" alias="c"/></entity></fetch>`;
     try {
-      const { data } = await this.request<Raw>('GET', `${table.entitySetName}?fetchXml=${encodeURIComponent(fetchXml)}`);
+      const { data } = await this.request<Raw>(
+        'GET',
+        `${table.entitySetName}?fetchXml=${encodeURIComponent(fetchXml)}`,
+      );
       return { count: Number(data.value?.[0]?.c ?? 0), approximate: false };
     } catch (err) {
       const e = toDataverseError(err);
@@ -232,24 +254,39 @@ export class WebApiConnection implements DataverseConnection {
     const attrs = [...new Set(columns)].map((c) => byName.get(c)).filter((a): a is AttributeMeta => !!a);
     const select = [
       table.primaryIdAttribute,
-      ...attrs.filter((a) => a.logicalName !== table.primaryIdAttribute).map((a) => (LOOKUP_TYPES.has(a.type) ? `_${a.logicalName}_value` : a.logicalName)),
+      ...attrs
+        .filter((a) => a.logicalName !== table.primaryIdAttribute)
+        .map((a) => (LOOKUP_TYPES.has(a.type) ? `_${a.logicalName}_value` : a.logicalName)),
     ].join(',');
     return { select, attrs };
   }
 
   private readonly readHeaders = (pageSize?: number) => ({
-    Prefer: [`odata.include-annotations="Microsoft.Dynamics.CRM.lookuplogicalname"`, pageSize ? `odata.maxpagesize=${pageSize}` : '']
+    Prefer: [
+      `odata.include-annotations="Microsoft.Dynamics.CRM.lookuplogicalname"`,
+      pageSize ? `odata.maxpagesize=${pageSize}` : '',
+    ]
       .filter(Boolean)
       .join(','),
   });
 
-  async *queryRecords(table: TableMetadata, columns: string[], opts: { pageSize: number }): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(
+    table: TableMetadata,
+    columns: string[],
+    opts: { pageSize: number },
+  ): AsyncGenerator<DvRecord[]> {
     const { select, attrs } = this.selectList(table, columns);
-    let next: string | undefined = `${table.entitySetName}?$select=${select}&$orderby=${table.primaryIdAttribute}`;
+    let next: string | undefined =
+      `${table.entitySetName}?$select=${select}&$orderby=${table.primaryIdAttribute}`;
     let absolute = false;
     while (next) {
-      const { data }: { data: Raw } = await this.request<Raw>('GET', next, { headers: this.readHeaders(opts.pageSize), absolute });
-      const page = ((data.value ?? []) as Raw[]).map((r) => normalizeRecord(r, table.primaryIdAttribute, attrs));
+      const { data }: { data: Raw } = await this.request<Raw>('GET', next, {
+        headers: this.readHeaders(opts.pageSize),
+        absolute,
+      });
+      const page = ((data.value ?? []) as Raw[]).map((r) =>
+        normalizeRecord(r, table.primaryIdAttribute, attrs),
+      );
       if (page.length) yield page;
       next = data['@odata.nextLink'];
       absolute = true;
@@ -263,7 +300,10 @@ export class WebApiConnection implements DataverseConnection {
     for (let i = 0; i < valid.length; i += 50) {
       const chunk = valid.slice(i, i + 50);
       const filter = `Microsoft.Dynamics.CRM.In(PropertyName=${odataString(table.primaryIdAttribute)},PropertyValues=[${chunk.map(odataString).join(',')}])`;
-      const rows = await this.getAll(`${table.entitySetName}?$select=${select}&$filter=${encodeURIComponent(filter)}`, this.readHeaders());
+      const rows = await this.getAll(
+        `${table.entitySetName}?$select=${select}&$filter=${encodeURIComponent(filter)}`,
+        this.readHeaders(),
+      );
       out.push(...rows.map((r) => normalizeRecord(r, table.primaryIdAttribute, attrs)));
     }
     return out;
@@ -287,9 +327,13 @@ export class WebApiConnection implements DataverseConnection {
     }
     const { select, attrs } = this.selectList(table, columns);
     try {
-      const { data } = await this.request<Raw>('GET', `${table.entitySetName}(${parts.join(',')})?$select=${select}`, {
-        headers: this.readHeaders(),
-      });
+      const { data } = await this.request<Raw>(
+        'GET',
+        `${table.entitySetName}(${parts.join(',')})?$select=${select}`,
+        {
+          headers: this.readHeaders(),
+        },
+      );
       return normalizeRecord(data, table.primaryIdAttribute, attrs);
     } catch (err) {
       if (err instanceof DataverseError && err.code === 'NOT_FOUND') return null;
@@ -303,7 +347,8 @@ export class WebApiConnection implements DataverseConnection {
     if (forCreate && record.id) body[table.primaryIdAttribute] = record.id;
     for (const [name, value] of Object.entries(record.values)) {
       const attr = byName.get(name);
-      if (!attr) throw new DataverseError('VALIDATION', `Column ${name} does not exist on ${table.logicalName}`, 400);
+      if (!attr)
+        throw new DataverseError('VALIDATION', `Column ${name} does not exist on ${table.logicalName}`, 400);
       if (LOOKUP_TYPES.has(attr.type)) {
         if (value === null) {
           if (forCreate) continue;
@@ -311,12 +356,20 @@ export class WebApiConnection implements DataverseConnection {
           if (rel?.navigationProperty) body[rel.navigationProperty] = null;
           continue;
         }
-        if (!isLookupValue(value)) throw new DataverseError('VALIDATION', `Column ${name} expects a lookup value`, 400);
-        const rel = table.manyToOne.find((r) => r.referencingAttribute === name && r.referencedEntity === value.logicalName);
+        if (!isLookupValue(value))
+          throw new DataverseError('VALIDATION', `Column ${name} expects a lookup value`, 400);
+        const rel = table.manyToOne.find(
+          (r) => r.referencingAttribute === name && r.referencedEntity === value.logicalName,
+        );
         if (!rel?.navigationProperty) {
-          throw new DataverseError('VALIDATION', `No relationship from ${table.logicalName}.${name} to ${value.logicalName}`, 400);
+          throw new DataverseError(
+            'VALIDATION',
+            `No relationship from ${table.logicalName}.${name} to ${value.logicalName}`,
+            400,
+          );
         }
-        body[`${rel.navigationProperty}@odata.bind`] = `/${await this.entitySetOf(value.logicalName)}(${value.id})`;
+        body[`${rel.navigationProperty}@odata.bind`] =
+          `/${await this.entitySetOf(value.logicalName)}(${value.id})`;
       } else if (attr.type === 'MultiSelectPicklist' && Array.isArray(value)) {
         body[name] = value.join(',');
       } else {
@@ -328,22 +381,39 @@ export class WebApiConnection implements DataverseConnection {
 
   private writeHeaders(options: WriteOptions): Record<string, string> {
     const headers: Record<string, string> = {};
-    if (options.bypassCustomBusinessLogic) headers['MSCRM.BypassBusinessLogicExecution'] = 'CustomSync,CustomAsync';
+    if (options.bypassCustomBusinessLogic)
+      headers['MSCRM.BypassBusinessLogicExecution'] = 'CustomSync,CustomAsync';
     if (options.suppressFlowTriggers) headers['MSCRM.SuppressCallbackRegistrationExpanderJob'] = 'true';
     return headers;
   }
 
   async createRecord(table: TableMetadata, record: WriteRecord, options: WriteOptions): Promise<string> {
     const body = await this.toPayload(table, record, true);
-    const { headers } = await this.request('POST', table.entitySetName, { body, headers: this.writeHeaders(options) });
+    const { headers } = await this.request('POST', table.entitySetName, {
+      body,
+      headers: this.writeHeaders(options),
+    });
     const entityId = headers.get('OData-EntityId') ?? '';
     const match = entityId.match(/\(([0-9a-f-]{36})\)$/i);
     const id = match?.[1] ?? record.id;
-    if (!id) throw new DataverseError('UNKNOWN', 'Create succeeded but no record id was returned', undefined, undefined, undefined, false);
+    if (!id)
+      throw new DataverseError(
+        'UNKNOWN',
+        'Create succeeded but no record id was returned',
+        undefined,
+        undefined,
+        undefined,
+        false,
+      );
     return id.toLowerCase();
   }
 
-  async updateRecord(table: TableMetadata, id: string, record: WriteRecord, options: WriteOptions): Promise<void> {
+  async updateRecord(
+    table: TableMetadata,
+    id: string,
+    record: WriteRecord,
+    options: WriteOptions,
+  ): Promise<void> {
     if (!GUID.test(id)) throw new DataverseError('VALIDATION', 'Invalid record id', 400);
     const body = await this.toPayload(table, record, false);
     if (Object.keys(body).length === 0) return;
@@ -386,8 +456,18 @@ export class WebApiConnection implements DataverseConnection {
         });
       } catch (err) {
         const e = toDataverseError(err);
-        this.opts.logger.warn({ table: t.logicalName, errorCode: e.code }, 'Automation detection unavailable');
-        results.push({ table: t.logicalName, pluginSteps: 0, workflows: 0, flows: 0, details: [], detectionSupported: false });
+        this.opts.logger.warn(
+          { table: t.logicalName, errorCode: e.code },
+          'Automation detection unavailable',
+        );
+        results.push({
+          table: t.logicalName,
+          pluginSteps: 0,
+          workflows: 0,
+          flows: 0,
+          details: [],
+          detectionSupported: false,
+        });
       }
     }
     return results;

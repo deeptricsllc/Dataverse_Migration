@@ -4,9 +4,30 @@ import { AlertTriangle, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { put } from '../lib/api';
 import { fmtNumber } from '../lib/format';
-import { Callout, Checkbox, EmptyState, Mono, Pill, SearchInput, Select, StatusBadge, Table, Td, Th } from './ui';
+import {
+  Callout,
+  Checkbox,
+  EmptyState,
+  Mono,
+  Pill,
+  SearchInput,
+  Select,
+  StatusBadge,
+  Table,
+  Td,
+  Th,
+} from './ui';
 
-const PLATFORM = new Set(['systemuser', 'team', 'businessunit', 'organization', 'transactioncurrency', 'calendar', 'queue', 'principal']);
+const PLATFORM = new Set([
+  'systemuser',
+  'team',
+  'businessunit',
+  'organization',
+  'transactioncurrency',
+  'calendar',
+  'queue',
+  'principal',
+]);
 
 type Filter = 'ALL' | 'SELECTED' | 'CUSTOM' | 'CONFIGURATION' | 'ISSUES' | 'ANALYZED';
 
@@ -30,9 +51,12 @@ export function TableSelector({
   const byName = useMemo(() => new Map(candidates.map((c) => [c.logicalName, c])), [candidates]);
 
   const setCategory = useMutation({
-    mutationFn: ({ table, category }: { table: string; category: TableCategory | null }) => put(`/api/table-categories/${table}`, { category }),
+    mutationFn: ({ table, category }: { table: string; category: TableCategory | null }) =>
+      put(`/api/table-categories/${table}`, { category }),
     onSuccess: (_d, v) => {
-      qc.setQueryData<TableCandidateDto[]>(queryKey, (old) => old?.map((c) => (c.logicalName === v.table ? { ...c, category: v.category } : c)));
+      qc.setQueryData<TableCandidateDto[]>(queryKey, (old) =>
+        old?.map((c) => (c.logicalName === v.table ? { ...c, category: v.category } : c)),
+      );
     },
   });
 
@@ -48,7 +72,11 @@ export function TableSelector({
       case 'CONFIGURATION':
         return c.category === 'CONFIGURATION' || c.category === 'REFERENCE';
       case 'ISSUES':
-        return c.schemaStatus === 'INCOMPATIBLE' || c.schemaStatus === 'SOURCE_ONLY' || c.schemaStatus === 'DIFFERENT';
+        return (
+          c.schemaStatus === 'INCOMPATIBLE' ||
+          c.schemaStatus === 'SOURCE_ONLY' ||
+          c.schemaStatus === 'DIFFERENT'
+        );
       case 'ANALYZED':
         return c.sourceCount !== null || selected.has(c.logicalName);
       default:
@@ -72,7 +100,9 @@ export function TableSelector({
     return out;
   }, [selected, byName]);
 
-  const platformRefs = (c: TableCandidateDto) => [...new Set(c.lookups.flatMap((l) => l.targets.filter((t) => PLATFORM.has(t))))];
+  const platformRefs = (c: TableCandidateDto) => [
+    ...new Set(c.lookups.flatMap((l) => l.targets.filter((t) => PLATFORM.has(t)))),
+  ];
   const allVisibleSelected = rows.length > 0 && rows.every((r) => selected.has(r.logicalName));
   const someVisibleSelected = rows.some((r) => selected.has(r.logicalName));
 
@@ -119,7 +149,11 @@ export function TableSelector({
                       (via <Mono>{r.attribute}</Mono>
                       {r.required ? ', required' : ', optional'})
                     </span>{' '}
-                    <button type="button" className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-700 underline" onClick={() => toggle(r.table, true)}>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-700 underline"
+                      onClick={() => toggle(r.table, true)}
+                    >
                       <Plus className="h-3 w-3" /> add
                     </button>
                   </span>
@@ -128,7 +162,8 @@ export function TableSelector({
             ))}
           </ul>
           <p className="mt-2 text-xs">
-            Without them, references resolve only to records that already exist in the target (by identifier); unresolved optional lookups are left empty and required ones fail.
+            Without them, references resolve only to records that already exist in the target (by identifier);
+            unresolved optional lookups are left empty and required ones fail.
           </p>
         </Callout>
       )}
@@ -165,15 +200,29 @@ export function TableSelector({
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
             {rows.map((c) => {
-              const deps = [...new Set(c.lookups.flatMap((l) => l.targets.filter((t) => t !== c.logicalName && !PLATFORM.has(t))))];
+              const deps = [
+                ...new Set(
+                  c.lookups.flatMap((l) => l.targets.filter((t) => t !== c.logicalName && !PLATFORM.has(t))),
+                ),
+              ];
               const self = c.lookups.some((l) => l.targets.includes(c.logicalName));
               const platform = platformRefs(c);
               return (
-                <tr key={c.logicalName} className={selected.has(c.logicalName) ? 'bg-brand-50/40' : undefined} data-testid={`table-row-${c.logicalName}`}>
+                <tr
+                  key={c.logicalName}
+                  className={selected.has(c.logicalName) ? 'bg-brand-50/40' : undefined}
+                  data-testid={`table-row-${c.logicalName}`}
+                >
                   <Td>
-                    <Checkbox label={`Select ${c.displayName}`} checked={selected.has(c.logicalName)} onChange={(on) => toggle(c.logicalName, on)} />
+                    <Checkbox
+                      label={`Select ${c.displayName}`}
+                      checked={selected.has(c.logicalName)}
+                      onChange={(on) => toggle(c.logicalName, on)}
+                    />
                   </Td>
-                  {order && <Td className="tabular-nums text-slate-500">{order.get(c.logicalName) ?? '—'}</Td>}
+                  {order && (
+                    <Td className="tabular-nums text-slate-500">{order.get(c.logicalName) ?? '—'}</Td>
+                  )}
                   <Td>
                     <div className="font-medium text-slate-900">{c.displayName}</div>
                     <Mono>{c.logicalName}</Mono> {c.isCustom && <Pill>custom</Pill>}
@@ -182,7 +231,12 @@ export function TableSelector({
                     <select
                       aria-label={`Category for ${c.displayName}`}
                       value={c.category ?? ''}
-                      onChange={(e) => setCategory.mutate({ table: c.logicalName, category: (e.target.value || null) as TableCategory | null })}
+                      onChange={(e) =>
+                        setCategory.mutate({
+                          table: c.logicalName,
+                          category: (e.target.value || null) as TableCategory | null,
+                        })
+                      }
                       className="rounded border border-slate-200 bg-white py-0.5 pl-1.5 pr-6 text-xs"
                     >
                       <option value="">—</option>
@@ -194,10 +248,16 @@ export function TableSelector({
                   <Td className="text-right tabular-nums">{fmtNumber(c.sourceCount)}</Td>
                   <Td className="text-right tabular-nums">{fmtNumber(c.targetCount)}</Td>
                   <Td>
-                    {c.schemaStatus ? <StatusBadge status={c.schemaStatus} /> : <span className="text-xs text-slate-400">not analyzed</span>}
+                    {c.schemaStatus ? (
+                      <StatusBadge status={c.schemaStatus} />
+                    ) : (
+                      <span className="text-xs text-slate-400">not analyzed</span>
+                    )}
                   </Td>
                   <Td className="text-xs text-slate-600">
-                    {deps.length === 0 && !self && platform.length === 0 && <span className="text-slate-400">None</span>}
+                    {deps.length === 0 && !self && platform.length === 0 && (
+                      <span className="text-slate-400">None</span>
+                    )}
                     {deps.length > 0 && (
                       <div>
                         Requires:{' '}
@@ -205,13 +265,17 @@ export function TableSelector({
                           <span key={d} className={selected.has(d) ? 'text-emerald-700' : 'text-amber-700'}>
                             {i > 0 && ', '}
                             {byName.get(d)?.displayName ?? d}
-                            {!selected.has(d) && <AlertTriangle className="ml-0.5 inline h-3 w-3" aria-label="not selected" />}
+                            {!selected.has(d) && (
+                              <AlertTriangle className="ml-0.5 inline h-3 w-3" aria-label="not selected" />
+                            )}
                           </span>
                         ))}
                       </div>
                     )}
                     {self && <div className="text-slate-500">Self-referencing</div>}
-                    {platform.length > 0 && <div className="text-slate-400">Resolved in target: {platform.join(', ')}</div>}
+                    {platform.length > 0 && (
+                      <div className="text-slate-400">Resolved in target: {platform.join(', ')}</div>
+                    )}
                   </Td>
                 </tr>
               );

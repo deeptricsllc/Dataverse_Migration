@@ -95,7 +95,10 @@ export class GlobalDiscoveryProvider implements EnvironmentDiscoveryProvider {
           env.environmentId = env.environmentId ?? match.name ?? null;
         }
       } catch (err) {
-        this.opts.logger.warn({ errorCode: toDataverseError(err).code }, 'Power Platform enrichment unavailable; using discovery data only');
+        this.opts.logger.warn(
+          { errorCode: toDataverseError(err).code },
+          'Power Platform enrichment unavailable; using discovery data only',
+        );
       }
     }
     return envs.sort((a, b) => a.displayName.localeCompare(b.displayName));

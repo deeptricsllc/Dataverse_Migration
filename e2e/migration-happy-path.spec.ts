@@ -61,7 +61,8 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await selectTable(page, 'account');
   await expect(page.getByTestId('dependency-hint-account')).toContainText('Contact');
   await expect(page.getByTestId('dependency-hint-account')).toContainText('Region');
-  for (const t of ['contact', 'dtx_region', 'dtx_office', 'dtx_applicationconfig', 'product']) await selectTable(page, t);
+  for (const t of ['contact', 'dtx_region', 'dtx_office', 'dtx_applicationconfig', 'product'])
+    await selectTable(page, t);
   await expect(page.getByTestId('dependency-hint-account')).toHaveCount(0);
   await page.getByRole('button', { name: /Generate migration plan/ }).click();
 

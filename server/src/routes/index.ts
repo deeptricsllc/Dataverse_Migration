@@ -28,52 +28,86 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
 
-  app.get('/api/auth/config', async () => ({ microsoftEnabled: config.microsoftEnabled, demoEnabled: config.DEMO_MODE }));
+  app.get('/api/auth/config', async () => ({
+    microsoftEnabled: config.microsoftEnabled,
+    demoEnabled: config.DEMO_MODE,
+  }));
 
   app.get('/api/auth/session', async (req) => {
     if (!req.session) return { user: null, csrfToken: null };
     return { user: req.session.user, csrfToken: req.session.csrfToken };
   });
 
-  app.get('/api/auth/login', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
-    if (!config.microsoftEnabled) throw new AppError(404, 'MICROSOFT_NOT_CONFIGURED', 'Microsoft sign-in is not configured');
-    const { returnTo } = z.object({ returnTo: z.string().max(500).optional() }).parse(req.query);
-    const url = await s.auth.beginMicrosoftSignIn(safeReturnTo(returnTo));
-    return reply.redirect(url);
-  });
+  app.get(
+    '/api/auth/login',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      if (!config.microsoftEnabled)
+        throw new AppError(404, 'MICROSOFT_NOT_CONFIGURED', 'Microsoft sign-in is not configured');
+      const { returnTo } = z.object({ returnTo: z.string().max(500).optional() }).parse(req.query);
+      const url = await s.auth.beginMicrosoftSignIn(safeReturnTo(returnTo));
+      return reply.redirect(url);
+    },
+  );
 
-  app.get('/api/auth/callback', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const q = z
-      .object({ code: z.string().max(4000).optional(), state: z.string().max(200).optional(), error: z.string().max(200).optional(), error_description: z.string().max(2000).optional() })
-      .parse(req.query);
-    if (q.error || !q.code || !q.state) {
-      req.log.warn({ error: q.error }, 'Microsoft sign-in returned an error');
-      const reason = encodeURIComponent(q.error === 'access_denied' ? 'Consent was declined or access was denied.' : 'Microsoft sign-in did not complete.');
-      return reply.redirect(`/login?error=${reason}`);
-    }
-    try {
-      const { userId, returnTo } = await s.auth.completeMicrosoftSignIn({ code: q.code, state: q.state }, req.id);
+  app.get(
+    '/api/auth/callback',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const q = z
+        .object({
+          code: z.string().max(4000).optional(),
+          state: z.string().max(200).optional(),
+          error: z.string().max(200).optional(),
+          error_description: z.string().max(2000).optional(),
+        })
+        .parse(req.query);
+      if (q.error || !q.code || !q.state) {
+        req.log.warn({ error: q.error }, 'Microsoft sign-in returned an error');
+        const reason = encodeURIComponent(
+          q.error === 'access_denied'
+            ? 'Consent was declined or access was denied.'
+            : 'Microsoft sign-in did not complete.',
+        );
+        return reply.redirect(`/login?error=${reason}`);
+      }
+      try {
+        const { userId, returnTo } = await s.auth.completeMicrosoftSignIn(
+          { code: q.code, state: q.state },
+          req.id,
+        );
+        const session = await s.auth.createSession(userId, req.headers['user-agent']);
+        reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
+        return reply.redirect(returnTo);
+      } catch (err) {
+        const message = err instanceof AppError ? err.message : 'Microsoft sign-in failed.';
+        if (!(err instanceof AppError)) req.log.error({ err }, 'Microsoft sign-in failed');
+        return reply.redirect(`/login?error=${encodeURIComponent(message)}`);
+      }
+    },
+  );
+
+  app.post(
+    '/api/auth/demo-login',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const userId = await s.auth.demoSignIn(req.id);
       const session = await s.auth.createSession(userId, req.headers['user-agent']);
       reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
-      return reply.redirect(returnTo);
-    } catch (err) {
-      const message = err instanceof AppError ? err.message : 'Microsoft sign-in failed.';
-      if (!(err instanceof AppError)) req.log.error({ err }, 'Microsoft sign-in failed');
-      return reply.redirect(`/login?error=${encodeURIComponent(message)}`);
-    }
-  });
-
-  app.post('/api/auth/demo-login', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const userId = await s.auth.demoSignIn(req.id);
-    const session = await s.auth.createSession(userId, req.headers['user-agent']);
-    reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
-    const resolved = await s.auth.resolveSession(session.token);
-    return { user: resolved!.user, csrfToken: resolved!.csrfToken };
-  });
+      const resolved = await s.auth.resolveSession(session.token);
+      return { user: resolved!.user, csrfToken: resolved!.csrfToken };
+    },
+  );
 
   app.post('/api/auth/logout', async (req, reply) => {
     const provider = req.session!.user.authProvider;
-    await s.audit.record({ organizationId: req.ctx.organizationId, userId: req.ctx.userId, action: 'AUTH_SIGN_OUT', outcome: 'SUCCESS', requestId: req.id });
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'AUTH_SIGN_OUT',
+      outcome: 'SUCCESS',
+      requestId: req.id,
+    });
     await s.auth.destroySession(req.session!.sessionId);
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return { logoutUrl: provider === 'microsoft' && config.microsoftEnabled ? s.identity.logoutUrl() : null };
@@ -85,11 +119,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/environments', async (req) => s.environments.list(req.ctx));
   app.post('/api/environments/discover', async (req) => s.environments.discover(req.ctx));
-  app.post('/api/environments/:id/test', async (req) => s.environments.testConnection(req.ctx, idParams.parse(req.params).id));
+  app.post('/api/environments/:id/test', async (req) =>
+    s.environments.testConnection(req.ctx, idParams.parse(req.params).id),
+  );
 
   app.get('/api/workspace', async (req) => s.environments.getWorkspace(req.ctx));
   app.put('/api/workspace', async (req) => {
-    const body = z.object({ sourceEnvironmentId: uuid.nullable(), targetEnvironmentId: uuid.nullable() }).parse(req.body);
+    const body = z
+      .object({ sourceEnvironmentId: uuid.nullable(), targetEnvironmentId: uuid.nullable() })
+      .parse(req.body);
     return s.environments.setWorkspace(req.ctx, body);
   });
 
@@ -136,11 +174,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return s.comparisons.create(req.ctx, body);
   });
   app.get('/api/comparisons', async (req) => {
-    const q = z.object({ sourceEnvironmentId: uuid.optional(), targetEnvironmentId: uuid.optional() }).parse(req.query);
+    const q = z
+      .object({ sourceEnvironmentId: uuid.optional(), targetEnvironmentId: uuid.optional() })
+      .parse(req.query);
     return s.comparisons.list(req.ctx, q);
   });
   app.get('/api/comparisons/:id', async (req) => s.comparisons.get(req.ctx, idParams.parse(req.params).id));
-  app.get('/api/comparisons/:id/tables', async (req) => s.comparisons.tables(req.ctx, idParams.parse(req.params).id));
+  app.get('/api/comparisons/:id/tables', async (req) =>
+    s.comparisons.tables(req.ctx, idParams.parse(req.params).id),
+  );
 
   // ---------------------------------------------------------------------------
   // Planning
@@ -153,7 +195,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.put('/api/table-categories/:table', async (req) => {
     const { table } = z.object({ table: tableName }).parse(req.params);
-    const { category } = z.object({ category: z.enum(['CONFIGURATION', 'REFERENCE', 'TRANSACTIONAL']).nullable() }).parse(req.body);
+    const { category } = z
+      .object({ category: z.enum(['CONFIGURATION', 'REFERENCE', 'TRANSACTIONAL']).nullable() })
+      .parse(req.body);
     await s.planning.setCategory(req.ctx, table, category);
     return { table, category };
   });
@@ -175,7 +219,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { tables } = z.object({ tables: z.array(tableName).max(500) }).parse(req.body);
     return s.planning.updateSelection(req.ctx, idParams.parse(req.params).id, tables);
   });
-  app.post('/api/plans/:id/revalidate', async (req) => s.planning.revalidate(req.ctx, idParams.parse(req.params).id));
+  app.post('/api/plans/:id/revalidate', async (req) =>
+    s.planning.revalidate(req.ctx, idParams.parse(req.params).id),
+  );
   app.patch('/api/plans/:id/options', async (req) => {
     const patch = z
       .object({
@@ -193,7 +239,10 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.patch('/api/plans/:id/entities/:entityId', async (req) => {
     const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
     const body = z
-      .object({ matchStrategy: z.enum(['PRIMARY_ID', 'ALTERNATE_KEY']), alternateKey: z.string().max(200).nullable() })
+      .object({
+        matchStrategy: z.enum(['PRIMARY_ID', 'ALTERNATE_KEY']),
+        alternateKey: z.string().max(200).nullable(),
+      })
       .parse(req.body);
     return s.planning.updateEntity(req.ctx, id, entityId, body);
   });
@@ -219,7 +268,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
   app.post('/api/plans/:id/execute', async (req) => {
     const body = z
-      .object({ confirmSourceName: z.string().max(300), confirmTargetName: z.string().max(300), acknowledgeWarnings: z.boolean() })
+      .object({
+        confirmSourceName: z.string().max(300),
+        confirmTargetName: z.string().max(300),
+        acknowledgeWarnings: z.boolean(),
+      })
       .parse(req.body);
     return s.runs.start(req.ctx, idParams.parse(req.params).id, body);
   });
@@ -231,7 +284,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/runs', async (req) => s.runs.list(req.ctx));
   app.get('/api/runs/:id', async (req) => s.runs.get(req.ctx, idParams.parse(req.params).id));
   app.post('/api/runs/:id/:action', async (req) => {
-    const { id, action } = z.object({ id: uuid, action: z.enum(['cancel', 'pause', 'resume', 'retry']) }).parse(req.params);
+    const { id, action } = z
+      .object({ id: uuid, action: z.enum(['cancel', 'pause', 'resume', 'retry']) })
+      .parse(req.params);
     return s.runs.control(req.ctx, id, action);
   });
   app.get('/api/runs/:id/errors', async (req) => {
@@ -248,10 +303,17 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
   app.get('/api/runs/:id/records', async (req) => {
     const { id } = idParams.parse(req.params);
-    const q = page.extend({ entity: tableName.optional(), outcome: z.enum(['CREATED', 'UPDATED', 'SKIPPED', 'FAILED']).optional() }).parse(req.query);
+    const q = page
+      .extend({
+        entity: tableName.optional(),
+        outcome: z.enum(['CREATED', 'UPDATED', 'SKIPPED', 'FAILED']).optional(),
+      })
+      .parse(req.query);
     return s.runs.records(req.ctx, id, q);
   });
-  app.get('/api/runs/:id/rollback-preview', async (req) => s.runs.rollbackPreview(req.ctx, idParams.parse(req.params).id));
+  app.get('/api/runs/:id/rollback-preview', async (req) =>
+    s.runs.rollbackPreview(req.ctx, idParams.parse(req.params).id),
+  );
 
   // ---------------------------------------------------------------------------
   // Validation
@@ -275,7 +337,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const q = page
       .extend({
         entity: tableName.optional(),
-        type: z.enum(['MISSING_IN_TARGET', 'VALUE_MISMATCH', 'LOOKUP_MISMATCH', 'BROKEN_REFERENCE', 'PRE_EXISTING_DIFFERENCE']).optional(),
+        type: z
+          .enum([
+            'MISSING_IN_TARGET',
+            'VALUE_MISMATCH',
+            'LOOKUP_MISMATCH',
+            'BROKEN_REFERENCE',
+            'PRE_EXISTING_DIFFERENCE',
+          ])
+          .optional(),
         outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
       })
       .parse(req.query);
@@ -288,7 +358,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/dashboard', async (req) => s.insights.dashboard(req.ctx));
   app.get('/api/audit', async (req) => {
-    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query);
+    const { limit } = z
+      .object({ limit: z.coerce.number().int().min(1).max(500).default(100) })
+      .parse(req.query);
     return s.audit.list(req.ctx.organizationId, limit);
   });
   app.get('/api/settings', async (req) => ({
@@ -316,11 +388,19 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     await seedDemoData(s.db, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
-    await s.audit.record({ organizationId: req.ctx.organizationId, userId: req.ctx.userId, action: 'DEMO_DATA_RESET', outcome: 'SUCCESS', requestId: req.id });
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'DEMO_DATA_RESET',
+      outcome: 'SUCCESS',
+      requestId: req.id,
+    });
     return { ok: true };
   });
 }
 
 function toApiError(err: unknown, action: string) {
-  return err instanceof AppError ? err : new AppError(502, 'DATAVERSE_ERROR', `${action} failed: ${(err as Error).message}`);
+  return err instanceof AppError
+    ? err
+    : new AppError(502, 'DATAVERSE_ERROR', `${action} failed: ${(err as Error).message}`);
 }

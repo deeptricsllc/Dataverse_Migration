@@ -1,8 +1,7 @@
 import type { AttributeMeta, AttributeType } from '../../../shared/metadata';
 
 export type Compatibility =
-  | { compatible: true; lossy: boolean; note?: string }
-  | { compatible: false; note: string };
+  { compatible: true; lossy: boolean; note?: string } | { compatible: false; note: string };
 
 const NUMERIC: ReadonlySet<AttributeType> = new Set(['Integer', 'BigInt', 'Decimal', 'Double', 'Money']);
 const TEXT: ReadonlySet<AttributeType> = new Set(['String', 'Memo']);
@@ -32,11 +31,19 @@ export function typeCompatibility(source: AttributeMeta, target: AttributeMeta):
   }
   if (s === t) return { compatible: true, lossy: false };
   if (TEXT.has(s) && TEXT.has(t)) {
-    return { compatible: true, lossy: s === 'Memo', note: s === 'Memo' ? 'Multiline text into single line' : undefined };
+    return {
+      compatible: true,
+      lossy: s === 'Memo',
+      note: s === 'Memo' ? 'Multiline text into single line' : undefined,
+    };
   }
   if (NUMERIC.has(s) && NUMERIC.has(t)) {
     const widening = WIDENING[s]?.includes(t) ?? false;
-    return { compatible: true, lossy: !widening, note: widening ? undefined : `${s} to ${t} may lose precision` };
+    return {
+      compatible: true,
+      lossy: !widening,
+      note: widening ? undefined : `${s} to ${t} may lose precision`,
+    };
   }
   if ((s === 'State' || s === 'Status') && (t === 'State' || t === 'Status')) {
     return { compatible: false, note: 'State and status reason are distinct columns' };

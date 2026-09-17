@@ -1,5 +1,10 @@
 import type { DependencyAnalysisDto, DependencyEdgeDto, DependencyNodeDto } from '../../../shared/domain';
-import { LOOKUP_TYPES, PLATFORM_TABLES, SYSTEM_MANAGED_COLUMNS, type TableMetadata } from '../../../shared/metadata';
+import {
+  LOOKUP_TYPES,
+  PLATFORM_TABLES,
+  SYSTEM_MANAGED_COLUMNS,
+  type TableMetadata,
+} from '../../../shared/metadata';
 
 export interface DependencyInput {
   /** Tables selected for migration with their source metadata. */
@@ -188,20 +193,27 @@ export function analyzeDependencies(input: DependencyInput): DependencyAnalysisD
       const original = edges.find((e) => e.from === d.from && e.to === d.to && e.attribute === d.attribute);
       if (original) original.deferred = true;
     }
-    cycles.push({ group, tables: component, resolvable, deferredEdges: deferred.map((d) => ({ ...d, deferred: true })) });
+    cycles.push({
+      group,
+      tables: component,
+      resolvable,
+      deferredEdges: deferred.map((d) => ({ ...d, deferred: true })),
+    });
   }
 
   // Kahn's algorithm on non-deferred in-selection edges; deterministic alphabetical tie-break.
-  const orderEdges = edges.filter((e) => (e.kind === 'IN_SELECTION' || e.kind === 'SELF') && !e.deferred && e.from !== e.to);
+  const orderEdges = edges.filter(
+    (e) => (e.kind === 'IN_SELECTION' || e.kind === 'SELF') && !e.deferred && e.from !== e.to,
+  );
   const deps = new Map<string, Set<string>>(names.map((n) => [n, new Set()]));
   for (const e of orderEdges) deps.get(e.from)!.add(e.to);
   const order: string[] = [];
   const placed = new Set<string>();
-  const hasSelfBlock = new Set(
-    edges.filter((e) => e.kind === 'SELF' && !e.deferred).map((e) => e.from),
-  );
+  const hasSelfBlock = new Set(edges.filter((e) => e.kind === 'SELF' && !e.deferred).map((e) => e.from));
   for (;;) {
-    const ready = names.filter((n) => !placed.has(n) && [...deps.get(n)!].every((d) => placed.has(d)) && !hasSelfBlock.has(n));
+    const ready = names.filter(
+      (n) => !placed.has(n) && [...deps.get(n)!].every((d) => placed.has(d)) && !hasSelfBlock.has(n),
+    );
     if (ready.length === 0) break;
     const next = ready[0];
     order.push(next);
@@ -211,7 +223,7 @@ export function analyzeDependencies(input: DependencyInput): DependencyAnalysisD
 
   const nodes: DependencyNodeDto[] = names.map((n) => {
     const dependsOn = edges.filter((e) => e.from === n);
-    const dependents = edges.filter((e) => e.to === n && e.from !== n && (e.kind === 'IN_SELECTION'));
+    const dependents = edges.filter((e) => e.to === n && e.from !== n && e.kind === 'IN_SELECTION');
     const warnings: string[] = [];
     for (const e of dependsOn) {
       if (e.kind === 'NOT_SELECTED') {
@@ -221,7 +233,9 @@ export function analyzeDependencies(input: DependencyInput): DependencyAnalysisD
       } else if (e.kind === 'MISSING_IN_TARGET') {
         warnings.push(`${e.attribute} references ${e.to}, which does not exist in the target environment.`);
       } else if (e.kind === 'PLATFORM') {
-        warnings.push(`${e.attribute} references platform table ${e.to}; resolved by identifier in the target.`);
+        warnings.push(
+          `${e.attribute} references platform table ${e.to}; resolved by identifier in the target.`,
+        );
       } else if (e.deferred) {
         warnings.push(`${e.attribute} → ${e.to} is part of a circular dependency and will be set in pass 2.`);
       }
@@ -246,7 +260,10 @@ export function analyzeDependencies(input: DependencyInput): DependencyAnalysisD
 
   const missingMap = new Map<string, { table: string; attribute: string; required: boolean }[]>();
   for (const e of edges.filter((x) => x.kind === 'NOT_SELECTED')) {
-    missingMap.set(e.to, [...(missingMap.get(e.to) ?? []), { table: e.from, attribute: e.attribute, required: e.required }]);
+    missingMap.set(e.to, [
+      ...(missingMap.get(e.to) ?? []),
+      { table: e.from, attribute: e.attribute, required: e.required },
+    ]);
   }
 
   return {

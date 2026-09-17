@@ -23,13 +23,22 @@ export class ConnectionFactory {
     private readonly identity: MicrosoftIdentityService,
   ) {}
 
-  forEnvironment(env: EnvironmentRow, userId: string, logContext: Record<string, unknown> = {}): DataverseConnection {
+  forEnvironment(
+    env: EnvironmentRow,
+    userId: string,
+    logContext: Record<string, unknown> = {},
+  ): DataverseConnection {
     const logger = this.logger.child({ environmentId: env.id, ...logContext });
     if (env.provider === 'demo') {
       if (!this.config.DEMO_MODE) throw new AppError(400, 'DEMO_DISABLED', 'Demo environments are disabled');
       const def = DEMO_ENVIRONMENTS.find((d) => d.key === env.uniqueName);
       if (!def) throw new AppError(404, 'NOT_FOUND', 'Demo environment not found');
-      return new DemoConnection(def, this.db, logger, this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS);
+      return new DemoConnection(
+        def,
+        this.db,
+        logger,
+        this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+      );
     }
     return new WebApiConnection({
       url: env.url,
@@ -62,7 +71,8 @@ export class ConnectionFactory {
     return new GlobalDiscoveryProvider({
       discoveryUrl: this.config.DATAVERSE_DISCOVERY_URL,
       logger: this.logger.child({ userId }),
-      getDiscoveryToken: () => this.identity.getAccessToken(userId, [discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)]),
+      getDiscoveryToken: () =>
+        this.identity.getAccessToken(userId, [discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)]),
       getPowerPlatformToken: this.config.POWER_PLATFORM_ENRICHMENT
         ? () => this.identity.getAccessToken(userId, [POWER_PLATFORM_SCOPE])
         : undefined,
@@ -74,7 +84,10 @@ export class ConnectionFactory {
 export async function seedDemoData(db: AppDb, opts: { reset?: boolean } = {}) {
   if (opts.reset) await db.delete(demoRecords);
   for (const env of DEMO_ENVIRONMENTS) {
-    const [existing] = await db.select({ n: count() }).from(demoRecords).where(eq(demoRecords.environmentKey, env.key));
+    const [existing] = await db
+      .select({ n: count() })
+      .from(demoRecords)
+      .where(eq(demoRecords.environmentKey, env.key));
     if (Number(existing?.n ?? 0) > 0) continue;
     const dataset = datasetFor(env.key as DemoEnvKey);
     const rows = Object.entries(dataset).flatMap(([logicalName, records]) =>
@@ -86,7 +99,10 @@ export async function seedDemoData(db: AppDb, opts: { reset?: boolean } = {}) {
       })),
     );
     for (let i = 0; i < rows.length; i += 200) {
-      await db.insert(demoRecords).values(rows.slice(i, i + 200)).onConflictDoNothing();
+      await db
+        .insert(demoRecords)
+        .values(rows.slice(i, i + 200))
+        .onConflictDoNothing();
     }
   }
 }

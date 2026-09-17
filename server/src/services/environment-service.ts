@@ -36,7 +36,8 @@ export function toEnvironmentDto(e: EnvironmentRow): EnvironmentDto {
 export function integrationError(err: unknown, action: string): AppError {
   if (err instanceof AppError) return err;
   const e = toDataverseError(err);
-  const status = e.code === 'FORBIDDEN' ? 403 : e.code === 'AUTH_REQUIRED' ? 401 : e.code === 'NOT_FOUND' ? 404 : 502;
+  const status =
+    e.code === 'FORBIDDEN' ? 403 : e.code === 'AUTH_REQUIRED' ? 401 : e.code === 'NOT_FOUND' ? 404 : 502;
   return new AppError(status, `DATAVERSE_${e.code}`, `${action} failed: ${e.message}`);
 }
 
@@ -52,7 +53,10 @@ export class EnvironmentService {
     const rows = await this.db
       .select({ env: environments })
       .from(environments)
-      .innerJoin(environmentAccess, and(eq(environmentAccess.environmentId, environments.id), eq(environmentAccess.userId, ctx.userId)))
+      .innerJoin(
+        environmentAccess,
+        and(eq(environmentAccess.environmentId, environments.id), eq(environmentAccess.userId, ctx.userId)),
+      )
       .where(eq(environments.organizationId, ctx.organizationId))
       .orderBy(environments.displayName);
     return rows.map((r) => toEnvironmentDto(r.env));
@@ -63,7 +67,10 @@ export class EnvironmentService {
     const [row] = await this.db
       .select({ env: environments })
       .from(environments)
-      .innerJoin(environmentAccess, and(eq(environmentAccess.environmentId, environments.id), eq(environmentAccess.userId, ctx.userId)))
+      .innerJoin(
+        environmentAccess,
+        and(eq(environmentAccess.environmentId, environments.id), eq(environmentAccess.userId, ctx.userId)),
+      )
       .where(and(eq(environments.id, environmentId), eq(environments.organizationId, ctx.organizationId)));
     if (!row) throw notFound('Environment');
     return row.env;
@@ -85,14 +92,19 @@ export class EnvironmentService {
     try {
       discovered = await provider.discover();
     } catch (err) {
-      this.logger.warn({ requestId: ctx.requestId, errorCode: toDataverseError(err).code }, 'Environment discovery failed');
+      this.logger.warn(
+        { requestId: ctx.requestId, errorCode: toDataverseError(err).code },
+        'Environment discovery failed',
+      );
       await this.audit.record({
         organizationId: ctx.organizationId,
         userId: ctx.userId,
         action: 'ENVIRONMENTS_DISCOVERED',
         outcome: 'FAILURE',
         requestId: ctx.requestId,
-        details: { error: err instanceof AppError || err instanceof DataverseError ? err.message : 'Discovery failed' },
+        details: {
+          error: err instanceof AppError || err instanceof DataverseError ? err.message : 'Discovery failed',
+        },
       });
       throw integrationError(err, 'Environment discovery');
     }
@@ -136,7 +148,10 @@ export class EnvironmentService {
       await this.db
         .insert(environmentAccess)
         .values({ userId: ctx.userId, environmentId: env.id, lastSeenAt: now })
-        .onConflictDoUpdate({ target: [environmentAccess.userId, environmentAccess.environmentId], set: { lastSeenAt: now } });
+        .onConflictDoUpdate({
+          target: [environmentAccess.userId, environmentAccess.environmentId],
+          set: { lastSeenAt: now },
+        });
     }
     // Revoke access rows for environments no longer returned for this user.
     const current = await this.list(ctx);
@@ -145,7 +160,9 @@ export class EnvironmentService {
     if (stale.length) {
       await this.db
         .delete(environmentAccess)
-        .where(and(eq(environmentAccess.userId, ctx.userId), inArray(environmentAccess.environmentId, stale)));
+        .where(
+          and(eq(environmentAccess.userId, ctx.userId), inArray(environmentAccess.environmentId, stale)),
+        );
     }
     await this.audit.record({
       organizationId: ctx.organizationId,
@@ -170,7 +187,10 @@ export class EnvironmentService {
       status = 'FAILED';
       const e = err instanceof AppError ? err : toDataverseError(err);
       message = e.message;
-      this.logger.warn({ requestId: ctx.requestId, environmentId, code: (e as { code?: string }).code }, 'Connection test failed');
+      this.logger.warn(
+        { requestId: ctx.requestId, environmentId, code: (e as { code?: string }).code },
+        'Connection test failed',
+      );
     }
     const [updated] = await this.db
       .update(environments)
@@ -202,7 +222,10 @@ export class EnvironmentService {
     return { source: await load(pref?.sourceEnvironmentId), target: await load(pref?.targetEnvironmentId) };
   }
 
-  async setWorkspace(ctx: RequestContext, input: { sourceEnvironmentId: string | null; targetEnvironmentId: string | null }): Promise<WorkspaceDto> {
+  async setWorkspace(
+    ctx: RequestContext,
+    input: { sourceEnvironmentId: string | null; targetEnvironmentId: string | null },
+  ): Promise<WorkspaceDto> {
     if (input.sourceEnvironmentId && input.sourceEnvironmentId === input.targetEnvironmentId) {
       throw badRequest('Source and target must be different environments');
     }
@@ -210,10 +233,18 @@ export class EnvironmentService {
     if (input.targetEnvironmentId) await this.getAccessible(ctx, input.targetEnvironmentId);
     await this.db
       .insert(userPreferences)
-      .values({ userId: ctx.userId, sourceEnvironmentId: input.sourceEnvironmentId, targetEnvironmentId: input.targetEnvironmentId })
+      .values({
+        userId: ctx.userId,
+        sourceEnvironmentId: input.sourceEnvironmentId,
+        targetEnvironmentId: input.targetEnvironmentId,
+      })
       .onConflictDoUpdate({
         target: userPreferences.userId,
-        set: { sourceEnvironmentId: input.sourceEnvironmentId, targetEnvironmentId: input.targetEnvironmentId, updatedAt: sql`now()` },
+        set: {
+          sourceEnvironmentId: input.sourceEnvironmentId,
+          targetEnvironmentId: input.targetEnvironmentId,
+          updatedAt: sql`now()`,
+        },
       });
     await this.audit.record({
       organizationId: ctx.organizationId,

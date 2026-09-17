@@ -41,11 +41,12 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     loggerInstance: opts.logger as unknown as FastifyBaseLogger,
     genReqId: (req) => {
       const incoming = req.headers['x-request-id'];
-      return typeof incoming === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(incoming) ? incoming : crypto.randomUUID();
+      return typeof incoming === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(incoming)
+        ? incoming
+        : crypto.randomUUID();
     },
     trustProxy: config.NODE_ENV === 'production',
     bodyLimit: 1_000_000,
-    disableRequestLogging: false,
   });
 
   app.decorateRequest('session', null);
@@ -68,7 +69,11 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     crossOriginEmbedderPolicy: false,
   });
   await app.register(cookie);
-  await app.register(rateLimit, { max: 900, timeWindow: '1 minute', allowList: config.NODE_ENV === 'test' ? () => true : undefined });
+  await app.register(rateLimit, {
+    max: 900,
+    timeWindow: '1 minute',
+    allowList: config.NODE_ENV === 'test' ? () => true : undefined,
+  });
 
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-request-id', req.id);
@@ -89,7 +94,8 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     if (!url.startsWith('/api/')) return;
     if (!SAFE_METHODS.has(req.method)) {
       const origin = req.headers.origin;
-      if (origin && !allowedOrigins.has(origin)) throw new AppError(403, 'ORIGIN_REJECTED', 'Cross-origin request rejected');
+      if (origin && !allowedOrigins.has(origin))
+        throw new AppError(403, 'ORIGIN_REJECTED', 'Cross-origin request rejected');
     }
     req.session = await services.auth.resolveSession(req.cookies[SESSION_COOKIE]);
     if (PUBLIC_ROUTES.has(url)) return;
@@ -127,14 +133,26 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
           details: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         },
       };
-    } else if ((err as { statusCode?: number }).statusCode && (err as { statusCode: number }).statusCode < 500) {
+    } else if (
+      (err as { statusCode?: number }).statusCode &&
+      (err as { statusCode: number }).statusCode < 500
+    ) {
       status = (err as { statusCode: number }).statusCode;
-      body = { error: { code: (err as { code?: string }).code ?? 'BAD_REQUEST', message: scrubSecrets((err as Error).message), requestId: req.id } };
+      body = {
+        error: {
+          code: (err as { code?: string }).code ?? 'BAD_REQUEST',
+          message: scrubSecrets((err as Error).message),
+          requestId: req.id,
+        },
+      };
     } else {
-      body = { error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', requestId: req.id } };
+      body = {
+        error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', requestId: req.id },
+      };
     }
     if (status >= 500) req.log.error({ err }, 'Request failed');
-    else if (status !== 401) req.log.warn({ code: body.error.code, status, message: body.error.message }, 'Request rejected');
+    else if (status !== 401)
+      req.log.warn({ code: body.error.code, status, message: body.error.message }, 'Request rejected');
     void reply.status(status).send(body);
   });
 
@@ -146,14 +164,18 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     app.setNotFoundHandler((req, reply) => {
       // Unknown API routes and missing static assets are real 404s; everything else is the SPA.
       if (req.url.startsWith('/api/') || req.method !== 'GET' || /\.[a-z0-9]+(\?|$)/i.test(req.url)) {
-        void reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.id } });
+        void reply
+          .status(404)
+          .send({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.id } });
         return;
       }
       void reply.type('text/html').sendFile('index.html');
     });
   } else {
     app.setNotFoundHandler((req, reply) => {
-      void reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.id } });
+      void reply
+        .status(404)
+        .send({ error: { code: 'NOT_FOUND', message: 'Route not found', requestId: req.id } });
     });
   }
 

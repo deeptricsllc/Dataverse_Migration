@@ -40,13 +40,23 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
   const add = (i: PlanIssue) => issues.push(i);
 
   if (input.entities.length === 0) {
-    add({ severity: 'BLOCKER', code: 'NO_TABLES_SELECTED', table: null, message: 'Select at least one table to migrate.' });
+    add({
+      severity: 'BLOCKER',
+      code: 'NO_TABLES_SELECTED',
+      table: null,
+      message: 'Select at least one table to migrate.',
+    });
   }
 
   for (const e of input.entities) {
     const t = e.logicalName;
     if (!e.source) {
-      add({ severity: 'BLOCKER', code: 'TABLE_MISSING_IN_SOURCE', table: t, message: `${t} does not exist in the source environment.` });
+      add({
+        severity: 'BLOCKER',
+        code: 'TABLE_MISSING_IN_SOURCE',
+        table: t,
+        message: `${t} does not exist in the source environment.`,
+      });
       continue;
     }
     if (!e.target) {
@@ -163,7 +173,8 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
           severity: 'INFO',
           code: 'AUTOMATION_DETECTION_UNAVAILABLE',
           table: t,
-          message: 'Could not inspect plug-ins/workflows for this table. Server-side logic may run on create/update.',
+          message:
+            'Could not inspect plug-ins/workflows for this table. Server-side logic may run on create/update.',
         });
       } else if (a.pluginSteps + a.workflows + a.flows > 0) {
         add({
@@ -206,7 +217,8 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
         code: 'UNRESOLVABLE_CIRCULAR_DEPENDENCY',
         table: cycle.tables[0],
         message: `Circular dependency through required lookups: ${cycle.tables.join(' ↔ ')}.`,
-        resolution: 'Make one of the lookups optional in the target or migrate these tables with a custom sequence.',
+        resolution:
+          'Make one of the lookups optional in the target or migrate these tables with a custom sequence.',
       });
     } else {
       add({

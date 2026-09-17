@@ -1,5 +1,11 @@
 import type { AutomationInfo } from '../../../shared/domain';
-import type { AlternateKeyMeta, DvRecord, FieldValue, TableMetadata, TableSummary } from '../../../shared/metadata';
+import type {
+  AlternateKeyMeta,
+  DvRecord,
+  FieldValue,
+  TableMetadata,
+  TableSummary,
+} from '../../../shared/metadata';
 
 export interface WhoAmI {
   userId: string;
@@ -39,7 +45,11 @@ export interface DataverseConnection {
   countRecords(table: TableSummary): Promise<RecordCount>;
 
   /** Streams records page by page, ordered by primary key. */
-  queryRecords(table: TableMetadata, columns: string[], opts: { pageSize: number }): AsyncGenerator<DvRecord[]>;
+  queryRecords(
+    table: TableMetadata,
+    columns: string[],
+    opts: { pageSize: number },
+  ): AsyncGenerator<DvRecord[]>;
   retrieveByIds(table: TableMetadata, ids: string[], columns: string[]): Promise<DvRecord[]>;
   findByAlternateKey(
     table: TableMetadata,

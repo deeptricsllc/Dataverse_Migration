@@ -4,5 +4,15 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["server/src", "shared", "tests", "e2e", "playwright.config.ts", "drizzle.config.ts", "vitest.config.ts", "tsup.config.ts", "web/vite.config.ts"]
+  "include": [
+    "server/src",
+    "shared",
+    "tests",
+    "e2e",
+    "playwright.config.ts",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "tsup.config.ts",
+    "web/vite.config.ts"
+  ]
 }

@@ -59,7 +59,13 @@ export class DemoConnection implements DataverseConnection {
 
   private table(logicalName: string): TableMetadata {
     const t = this.tables.get(logicalName);
-    if (!t) throw new DataverseError('NOT_FOUND', `Entity '${logicalName}' was not found in the MetadataCache.`, 404, '0x80060888');
+    if (!t)
+      throw new DataverseError(
+        'NOT_FOUND',
+        `Entity '${logicalName}' was not found in the MetadataCache.`,
+        404,
+        '0x80060888',
+      );
     return t;
   }
 
@@ -74,7 +80,9 @@ export class DemoConnection implements DataverseConnection {
 
   async listTables(): Promise<TableSummary[]> {
     await this.simulate(3);
-    return [...this.tables.values()].map(({ attributes: _a, manyToOne: _m, manyToMany: _mm, keys: _k, ...summary }) => summary);
+    return [...this.tables.values()].map(
+      ({ attributes: _a, manyToOne: _m, manyToMany: _mm, keys: _k, ...summary }) => summary,
+    );
   }
 
   async getTable(logicalName: string): Promise<TableMetadata> {
@@ -101,7 +109,11 @@ export class DemoConnection implements DataverseConnection {
     return { id: String(data[t.primaryIdAttribute]), values };
   }
 
-  async *queryRecords(t: TableMetadata, columns: string[], opts: { pageSize: number }): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(
+    t: TableMetadata,
+    columns: string[],
+    opts: { pageSize: number },
+  ): AsyncGenerator<DvRecord[]> {
     this.table(t.logicalName);
     let offset = 0;
     for (;;) {
@@ -149,13 +161,22 @@ export class DemoConnection implements DataverseConnection {
     await this.simulate();
     const target = this.table(t.logicalName);
     if (!target.keys.some((k) => k.logicalName === key.logicalName)) {
-      throw new DataverseError('VALIDATION', `Alternate key ${key.logicalName} is not defined for ${t.logicalName}`, 400);
+      throw new DataverseError(
+        'VALIDATION',
+        `Alternate key ${key.logicalName} is not defined for ${t.logicalName}`,
+        400,
+      );
     }
     const match = await this.findKeyMatch(target, key, values);
     return match ? this.project(target, match, columns) : null;
   }
 
-  private async findKeyMatch(t: TableMetadata, key: AlternateKeyMeta, values: Record<string, FieldValue>, excludeId?: string) {
+  private async findKeyMatch(
+    t: TableMetadata,
+    key: AlternateKeyMeta,
+    values: Record<string, FieldValue>,
+    excludeId?: string,
+  ) {
     const conditions = key.attributes.map((a) => {
       const v = values[a];
       if (v === null || v === undefined) return null;
@@ -166,7 +187,13 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
+      .where(
+        and(
+          eq(demoRecords.environmentKey, this.env.key),
+          eq(demoRecords.logicalName, t.logicalName),
+          ...(conditions as never[]),
+        ),
+      )
       .limit(2);
     return rows.find((r) => r.recordId !== excludeId)?.data ?? null;
   }
@@ -180,14 +207,29 @@ export class DemoConnection implements DataverseConnection {
     for (const [name, value] of Object.entries(values)) {
       const a = attrs.get(name);
       if (!a || a.attributeOf) {
-        throw new DataverseError('VALIDATION', `Invalid property '${name}' was found in entity 'Microsoft.Dynamics.CRM.${t.logicalName}'.`, 400, '0x80060891');
+        throw new DataverseError(
+          'VALIDATION',
+          `Invalid property '${name}' was found in entity 'Microsoft.Dynamics.CRM.${t.logicalName}'.`,
+          400,
+          '0x80060891',
+        );
       }
       if (forCreate ? !a.isValidForCreate : !a.isValidForUpdate) {
-        throw new DataverseError('VALIDATION', `Attribute '${name}' of entity '${t.logicalName}' is not valid for ${forCreate ? 'create' : 'update'}.`, 400, '0x80048d19');
+        throw new DataverseError(
+          'VALIDATION',
+          `Attribute '${name}' of entity '${t.logicalName}' is not valid for ${forCreate ? 'create' : 'update'}.`,
+          400,
+          '0x80048d19',
+        );
       }
       if (value === null) continue;
       const invalid = (expected: string) =>
-        new DataverseError('VALIDATION', `Cannot convert the literal '${String(value)}' to the expected type '${expected}' for '${name}'.`, 400, '0x80048d19');
+        new DataverseError(
+          'VALIDATION',
+          `Cannot convert the literal '${String(value)}' to the expected type '${expected}' for '${name}'.`,
+          400,
+          '0x80048d19',
+        );
       switch (a.type) {
         case 'String':
         case 'Memo':
@@ -214,14 +256,20 @@ export class DemoConnection implements DataverseConnection {
           if (typeof value !== 'boolean') throw invalid('Edm.Boolean');
           break;
         case 'DateTime':
-          if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) throw invalid('Edm.DateTimeOffset');
+          if (typeof value !== 'string' || Number.isNaN(Date.parse(value)))
+            throw invalid('Edm.DateTimeOffset');
           break;
         case 'Picklist':
         case 'State':
         case 'Status':
           if (typeof value !== 'number') throw invalid('Edm.Int32');
           if (a.options && !a.options.some((o) => o.value === value)) {
-            throw new DataverseError('VALIDATION', `${name} value ${value} is not a valid value for this choice column.`, 400, '0x8004431a');
+            throw new DataverseError(
+              'VALIDATION',
+              `${name} value ${value} is not a valid value for this choice column.`,
+              400,
+              '0x8004431a',
+            );
           }
           break;
         case 'Lookup':
@@ -229,7 +277,12 @@ export class DemoConnection implements DataverseConnection {
         case 'Owner': {
           if (!isLookupValue(value)) throw invalid('Microsoft.Dynamics.CRM.EntityReference');
           if (!a.targets?.includes(value.logicalName)) {
-            throw new DataverseError('VALIDATION', `${name} cannot reference entity ${value.logicalName}.`, 400, '0x80048d19');
+            throw new DataverseError(
+              'VALIDATION',
+              `${name} cannot reference entity ${value.logicalName}.`,
+              400,
+              '0x80048d19',
+            );
           }
           const [exists] = await this.db
             .select({ id: demoRecords.recordId })
@@ -242,7 +295,12 @@ export class DemoConnection implements DataverseConnection {
               ),
             );
           if (!exists) {
-            throw new DataverseError('REFERENCE_NOT_FOUND', `${value.logicalName} With Id = ${value.id} Does Not Exist`, 404, '0x80040217');
+            throw new DataverseError(
+              'REFERENCE_NOT_FOUND',
+              `${value.logicalName} With Id = ${value.id} Does Not Exist`,
+              404,
+              '0x80040217',
+            );
           }
           break;
         }
@@ -286,10 +344,21 @@ export class DemoConnection implements DataverseConnection {
         await this.validateValues(t, record.values, true);
         const id = (record.id ?? crypto.randomUUID()).toLowerCase();
         for (const a of t.attributes) {
-          if (a.requiredLevel === 'SystemRequired' && a.isValidForCreate && !LOOKUP_TYPES.has(a.type) && a.type !== 'State' && !a.isPrimaryId) {
+          if (
+            a.requiredLevel === 'SystemRequired' &&
+            a.isValidForCreate &&
+            !LOOKUP_TYPES.has(a.type) &&
+            a.type !== 'State' &&
+            !a.isPrimaryId
+          ) {
             const v = record.values[a.logicalName];
             if (v === null || v === undefined || v === '') {
-              throw new DataverseError('VALIDATION', `Required field '${a.logicalName}' is missing.`, 400, '0x80040203');
+              throw new DataverseError(
+                'VALIDATION',
+                `Required field '${a.logicalName}' is missing.`,
+                400,
+                '0x80040203',
+              );
             }
           }
         }
@@ -326,7 +395,12 @@ export class DemoConnection implements DataverseConnection {
     );
   }
 
-  async updateRecord(tableMeta: TableMetadata, id: string, record: WriteRecord, options: WriteOptions): Promise<void> {
+  async updateRecord(
+    tableMeta: TableMetadata,
+    id: string,
+    record: WriteRecord,
+    options: WriteOptions,
+  ): Promise<void> {
     const t = this.table(tableMeta.logicalName);
     await this.write(
       async () => {
@@ -336,14 +410,30 @@ export class DemoConnection implements DataverseConnection {
         const [existing] = await this.db
           .select()
           .from(demoRecords)
-          .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)));
+          .where(
+            and(
+              eq(demoRecords.environmentKey, this.env.key),
+              eq(demoRecords.logicalName, t.logicalName),
+              eq(demoRecords.recordId, recordId),
+            ),
+          );
         if (!existing) {
-          throw new DataverseError('NOT_FOUND', `${t.logicalName} With Id = ${id} Does Not Exist`, 404, '0x80040217');
+          throw new DataverseError(
+            'NOT_FOUND',
+            `${t.logicalName} With Id = ${id} Does Not Exist`,
+            404,
+            '0x80040217',
+          );
         }
         for (const k of t.keys) {
           const merged = { ...(existing.data as Record<string, FieldValue>), ...record.values };
           if (await this.findKeyMatch(t, k, merged, recordId)) {
-            throw new DataverseError('DUPLICATE_RECORD', `Entity key ${k.logicalName} violation.`, 412, '0x80060892');
+            throw new DataverseError(
+              'DUPLICATE_RECORD',
+              `Entity key ${k.logicalName} violation.`,
+              412,
+              '0x80060892',
+            );
           }
         }
         const data = { ...existing.data, ...record.values, modifiedon: new Date().toISOString() };
@@ -351,7 +441,13 @@ export class DemoConnection implements DataverseConnection {
         await this.db
           .update(demoRecords)
           .set({ data, updatedAt: new Date() })
-          .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)));
+          .where(
+            and(
+              eq(demoRecords.environmentKey, this.env.key),
+              eq(demoRecords.logicalName, t.logicalName),
+              eq(demoRecords.recordId, recordId),
+            ),
+          );
       },
       { operation: 'update', table: t.logicalName },
     );

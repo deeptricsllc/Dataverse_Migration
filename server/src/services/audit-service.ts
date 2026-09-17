@@ -59,7 +59,13 @@ export class AuditService {
         details: input.details ?? null,
       });
       this.logger.info(
-        { audit: input.action, outcome: input.outcome, runId: input.runId, organizationId: input.organizationId, userId: input.userId },
+        {
+          audit: input.action,
+          outcome: input.outcome,
+          runId: input.runId,
+          organizationId: input.organizationId,
+          userId: input.userId,
+        },
         'audit event',
       );
     } catch (err) {

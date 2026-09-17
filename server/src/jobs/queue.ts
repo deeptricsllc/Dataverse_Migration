@@ -17,7 +17,10 @@ export class JobQueue {
   constructor(private readonly db: AppDb) {}
 
   async enqueue(type: JobType, organizationId: string, targetId: string): Promise<string> {
-    const [row] = await this.db.insert(jobs).values({ type, organizationId, targetId }).returning({ id: jobs.id });
+    const [row] = await this.db
+      .insert(jobs)
+      .values({ type, organizationId, targetId })
+      .returning({ id: jobs.id });
     return row.id;
   }
 
@@ -41,7 +44,10 @@ export class JobQueue {
   }
 
   async complete(jobId: string) {
-    await this.db.update(jobs).set({ status: 'DONE', updatedAt: new Date(), lockedBy: null }).where(eq(jobs.id, jobId));
+    await this.db
+      .update(jobs)
+      .set({ status: 'DONE', updatedAt: new Date(), lockedBy: null })
+      .where(eq(jobs.id, jobId));
   }
 
   async fail(jobId: string, message: string) {

@@ -131,7 +131,12 @@ export function normalizeRecord(raw: Raw, primaryId: string, attributes: Attribu
       const key = `_${attr.logicalName}_value`;
       const id = raw[key];
       values[attr.logicalName] =
-        id == null ? null : { id: String(id).toLowerCase(), logicalName: raw[`${key}${LOOKUP_ANNOTATION}`] ?? attr.targets?.[0] ?? '' };
+        id == null
+          ? null
+          : {
+              id: String(id).toLowerCase(),
+              logicalName: raw[`${key}${LOOKUP_ANNOTATION}`] ?? attr.targets?.[0] ?? '',
+            };
       continue;
     }
     const v = raw[attr.logicalName];

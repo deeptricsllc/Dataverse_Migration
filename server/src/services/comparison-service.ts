@@ -13,7 +13,11 @@ import type { EnvironmentService } from './environment-service';
 import { defaultComparisonScope, isMigratableTable, type MetadataService } from './metadata-service';
 import { compareSchemas } from './schema-diff';
 
-const envRef = (e: { id: string; displayName: string; url: string }): EnvRef => ({ id: e.id, displayName: e.displayName, url: e.url });
+const envRef = (e: { id: string; displayName: string; url: string }): EnvRef => ({
+  id: e.id,
+  displayName: e.displayName,
+  url: e.url,
+});
 
 export class ComparisonService {
   constructor(
@@ -28,9 +32,15 @@ export class ComparisonService {
 
   async create(
     ctx: RequestContext,
-    input: { sourceEnvironmentId: string; targetEnvironmentId: string; tables?: string[] | null; refreshMetadata?: boolean },
+    input: {
+      sourceEnvironmentId: string;
+      targetEnvironmentId: string;
+      tables?: string[] | null;
+      refreshMetadata?: boolean;
+    },
   ): Promise<ComparisonRunDto> {
-    if (input.sourceEnvironmentId === input.targetEnvironmentId) throw badRequest('Source and target must be different environments');
+    if (input.sourceEnvironmentId === input.targetEnvironmentId)
+      throw badRequest('Source and target must be different environments');
     const source = await this.environmentsSvc.getAccessible(ctx, input.sourceEnvironmentId);
     const target = await this.environmentsSvc.getAccessible(ctx, input.targetEnvironmentId);
     const [run] = await this.db
@@ -66,12 +76,21 @@ export class ComparisonService {
     const log = this.logger.child({ comparisonRunId: runId });
     const progress = (progressMessage: string) =>
       this.db.update(comparisonRuns).set({ progressMessage }).where(eq(comparisonRuns.id, runId));
-    await this.db.update(comparisonRuns).set({ status: 'RUNNING', startedAt: new Date(), errorMessage: null }).where(eq(comparisonRuns.id, runId));
+    await this.db
+      .update(comparisonRuns)
+      .set({ status: 'RUNNING', startedAt: new Date(), errorMessage: null })
+      .where(eq(comparisonRuns.id, runId));
     log.info('Comparison started');
     try {
       if (!run.createdByUserId) throw new Error('Comparison has no initiating user');
-      const source = await this.environmentsSvc.getInOrganization(run.organizationId, run.sourceEnvironmentId);
-      const target = await this.environmentsSvc.getInOrganization(run.organizationId, run.targetEnvironmentId);
+      const source = await this.environmentsSvc.getInOrganization(
+        run.organizationId,
+        run.sourceEnvironmentId,
+      );
+      const target = await this.environmentsSvc.getInOrganization(
+        run.organizationId,
+        run.targetEnvironmentId,
+      );
       const sConn = this.connections.forEnvironment(source, run.createdByUserId, { comparisonRunId: runId });
       const tConn = this.connections.forEnvironment(target, run.createdByUserId, { comparisonRunId: runId });
 
@@ -120,7 +139,13 @@ export class ComparisonService {
       }
       await this.db
         .update(comparisonRuns)
-        .set({ status: 'COMPLETED', summary, completedAt: new Date(), progressMessage: 'Completed', scope: run.scope ?? scope })
+        .set({
+          status: 'COMPLETED',
+          summary,
+          completedAt: new Date(),
+          progressMessage: 'Completed',
+          scope: run.scope ?? scope,
+        })
         .where(eq(comparisonRuns.id, runId));
       await this.audit.record({
         organizationId: run.organizationId,
@@ -213,12 +238,18 @@ export class ComparisonService {
     });
   }
 
-  async list(ctx: RequestContext, filter: { sourceEnvironmentId?: string; targetEnvironmentId?: string } = {}, limit = 20) {
+  async list(
+    ctx: RequestContext,
+    filter: { sourceEnvironmentId?: string; targetEnvironmentId?: string } = {},
+    limit = 20,
+  ) {
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
     const conditions = [eq(comparisonRuns.organizationId, ctx.organizationId)];
-    if (filter.sourceEnvironmentId) conditions.push(eq(comparisonRuns.sourceEnvironmentId, filter.sourceEnvironmentId));
-    if (filter.targetEnvironmentId) conditions.push(eq(comparisonRuns.targetEnvironmentId, filter.targetEnvironmentId));
+    if (filter.sourceEnvironmentId)
+      conditions.push(eq(comparisonRuns.sourceEnvironmentId, filter.sourceEnvironmentId));
+    if (filter.targetEnvironmentId)
+      conditions.push(eq(comparisonRuns.targetEnvironmentId, filter.targetEnvironmentId));
     const rows = await this.db
       .select({ run: comparisonRuns, src, tgt, user: users.displayName })
       .from(comparisonRuns)

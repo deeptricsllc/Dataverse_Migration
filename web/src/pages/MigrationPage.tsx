@@ -2,7 +2,18 @@ import type { PlanStatus } from '@shared/domain';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Plus, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, EmptyState, ErrorState, PageHeader, Spinner, StatusBadge, Table, Td, Th } from '../components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Spinner,
+  StatusBadge,
+  Table,
+  Td,
+  Th,
+} from '../components/ui';
 import { get } from '../lib/api';
 import { fmtRelative } from '../lib/format';
 import { useWorkspace } from '../lib/session';
@@ -30,20 +41,32 @@ export function MigrationPage() {
         title="Migration plans"
         description="Plans capture the selected tables, dependency order, field mappings, execution options and every issue found before anything is written."
         actions={
-          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate(ready ? '/migration/new' : '/environments')}>
+          <Button
+            variant="primary"
+            icon={<Plus className="h-4 w-4" />}
+            onClick={() => navigate(ready ? '/migration/new' : '/environments')}
+          >
             New Migration
           </Button>
         }
       />
       <Card bodyClassName="p-0">
         {plans.isLoading && <Spinner />}
-        {plans.error && <div className="p-4"><ErrorState error={plans.error} onRetry={() => plans.refetch()} /></div>}
+        {plans.error && (
+          <div className="p-4">
+            <ErrorState error={plans.error} onRetry={() => plans.refetch()} />
+          </div>
+        )}
         {plans.data?.length === 0 && (
           <EmptyState
             icon={<Truck className="h-8 w-8" />}
             title="No migration plans yet"
             description="Start by selecting environments, analyzing them and choosing tables."
-            action={<Button variant="primary" onClick={() => navigate(ready ? '/migration/new' : '/environments')}>New Migration</Button>}
+            action={
+              <Button variant="primary" onClick={() => navigate(ready ? '/migration/new' : '/environments')}>
+                New Migration
+              </Button>
+            }
           />
         )}
         {plans.data && plans.data.length > 0 && (
@@ -60,17 +83,30 @@ export function MigrationPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {plans.data.map((p) => (
-                <tr key={p.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/migration/plans/${p.id}`)}>
+                <tr
+                  key={p.id}
+                  className="cursor-pointer hover:bg-slate-50"
+                  onClick={() => navigate(`/migration/plans/${p.id}`)}
+                >
                   <Td className="font-medium text-slate-900">{p.name}</Td>
                   <Td>
-                    {p.sourceEnvironment.displayName} <ArrowRight className="inline h-3 w-3" /> {p.targetEnvironment.displayName}
+                    {p.sourceEnvironment.displayName} <ArrowRight className="inline h-3 w-3" />{' '}
+                    {p.targetEnvironment.displayName}
                   </Td>
-                  <Td><StatusBadge status={p.status} /></Td>
+                  <Td>
+                    <StatusBadge status={p.status} />
+                  </Td>
                   <Td className="text-right tabular-nums">{p.tableCount}</Td>
                   <Td className="space-x-1">
-                    {p.blockerCount > 0 && <StatusBadge status="BLOCKER" label={`${p.blockerCount} blocker(s)`} />}
-                    {p.warningCount > 0 && <StatusBadge status="WARNING" label={`${p.warningCount} warning(s)`} />}
-                    {p.blockerCount === 0 && p.warningCount === 0 && <span className="text-xs text-slate-400">None</span>}
+                    {p.blockerCount > 0 && (
+                      <StatusBadge status="BLOCKER" label={`${p.blockerCount} blocker(s)`} />
+                    )}
+                    {p.warningCount > 0 && (
+                      <StatusBadge status="WARNING" label={`${p.warningCount} warning(s)`} />
+                    )}
+                    {p.blockerCount === 0 && p.warningCount === 0 && (
+                      <span className="text-xs text-slate-400">None</span>
+                    )}
                   </Td>
                   <Td className="text-slate-500">
                     {fmtRelative(p.updatedAt)}

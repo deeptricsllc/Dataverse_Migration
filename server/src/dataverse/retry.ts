@@ -12,7 +12,12 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = { maxAttempts: 5, baseDelayMs: 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Bounded exponential backoff with full jitter; honors Retry-After for throttling. */
-export function backoffDelay(attempt: number, policy: RetryPolicy, err?: DataverseError, random = Math.random): number {
+export function backoffDelay(
+  attempt: number,
+  policy: RetryPolicy,
+  err?: DataverseError,
+  random = Math.random,
+): number {
   if (err?.retryAfterSeconds) return Math.min(err.retryAfterSeconds * 1000, policy.maxDelayMs);
   const exp = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** (attempt - 1));
   return Math.round(exp / 2 + random() * (exp / 2));
@@ -24,7 +29,12 @@ export function backoffDelay(attempt: number, policy: RetryPolicy, err?: Dataver
  */
 export async function withRetry<T>(
   op: (attempt: number) => Promise<T>,
-  opts: { policy?: RetryPolicy; logger?: Logger; context?: Record<string, unknown>; onRetry?: (e: DataverseError) => void } = {},
+  opts: {
+    policy?: RetryPolicy;
+    logger?: Logger;
+    context?: Record<string, unknown>;
+    onRetry?: (e: DataverseError) => void;
+  } = {},
 ): Promise<T> {
   const policy = opts.policy ?? DEFAULT_RETRY_POLICY;
   for (let attempt = 1; ; attempt++) {
@@ -40,7 +50,9 @@ export async function withRetry<T>(
       opts.onRetry?.(err);
       opts.logger?.warn(
         { ...opts.context, errorCode: err.code, status: err.status, attempt, delayMs: delay },
-        err.code === 'THROTTLED' ? 'Dataverse throttling; backing off' : 'Transient Dataverse failure; retrying',
+        err.code === 'THROTTLED'
+          ? 'Dataverse throttling; backing off'
+          : 'Transient Dataverse failure; retrying',
       );
       await sleep(delay);
     }

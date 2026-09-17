@@ -22,7 +22,13 @@ export interface MappingProposal {
   required: boolean;
 }
 
-const NON_DATA_TYPES: ReadonlySet<AttributeType> = new Set(['Virtual', 'EntityName', 'Image', 'File', 'Other']);
+const NON_DATA_TYPES: ReadonlySet<AttributeType> = new Set([
+  'Virtual',
+  'EntityName',
+  'Image',
+  'File',
+  'Other',
+]);
 const STATE_COLUMNS = new Set(['statecode', 'statuscode']);
 
 /** Source columns whose values a data migration can carry. */
@@ -79,7 +85,8 @@ export function proposeMapping(s: AttributeMeta, t: AttributeMeta | undefined): 
       targetType: t?.type ?? null,
       status: 'IGNORED',
       confidence: 100,
-      reason: 'State transitions are not migrated in this version; records are created in their default state',
+      reason:
+        'State transitions are not migrated in this version; records are created in their default state',
       required: false,
     };
   }
@@ -134,7 +141,10 @@ export function proposeMapping(s: AttributeMeta, t: AttributeMeta | undefined): 
 }
 
 /** Validates a user-chosen mapping. Returns an error message or null. */
-export function validateManualMapping(source: AttributeMeta, target: AttributeMeta | undefined): string | null {
+export function validateManualMapping(
+  source: AttributeMeta,
+  target: AttributeMeta | undefined,
+): string | null {
   if (!target) return 'Target column does not exist';
   if (!target.isValidForCreate && !target.isValidForUpdate) return 'Target column is read-only';
   const compat = typeCompatibility(source, target);
@@ -188,7 +198,11 @@ function levenshteinRatio(a: string, b: string): number {
   for (let j = 1; j <= b.length; j++) dp[0][j] = j;
   for (let i = 1; i <= a.length; i++) {
     for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
     }
   }
   return 1 - dp[a.length][b.length] / Math.max(a.length, b.length);

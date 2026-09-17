@@ -36,7 +36,8 @@ export function useWorkspace() {
   const qc = useQueryClient();
   const query = useQuery({ queryKey: ['workspace'], queryFn: () => get<WorkspaceDto>('/api/workspace') });
   const mutation = useMutation({
-    mutationFn: (input: { sourceEnvironmentId: string | null; targetEnvironmentId: string | null }) => put<WorkspaceDto>('/api/workspace', input),
+    mutationFn: (input: { sourceEnvironmentId: string | null; targetEnvironmentId: string | null }) =>
+      put<WorkspaceDto>('/api/workspace', input),
     onSuccess: (data) => qc.setQueryData(['workspace'], data),
   });
   const source: EnvironmentDto | null = query.data?.source ?? null;

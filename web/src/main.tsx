@@ -20,7 +20,9 @@ const queryClient = new QueryClient({
 setUnauthenticatedHandler(() => {
   if (!window.location.pathname.startsWith('/login')) {
     queryClient.clear();
-    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    window.location.assign(
+      `/login?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+    );
   }
 });
 

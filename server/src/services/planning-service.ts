@@ -49,11 +49,17 @@ type PlanRow = typeof migrationPlans.$inferSelect;
 type EntityRow = typeof migrationPlanEntities.$inferSelect;
 type MappingRow = typeof fieldMappings.$inferSelect;
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({ id: e.id, displayName: e.displayName, url: e.url });
+const envRef = (e: { id: string; displayName: string; url: string }) => ({
+  id: e.id,
+  displayName: e.displayName,
+  url: e.url,
+});
 const MAPPED = new Set<MappingStatus>(['AUTO_MAPPED', 'MANUAL']);
 
 export class PlanningService {
-  private readonly suggestionProviders: MappingSuggestionProvider[] = [new NameSimilaritySuggestionProvider()];
+  private readonly suggestionProviders: MappingSuggestionProvider[] = [
+    new NameSimilaritySuggestionProvider(),
+  ];
 
   constructor(
     private readonly db: AppDb,
@@ -74,7 +80,11 @@ export class PlanningService {
   // Candidates
   // ---------------------------------------------------------------------------
 
-  async candidates(ctx: RequestContext, sourceEnvironmentId: string, targetEnvironmentId: string): Promise<TableCandidateDto[]> {
+  async candidates(
+    ctx: RequestContext,
+    sourceEnvironmentId: string,
+    targetEnvironmentId: string,
+  ): Promise<TableCandidateDto[]> {
     const source = await this.environmentsSvc.getAccessible(ctx, sourceEnvironmentId);
     const target = await this.environmentsSvc.getAccessible(ctx, targetEnvironmentId);
     const sConn = this.connections.forEnvironment(source, ctx.userId, { requestId: ctx.requestId });
@@ -88,7 +98,11 @@ export class PlanningService {
       const statusByTable = new Map<string, { status: DiffStatus; deep: boolean }>();
       if (comparisonId) {
         const rows = await this.db
-          .select({ name: comparisonTableResults.logicalName, status: comparisonTableResults.status, deep: comparisonTableResults.deep })
+          .select({
+            name: comparisonTableResults.logicalName,
+            status: comparisonTableResults.status,
+            deep: comparisonTableResults.deep,
+          })
           .from(comparisonTableResults)
           .where(eq(comparisonTableResults.comparisonRunId, comparisonId));
         for (const r of rows) statusByTable.set(r.name, { status: r.status as DiffStatus, deep: r.deep });
@@ -99,8 +113,18 @@ export class PlanningService {
       const analyzed = migratable.filter((t) => statusByTable.get(t.logicalName)?.deep);
       const [sourceCounts, targetCounts, sourceMeta] = await Promise.all([
         this.metadata.counts(source.id, sConn, analyzed),
-        this.metadata.counts(target.id, tConn, analyzed.filter((t) => targetByName.has(t.logicalName)).map((t) => targetByName.get(t.logicalName)!)),
-        this.metadata.getTables(source.id, sConn, analyzed.map((t) => t.logicalName)),
+        this.metadata.counts(
+          target.id,
+          tConn,
+          analyzed
+            .filter((t) => targetByName.has(t.logicalName))
+            .map((t) => targetByName.get(t.logicalName)!),
+        ),
+        this.metadata.getTables(
+          source.id,
+          sConn,
+          analyzed.map((t) => t.logicalName),
+        ),
       ]);
       const categories = await this.categoryMap(ctx.organizationId);
       return migratable.map((t) => {
@@ -112,13 +136,21 @@ export class PlanningService {
           displayName: t.displayName,
           isCustom: t.isCustom,
           category: categories.get(t.logicalName) ?? null,
-          schemaStatus: statusByTable.get(t.logicalName)?.status ?? (targetByName.has(t.logicalName) ? null : 'SOURCE_ONLY'),
+          schemaStatus:
+            statusByTable.get(t.logicalName)?.status ??
+            (targetByName.has(t.logicalName) ? null : 'SOURCE_ONLY'),
           sourceCount: sc?.count ?? null,
           targetCount: tc?.count ?? null,
           countApproximate: Boolean(sc?.approximate || tc?.approximate),
           lookups: (meta?.attributes ?? [])
-            .filter((a) => LOOKUP_TYPES.has(a.type) && !a.attributeOf && (a.isValidForCreate || a.isValidForUpdate))
-            .map((a) => ({ attribute: a.logicalName, targets: a.targets ?? [], required: a.requiredLevel === 'ApplicationRequired' || a.requiredLevel === 'SystemRequired' })),
+            .filter(
+              (a) => LOOKUP_TYPES.has(a.type) && !a.attributeOf && (a.isValidForCreate || a.isValidForUpdate),
+            )
+            .map((a) => ({
+              attribute: a.logicalName,
+              targets: a.targets ?? [],
+              required: a.requiredLevel === 'ApplicationRequired' || a.requiredLevel === 'SystemRequired',
+            })),
         };
       });
     } catch (err) {
@@ -127,7 +159,10 @@ export class PlanningService {
   }
 
   private async categoryMap(organizationId: string) {
-    const rows = await this.db.select().from(tableCategories).where(eq(tableCategories.organizationId, organizationId));
+    const rows = await this.db
+      .select()
+      .from(tableCategories)
+      .where(eq(tableCategories.organizationId, organizationId));
     return new Map(rows.map((r) => [r.logicalName, r.category as TableCategory]));
   }
 
@@ -135,12 +170,20 @@ export class PlanningService {
     if (category === null) {
       await this.db
         .delete(tableCategories)
-        .where(and(eq(tableCategories.organizationId, ctx.organizationId), eq(tableCategories.logicalName, logicalName)));
+        .where(
+          and(
+            eq(tableCategories.organizationId, ctx.organizationId),
+            eq(tableCategories.logicalName, logicalName),
+          ),
+        );
     } else {
       await this.db
         .insert(tableCategories)
         .values({ organizationId: ctx.organizationId, logicalName, category })
-        .onConflictDoUpdate({ target: [tableCategories.organizationId, tableCategories.logicalName], set: { category, updatedAt: new Date() } });
+        .onConflictDoUpdate({
+          target: [tableCategories.organizationId, tableCategories.logicalName],
+          set: { category, updatedAt: new Date() },
+        });
     }
     await this.audit.record({
       organizationId: ctx.organizationId,
@@ -160,7 +203,8 @@ export class PlanningService {
     ctx: RequestContext,
     input: { name?: string; sourceEnvironmentId: string; targetEnvironmentId: string; tables: string[] },
   ): Promise<MigrationPlanDto> {
-    if (input.sourceEnvironmentId === input.targetEnvironmentId) throw badRequest('Source and target must be different environments');
+    if (input.sourceEnvironmentId === input.targetEnvironmentId)
+      throw badRequest('Source and target must be different environments');
     const source = await this.environmentsSvc.getAccessible(ctx, input.sourceEnvironmentId);
     const target = await this.environmentsSvc.getAccessible(ctx, input.targetEnvironmentId);
     const comparisonRunId = await this.comparisons.latestCompleted(ctx.organizationId, source.id, target.id);
@@ -168,7 +212,9 @@ export class PlanningService {
       .insert(migrationPlans)
       .values({
         organizationId: ctx.organizationId,
-        name: input.name?.trim() || `${source.displayName} → ${target.displayName} (${new Date().toISOString().slice(0, 10)})`,
+        name:
+          input.name?.trim() ||
+          `${source.displayName} → ${target.displayName} (${new Date().toISOString().slice(0, 10)})`,
         sourceEnvironmentId: source.id,
         targetEnvironmentId: target.id,
         comparisonRunId,
@@ -204,8 +250,15 @@ export class PlanningService {
     const [active] = await this.db
       .select({ id: migrationRuns.id })
       .from(migrationRuns)
-      .where(and(eq(migrationRuns.planId, plan.id), eq(migrationRuns.organizationId, organizationId), inArray(migrationRuns.status, ['QUEUED', 'RUNNING', 'PAUSED'])));
-    if (active) throw new AppError(409, 'PLAN_LOCKED', 'This plan has an active migration run and cannot be changed');
+      .where(
+        and(
+          eq(migrationRuns.planId, plan.id),
+          eq(migrationRuns.organizationId, organizationId),
+          inArray(migrationRuns.status, ['QUEUED', 'RUNNING', 'PAUSED']),
+        ),
+      );
+    if (active)
+      throw new AppError(409, 'PLAN_LOCKED', 'This plan has an active migration run and cannot be changed');
   }
 
   async updateSelection(ctx: RequestContext, planId: string, tables: string[]) {
@@ -218,8 +271,15 @@ export class PlanningService {
 
   async revalidate(ctx: RequestContext, planId: string) {
     const plan = await this.loadPlan(ctx.organizationId, planId);
-    const entities = await this.db.select().from(migrationPlanEntities).where(eq(migrationPlanEntities.planId, planId));
-    await this.rebuild(ctx, plan, entities.map((e) => e.logicalName));
+    const entities = await this.db
+      .select()
+      .from(migrationPlanEntities)
+      .where(eq(migrationPlanEntities.planId, planId));
+    await this.rebuild(
+      ctx,
+      plan,
+      entities.map((e) => e.logicalName),
+    );
     return this.get(ctx, planId);
   }
 
@@ -232,7 +292,10 @@ export class PlanningService {
       );
     }
     const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...plan.options, ...patch };
-    await this.db.update(migrationPlans).set({ options, updatedAt: new Date() }).where(eq(migrationPlans.id, planId));
+    await this.db
+      .update(migrationPlans)
+      .set({ options, updatedAt: new Date() })
+      .where(eq(migrationPlans.id, planId));
     if (patch.bypassCustomBusinessLogic && !plan.options.bypassCustomBusinessLogic) {
       await this.audit.record({
         organizationId: ctx.organizationId,
@@ -264,7 +327,10 @@ export class PlanningService {
     if (!entity) throw notFound('Plan table');
     await this.db
       .update(migrationPlanEntities)
-      .set({ matchStrategy: patch.matchStrategy, alternateKey: patch.matchStrategy === 'ALTERNATE_KEY' ? patch.alternateKey : null })
+      .set({
+        matchStrategy: patch.matchStrategy,
+        alternateKey: patch.matchStrategy === 'ALTERNATE_KEY' ? patch.alternateKey : null,
+      })
       .where(eq(migrationPlanEntities.id, entityId));
     await this.auditUpdate(ctx, plan, { table: entity.logicalName, ...patch });
     return this.revalidate(ctx, planId);
@@ -292,8 +358,14 @@ export class PlanningService {
     const tables = [...new Set(requestedTables)].filter((t) => /^[a-z0-9_]+$/.test(t)).sort();
     const source = await this.environmentsSvc.getAccessible(ctx, plan.sourceEnvironmentId);
     const target = await this.environmentsSvc.getAccessible(ctx, plan.targetEnvironmentId);
-    const sConn = this.connections.forEnvironment(source, ctx.userId, { requestId: ctx.requestId, planId: plan.id });
-    const tConn = this.connections.forEnvironment(target, ctx.userId, { requestId: ctx.requestId, planId: plan.id });
+    const sConn = this.connections.forEnvironment(source, ctx.userId, {
+      requestId: ctx.requestId,
+      planId: plan.id,
+    });
+    const tConn = this.connections.forEnvironment(target, ctx.userId, {
+      requestId: ctx.requestId,
+      planId: plan.id,
+    });
 
     try {
       const [sourceCatalog, targetCatalog] = await Promise.all([
@@ -303,23 +375,44 @@ export class PlanningService {
       const sourceNames = new Set(sourceCatalog.map((t) => t.logicalName));
       const targetNames = new Set(targetCatalog.map((t) => t.logicalName));
       const [sourceMeta, targetMeta] = await Promise.all([
-        this.metadata.getTables(source.id, sConn, tables.filter((t) => sourceNames.has(t))),
-        this.metadata.getTables(target.id, tConn, tables.filter((t) => targetNames.has(t))),
+        this.metadata.getTables(
+          source.id,
+          sConn,
+          tables.filter((t) => sourceNames.has(t)),
+        ),
+        this.metadata.getTables(
+          target.id,
+          tConn,
+          tables.filter((t) => targetNames.has(t)),
+        ),
       ]);
 
       // Remove deselected tables.
       if (tables.length) {
-        await this.db.delete(migrationPlanEntities).where(and(eq(migrationPlanEntities.planId, plan.id), notInArray(migrationPlanEntities.logicalName, tables)));
+        await this.db
+          .delete(migrationPlanEntities)
+          .where(
+            and(
+              eq(migrationPlanEntities.planId, plan.id),
+              notInArray(migrationPlanEntities.logicalName, tables),
+            ),
+          );
       } else {
         await this.db.delete(migrationPlanEntities).where(eq(migrationPlanEntities.planId, plan.id));
       }
 
       const existingEntities = new Map(
-        (await this.db.select().from(migrationPlanEntities).where(eq(migrationPlanEntities.planId, plan.id))).map((e) => [e.logicalName, e]),
+        (
+          await this.db.select().from(migrationPlanEntities).where(eq(migrationPlanEntities.planId, plan.id))
+        ).map((e) => [e.logicalName, e]),
       );
 
-      const sourceSummaries = tables.map((t) => sourceCatalog.find((c) => c.logicalName === t)).filter((t) => !!t);
-      const targetSummaries = tables.map((t) => targetCatalog.find((c) => c.logicalName === t)).filter((t) => !!t);
+      const sourceSummaries = tables
+        .map((t) => sourceCatalog.find((c) => c.logicalName === t))
+        .filter((t) => !!t);
+      const targetSummaries = tables
+        .map((t) => targetCatalog.find((c) => c.logicalName === t))
+        .filter((t) => !!t);
       const [sourceCounts, targetCounts, automation] = await Promise.all([
         this.metadata.counts(source.id, sConn, sourceSummaries, true),
         this.metadata.counts(target.id, tConn, targetSummaries, true),
@@ -338,7 +431,14 @@ export class PlanningService {
         const displayName = s?.displayName ?? name;
         let entity = existingEntities.get(name);
         if (!entity) {
-          const sharedKey = s && t ? s.keys.find((k) => t.keys.some((tk) => tk.logicalName === k.logicalName && tk.attributes.join() === k.attributes.join())) : undefined;
+          const sharedKey =
+            s && t
+              ? s.keys.find((k) =>
+                  t.keys.some(
+                    (tk) => tk.logicalName === k.logicalName && tk.attributes.join() === k.attributes.join(),
+                  ),
+                )
+              : undefined;
           [entity] = await this.db
             .insert(migrationPlanEntities)
             .values({
@@ -371,13 +471,25 @@ export class PlanningService {
 
       // Dependency analysis based on lookups that are actually mapped.
       const mappingRows = entityRows.length
-        ? await this.db.select().from(fieldMappings).where(inArray(fieldMappings.planEntityId, entityRows.map((e) => e.id)))
+        ? await this.db
+            .select()
+            .from(fieldMappings)
+            .where(
+              inArray(
+                fieldMappings.planEntityId,
+                entityRows.map((e) => e.id),
+              ),
+            )
         : [];
       const mappedLookups = new Map<string, Set<string>>();
       for (const e of entityRows) {
         mappedLookups.set(
           e.logicalName,
-          new Set(mappingRows.filter((m) => m.planEntityId === e.id && m.isLookup && MAPPED.has(m.status)).map((m) => m.sourceField)),
+          new Set(
+            mappingRows
+              .filter((m) => m.planEntityId === e.id && m.isLookup && MAPPED.has(m.status))
+              .map((m) => m.sourceField),
+          ),
         );
       }
       const analysis = analyzeDependencies({
@@ -404,7 +516,10 @@ export class PlanningService {
         for (const m of mappingRows.filter((x) => x.planEntityId === e.id && x.isLookup)) {
           const targets = deferredTargets.get(`${e.logicalName}.${m.sourceField}`) ?? [];
           if (targets.join() !== m.deferredTargets.join()) {
-            await this.db.update(fieldMappings).set({ deferred: targets.length > 0, deferredTargets: targets }).where(eq(fieldMappings.id, m.id));
+            await this.db
+              .update(fieldMappings)
+              .set({ deferred: targets.length > 0, deferredTargets: targets })
+              .where(eq(fieldMappings.id, m.id));
           }
         }
       }
@@ -421,7 +536,13 @@ export class PlanningService {
             tableDiff: s && t ? diffTableDeep(s, t) : null,
             mappings: mappingRows
               .filter((m) => m.planEntityId === e.id)
-              .map((m) => ({ sourceField: m.sourceField, targetField: m.targetField, status: m.status, reason: m.reason, isLookup: m.isLookup })),
+              .map((m) => ({
+                sourceField: m.sourceField,
+                targetField: m.targetField,
+                status: m.status,
+                reason: m.reason,
+                isLookup: m.isLookup,
+              })),
             sourceCount: e.sourceCount,
             targetCount: e.targetCount,
             matchStrategy: e.matchStrategy,
@@ -453,7 +574,9 @@ export class PlanningService {
   private async syncMappings(entity: EntityRow, source: TableMetadata, target: TableMetadata | undefined) {
     const proposals = autoMapTable(source, target);
     const existing = new Map(
-      (await this.db.select().from(fieldMappings).where(eq(fieldMappings.planEntityId, entity.id))).map((m) => [m.sourceField, m]),
+      (await this.db.select().from(fieldMappings).where(eq(fieldMappings.planEntityId, entity.id))).map(
+        (m) => [m.sourceField, m],
+      ),
     );
     const targetAttrs = new Map((target?.attributes ?? []).map((a) => [a.logicalName, a]));
     for (const p of proposals) {
@@ -467,7 +590,12 @@ export class PlanningService {
           if (error) {
             await this.db
               .update(fieldMappings)
-              .set({ status: 'INCOMPATIBLE', reason: `Manual mapping no longer valid: ${error}`, updatedByUserId: null, updatedAt: new Date() })
+              .set({
+                status: 'INCOMPATIBLE',
+                reason: `Manual mapping no longer valid: ${error}`,
+                updatedByUserId: null,
+                updatedAt: new Date(),
+              })
               .where(eq(fieldMappings.id, current.id));
           }
         }
@@ -487,11 +615,19 @@ export class PlanningService {
         updatedAt: new Date(),
       };
       if (current) await this.db.update(fieldMappings).set(values).where(eq(fieldMappings.id, current.id));
-      else await this.db.insert(fieldMappings).values({ planEntityId: entity.id, sourceField: p.sourceField, ...values });
+      else
+        await this.db
+          .insert(fieldMappings)
+          .values({ planEntityId: entity.id, sourceField: p.sourceField, ...values });
     }
     // Source columns that disappeared.
     if (existing.size) {
-      await this.db.delete(fieldMappings).where(inArray(fieldMappings.id, [...existing.values()].map((m) => m.id)));
+      await this.db.delete(fieldMappings).where(
+        inArray(
+          fieldMappings.id,
+          [...existing.values()].map((m) => m.id),
+        ),
+      );
     }
   }
 
@@ -545,7 +681,11 @@ export class PlanningService {
     ctx: RequestContext,
     planId: string,
     mappingId: string,
-    input: { action: 'MAP'; targetField: string } | { action: 'IGNORE' } | { action: 'UNMAP' } | { action: 'RESET' },
+    input:
+      | { action: 'MAP'; targetField: string }
+      | { action: 'IGNORE' }
+      | { action: 'UNMAP' }
+      | { action: 'RESET' },
   ) {
     const [mapping] = await this.db
       .select({ m: fieldMappings, e: migrationPlanEntities })
@@ -566,8 +706,15 @@ export class PlanningService {
       const duplicate = await this.db
         .select({ id: fieldMappings.id })
         .from(fieldMappings)
-        .where(and(eq(fieldMappings.planEntityId, mapping.e.id), eq(fieldMappings.targetField, input.targetField), inArray(fieldMappings.status, ['AUTO_MAPPED', 'MANUAL'])));
-      if (duplicate.some((d) => d.id !== mappingId)) throw badRequest(`${input.targetField} is already mapped from another column`);
+        .where(
+          and(
+            eq(fieldMappings.planEntityId, mapping.e.id),
+            eq(fieldMappings.targetField, input.targetField),
+            inArray(fieldMappings.status, ['AUTO_MAPPED', 'MANUAL']),
+          ),
+        );
+      if (duplicate.some((d) => d.id !== mappingId))
+        throw badRequest(`${input.targetField} is already mapped from another column`);
       set = {
         targetField: tAttr!.logicalName,
         targetType: tAttr!.type,
@@ -580,9 +727,19 @@ export class PlanningService {
     } else if (input.action === 'IGNORE') {
       set = { status: 'IGNORED', reason: `Ignored by ${ctx.displayName}`, updatedByUserId: ctx.userId };
     } else if (input.action === 'UNMAP') {
-      set = { status: 'UNMAPPED', targetField: null, targetType: null, confidence: 0, reason: `Unmapped by ${ctx.displayName}`, updatedByUserId: ctx.userId };
+      set = {
+        status: 'UNMAPPED',
+        targetField: null,
+        targetType: null,
+        confidence: 0,
+        reason: `Unmapped by ${ctx.displayName}`,
+        updatedByUserId: ctx.userId,
+      };
     } else {
-      const p = proposeMapping(sAttr, t?.attributes.find((a) => a.logicalName === sAttr.logicalName));
+      const p = proposeMapping(
+        sAttr,
+        t?.attributes.find((a) => a.logicalName === sAttr.logicalName),
+      );
       set = {
         targetField: p.targetField,
         targetType: p.targetType,
@@ -593,8 +750,15 @@ export class PlanningService {
         updatedByUserId: null,
       };
     }
-    await this.db.update(fieldMappings).set({ ...set, updatedAt: new Date() }).where(eq(fieldMappings.id, mappingId));
-    await this.auditUpdate(ctx, plan, { mapping: mapping.m.sourceField, table: mapping.e.logicalName, action: input.action });
+    await this.db
+      .update(fieldMappings)
+      .set({ ...set, updatedAt: new Date() })
+      .where(eq(fieldMappings.id, mappingId));
+    await this.auditUpdate(ctx, plan, {
+      mapping: mapping.m.sourceField,
+      table: mapping.e.logicalName,
+      action: input.action,
+    });
     return this.revalidate(ctx, planId);
   }
 
@@ -603,8 +767,12 @@ export class PlanningService {
     const { entity, s, t } = await this.loadEntityWithMeta(ctx, planId, entityId);
     if (!s || !t) return [];
     const rows = await this.db.select().from(fieldMappings).where(eq(fieldMappings.planEntityId, entity.id));
-    const unmappedNames = new Set(rows.filter((r) => r.status === 'UNMAPPED' || r.status === 'INCOMPATIBLE').map((r) => r.sourceField));
-    const used = new Set(rows.filter((r) => MAPPED.has(r.status) && r.targetField).map((r) => r.targetField!));
+    const unmappedNames = new Set(
+      rows.filter((r) => r.status === 'UNMAPPED' || r.status === 'INCOMPATIBLE').map((r) => r.sourceField),
+    );
+    const used = new Set(
+      rows.filter((r) => MAPPED.has(r.status) && r.targetField).map((r) => r.targetField!),
+    );
     const out: MappingSuggestion[] = [];
     for (const provider of this.suggestionProviders) {
       out.push(
@@ -643,10 +811,18 @@ export class PlanningService {
       ? await this.db
           .select({ planEntityId: fieldMappings.planEntityId, status: fieldMappings.status })
           .from(fieldMappings)
-          .where(inArray(fieldMappings.planEntityId, entities.map((e) => e.id)))
+          .where(
+            inArray(
+              fieldMappings.planEntityId,
+              entities.map((e) => e.id),
+            ),
+          )
       : [];
     const categories = await this.categoryMap(ctx.organizationId);
-    const sourceMetaRows = await this.metadataKeys(row.plan.targetEnvironmentId, entities.map((e) => e.logicalName));
+    const sourceMetaRows = await this.metadataKeys(
+      row.plan.targetEnvironmentId,
+      entities.map((e) => e.logicalName),
+    );
     const [lastRun] = await this.db
       .select({ id: migrationRuns.id })
       .from(migrationRuns)
@@ -654,7 +830,13 @@ export class PlanningService {
       .orderBy(desc(migrationRuns.createdAt))
       .limit(1);
     const entityDtos: PlanEntityDto[] = entities.map((e) => {
-      const summary: Record<MappingStatus, number> = { AUTO_MAPPED: 0, MANUAL: 0, UNMAPPED: 0, INCOMPATIBLE: 0, IGNORED: 0 };
+      const summary: Record<MappingStatus, number> = {
+        AUTO_MAPPED: 0,
+        MANUAL: 0,
+        UNMAPPED: 0,
+        INCOMPATIBLE: 0,
+        IGNORED: 0,
+      };
       for (const m of mappingRows) if (m.planEntityId === e.id) summary[m.status]++;
       return {
         id: e.id,
@@ -704,8 +886,17 @@ export class PlanningService {
     const rows = await this.db
       .select({ name: metadataTables.logicalName, metadata: metadataTables.metadata })
       .from(metadataTables)
-      .where(and(eq(metadataTables.environmentId, targetEnvironmentId), inArray(metadataTables.logicalName, names)));
-    for (const r of rows) out.set(r.name, r.metadata.keys.map((k) => ({ logicalName: k.logicalName, attributes: k.attributes })));
+      .where(
+        and(
+          eq(metadataTables.environmentId, targetEnvironmentId),
+          inArray(metadataTables.logicalName, names),
+        ),
+      );
+    for (const r of rows)
+      out.set(
+        r.name,
+        r.metadata.keys.map((k) => ({ logicalName: k.logicalName, attributes: k.attributes })),
+      );
     return out;
   }
 

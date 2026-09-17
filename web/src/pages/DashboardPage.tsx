@@ -3,7 +3,19 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, GitCompareArrows, Plus } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceHeader } from '../components/Layout';
-import { Button, Card, EmptyState, ErrorState, PageHeader, Spinner, Stat, StatusBadge, Table, Td, Th } from '../components/ui';
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Spinner,
+  Stat,
+  StatusBadge,
+  Table,
+  Td,
+  Th,
+} from '../components/ui';
 import { get } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import { useSession, useWorkspace } from '../lib/session';
@@ -12,7 +24,11 @@ export function DashboardPage() {
   const { user } = useSession();
   const navigate = useNavigate();
   const { ready } = useWorkspace();
-  const q = useQuery({ queryKey: ['dashboard'], queryFn: () => get<DashboardDto>('/api/dashboard'), refetchInterval: 10_000 });
+  const q = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: () => get<DashboardDto>('/api/dashboard'),
+    refetchInterval: 10_000,
+  });
 
   return (
     <>
@@ -20,7 +36,11 @@ export function DashboardPage() {
         title={`Welcome, ${user.displayName.split(' ')[0]}`}
         description="Overview of your environments, migrations and validations."
         actions={
-          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate(ready ? '/migration/new' : '/environments')}>
+          <Button
+            variant="primary"
+            icon={<Plus className="h-4 w-4" />}
+            onClick={() => navigate(ready ? '/migration/new' : '/environments')}
+          >
             New Migration
           </Button>
         }
@@ -33,10 +53,29 @@ export function DashboardPage() {
       {q.data && (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <Stat label="Environments" value={q.data.environments.total} hint={`${q.data.environments.connected} connected`} onClick={() => navigate('/environments')} />
-            <Stat label="Migration runs" value={q.data.migrationRuns.total} hint={q.data.migrationRuns.active ? `${q.data.migrationRuns.active} active` : 'none active'} onClick={() => navigate('/runs')} />
-            <Stat label="Succeeded" tone="green" value={q.data.migrationRuns.completed} hint={`${q.data.migrationRuns.withErrors} with errors`} />
-            <Stat label="Failed runs" tone={q.data.migrationRuns.failed ? 'red' : 'default'} value={q.data.migrationRuns.failed} />
+            <Stat
+              label="Environments"
+              value={q.data.environments.total}
+              hint={`${q.data.environments.connected} connected`}
+              onClick={() => navigate('/environments')}
+            />
+            <Stat
+              label="Migration runs"
+              value={q.data.migrationRuns.total}
+              hint={q.data.migrationRuns.active ? `${q.data.migrationRuns.active} active` : 'none active'}
+              onClick={() => navigate('/runs')}
+            />
+            <Stat
+              label="Succeeded"
+              tone="green"
+              value={q.data.migrationRuns.completed}
+              hint={`${q.data.migrationRuns.withErrors} with errors`}
+            />
+            <Stat
+              label="Failed runs"
+              tone={q.data.migrationRuns.failed ? 'red' : 'default'}
+              value={q.data.migrationRuns.failed}
+            />
             <Stat
               label="Validations"
               value={q.data.validationRuns.total}
@@ -46,9 +85,26 @@ export function DashboardPage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2" title="Recent migration runs" actions={<Link to="/runs" className="text-xs font-medium text-brand-700 hover:underline">View all</Link>} bodyClassName="p-0">
+            <Card
+              className="lg:col-span-2"
+              title="Recent migration runs"
+              actions={
+                <Link to="/runs" className="text-xs font-medium text-brand-700 hover:underline">
+                  View all
+                </Link>
+              }
+              bodyClassName="p-0"
+            >
               {q.data.recentMigrationRuns.length === 0 ? (
-                <EmptyState title="No migration runs yet" description="Select a source and target, analyze them and build a migration plan." action={<Button variant="primary" onClick={() => navigate('/migration/new')}>Start a migration</Button>} />
+                <EmptyState
+                  title="No migration runs yet"
+                  description="Select a source and target, analyze them and build a migration plan."
+                  action={
+                    <Button variant="primary" onClick={() => navigate('/migration/new')}>
+                      Start a migration
+                    </Button>
+                  }
+                />
               ) : (
                 <Table>
                   <thead className="bg-slate-50">
@@ -62,10 +118,15 @@ export function DashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {q.data.recentMigrationRuns.map((r) => (
-                      <tr key={r.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/runs/${r.id}`)}>
+                      <tr
+                        key={r.id}
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => navigate(`/runs/${r.id}`)}
+                      >
                         <Td className="font-medium text-slate-900">{r.planName}</Td>
                         <Td>
-                          {r.sourceEnvironment.displayName} <ArrowRight className="inline h-3 w-3" /> {r.targetEnvironment.displayName}
+                          {r.sourceEnvironment.displayName} <ArrowRight className="inline h-3 w-3" />{' '}
+                          {r.targetEnvironment.displayName}
                         </Td>
                         <Td>
                           <StatusBadge status={r.status} />
@@ -88,23 +149,37 @@ export function DashboardPage() {
                   <div className="space-y-3 text-sm">
                     <div className="flex items-center justify-between">
                       <span className="text-slate-600">
-                        {q.data.lastComparison.sourceEnvironment.displayName} → {q.data.lastComparison.targetEnvironment.displayName}
+                        {q.data.lastComparison.sourceEnvironment.displayName} →{' '}
+                        {q.data.lastComparison.targetEnvironment.displayName}
                       </span>
                       <StatusBadge status={q.data.lastComparison.status} />
                     </div>
                     {q.data.lastComparison.summary && (
                       <div className="grid grid-cols-3 gap-2 text-center">
                         <MiniStat label="Match" value={q.data.lastComparison.summary.match} />
-                        <MiniStat label="Different" value={q.data.lastComparison.summary.different + q.data.lastComparison.summary.incompatible} />
+                        <MiniStat
+                          label="Different"
+                          value={
+                            q.data.lastComparison.summary.different +
+                            q.data.lastComparison.summary.incompatible
+                          }
+                        />
                         <MiniStat label="Missing" value={q.data.lastComparison.summary.sourceOnly} />
                       </div>
                     )}
-                    <Link to={`/compare/${q.data.lastComparison.id}`} className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline">
+                    <Link
+                      to={`/compare/${q.data.lastComparison.id}`}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                    >
                       Open comparison <ArrowRight className="h-3 w-3" />
                     </Link>
                   </div>
                 ) : (
-                  <EmptyState icon={<GitCompareArrows className="h-6 w-6" />} title="No comparisons yet" action={<Button onClick={() => navigate('/compare')}>Analyze environments</Button>} />
+                  <EmptyState
+                    icon={<GitCompareArrows className="h-6 w-6" />}
+                    title="No comparisons yet"
+                    action={<Button onClick={() => navigate('/compare')}>Analyze environments</Button>}
+                  />
                 )}
               </Card>
               <Card title="Recent validations" bodyClassName="p-0">
@@ -114,7 +189,10 @@ export function DashboardPage() {
                   <ul className="divide-y divide-slate-100">
                     {q.data.recentValidationRuns.map((v) => (
                       <li key={v.id}>
-                        <Link to={`/validation/${v.id}`} className="flex items-center justify-between px-5 py-2.5 text-sm hover:bg-slate-50">
+                        <Link
+                          to={`/validation/${v.id}`}
+                          className="flex items-center justify-between px-5 py-2.5 text-sm hover:bg-slate-50"
+                        >
                           <span className="truncate text-slate-700">
                             {v.sourceEnvironment.displayName} → {v.targetEnvironment.displayName}
                             <span className="block text-xs text-slate-500">{fmtRelative(v.createdAt)}</span>

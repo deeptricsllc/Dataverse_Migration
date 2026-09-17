@@ -60,7 +60,13 @@ export function diffColumn(source: AttributeMeta | undefined, target: AttributeM
   if (!compat.compatible) {
     diff.status = 'INCOMPATIBLE';
     if (source.type === target.type) {
-      push({ property: 'lookupTargets', source: source.targets, target: target.targets, breaking: true, note: compat.note });
+      push({
+        property: 'lookupTargets',
+        source: source.targets,
+        target: target.targets,
+        breaking: true,
+        note: compat.note,
+      });
     }
     return diff;
   }
@@ -75,7 +81,11 @@ export function diffColumn(source: AttributeMeta | undefined, target: AttributeM
       note: stricter ? 'Target requires a value; source records without one will be rejected' : undefined,
     });
   }
-  if ((source.maxLength ?? null) !== (target.maxLength ?? null) && source.maxLength != null && target.maxLength != null) {
+  if (
+    (source.maxLength ?? null) !== (target.maxLength ?? null) &&
+    source.maxLength != null &&
+    target.maxLength != null
+  ) {
     const shorter = target.maxLength < source.maxLength;
     push({
       property: 'maxLength',
@@ -105,14 +115,22 @@ export function diffColumn(source: AttributeMeta | undefined, target: AttributeM
     });
   }
   if (source.targets && target.targets && compat.compatible && compat.lossy && compat.note) {
-    push({ property: 'lookupTargets', source: source.targets, target: target.targets, breaking: false, note: compat.note });
+    push({
+      property: 'lookupTargets',
+      source: source.targets,
+      target: target.targets,
+      breaking: false,
+      note: compat.note,
+    });
   }
   if (source.options || target.options) {
     const so = new Map((source.options ?? []).map((o) => [o.value, o]));
     const to = new Map((target.options ?? []).map((o) => [o.value, o]));
     const sourceOnly = [...so.values()].filter((o) => !to.has(o.value));
     const targetOnly = [...to.values()].filter((o) => !so.has(o.value));
-    const labelChanged = [...so.values()].filter((o) => to.has(o.value) && to.get(o.value)!.label !== o.label).map((o) => o.value);
+    const labelChanged = [...so.values()]
+      .filter((o) => to.has(o.value) && to.get(o.value)!.label !== o.label)
+      .map((o) => o.value);
     if (sourceOnly.length || targetOnly.length || labelChanged.length) {
       diff.optionDiff = { sourceOnly, targetOnly, labelChanged };
       push({
@@ -212,10 +230,20 @@ export function diffTableDeep(source: TableMetadata, target: TableMetadata): Tab
     });
   }
   if (source.entitySetName !== target.entitySetName) {
-    differences.push({ property: 'entitySetName', source: source.entitySetName, target: target.entitySetName, breaking: false });
+    differences.push({
+      property: 'entitySetName',
+      source: source.entitySetName,
+      target: target.entitySetName,
+      breaking: false,
+    });
   }
   if (source.ownershipType !== target.ownershipType) {
-    differences.push({ property: 'ownershipType', source: source.ownershipType, target: target.ownershipType, breaking: false });
+    differences.push({
+      property: 'ownershipType',
+      source: source.ownershipType,
+      target: target.ownershipType,
+      breaking: false,
+    });
   }
 
   const counts = emptyCounts();
@@ -244,7 +272,10 @@ export function diffTableDeep(source: TableMetadata, target: TableMetadata): Tab
   };
 }
 
-export function diffTableShallow(source: TableSummary | undefined, target: TableSummary | undefined): TableDiff {
+export function diffTableShallow(
+  source: TableSummary | undefined,
+  target: TableSummary | undefined,
+): TableDiff {
   const base = (source ?? target)!;
   const status: DiffStatus = !target ? 'SOURCE_ONLY' : !source ? 'TARGET_ONLY' : 'MATCH';
   const differences: PropertyDifference[] = [];
@@ -301,9 +332,6 @@ export function summarize(tables: TableDiff[]): ComparisonSummary {
     sourceOnly: tables.filter((x) => x.status === 'SOURCE_ONLY').length,
     targetOnly: tables.filter((x) => x.status === 'TARGET_ONLY').length,
     incompatible: tables.filter((x) => x.status === 'INCOMPATIBLE').length,
-    columnDifferences: tables.reduce(
-      (n, x) => n + x.columns.filter((c) => c.status !== 'MATCH').length,
-      0,
-    ),
+    columnDifferences: tables.reduce((n, x) => n + x.columns.filter((c) => c.status !== 'MATCH').length, 0),
   };
 }

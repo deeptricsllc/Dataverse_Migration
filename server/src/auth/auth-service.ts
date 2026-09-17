@@ -21,7 +21,8 @@ export interface ResolvedSession {
 
 /** Only allow relative in-app redirects (prevents open redirects). */
 export function safeReturnTo(value: unknown): string {
-  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return '/';
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\'))
+    return '/';
   return value;
 }
 
@@ -38,7 +39,10 @@ export class AuthService {
     this.box = new SecretBox(config.sessionSecret, 'oauth-state');
   }
 
-  async createSession(userId: string, userAgent: string | undefined): Promise<{ token: string; expiresAt: Date }> {
+  async createSession(
+    userId: string,
+    userAgent: string | undefined,
+  ): Promise<{ token: string; expiresAt: Date }> {
     const token = randomToken(32);
     const expiresAt = new Date(Date.now() + this.config.SESSION_TTL_HOURS * 3600_000);
     await this.db.insert(sessions).values({
@@ -100,8 +104,15 @@ export class AuthService {
     let [org] = await this.db
       .select()
       .from(organizations)
-      .where(and(eq(organizations.isDemo, true), eq(organizations.name, DEMO_ORG_NAME), isNull(organizations.entraTenantId)));
-    if (!org) [org] = await this.db.insert(organizations).values({ name: DEMO_ORG_NAME, isDemo: true }).returning();
+      .where(
+        and(
+          eq(organizations.isDemo, true),
+          eq(organizations.name, DEMO_ORG_NAME),
+          isNull(organizations.entraTenantId),
+        ),
+      );
+    if (!org)
+      [org] = await this.db.insert(organizations).values({ name: DEMO_ORG_NAME, isDemo: true }).returning();
     const [user] = await this.db
       .insert(users)
       .values({
@@ -113,7 +124,10 @@ export class AuthService {
         role: 'ADMIN',
         lastLoginAt: new Date(),
       })
-      .onConflictDoUpdate({ target: [users.organizationId, users.externalId], set: { lastLoginAt: new Date() } })
+      .onConflictDoUpdate({
+        target: [users.organizationId, users.externalId],
+        set: { lastLoginAt: new Date() },
+      })
       .returning();
     await seedDemoData(this.db);
     await this.audit.record({
@@ -145,11 +159,21 @@ export class AuthService {
     return this.identity.getAuthCodeUrl({ state, nonce, codeChallenge: challenge });
   }
 
-  async completeMicrosoftSignIn(params: { code: string; state: string }, requestId: string): Promise<{ userId: string; returnTo: string }> {
+  async completeMicrosoftSignIn(
+    params: { code: string; state: string },
+    requestId: string,
+  ): Promise<{ userId: string; returnTo: string }> {
     // Single-use state: delete and read atomically.
-    const [pending] = await this.db.delete(authRequests).where(eq(authRequests.state, params.state)).returning();
+    const [pending] = await this.db
+      .delete(authRequests)
+      .where(eq(authRequests.state, params.state))
+      .returning();
     if (!pending || pending.expiresAt.getTime() < Date.now()) {
-      throw new AppError(400, 'INVALID_STATE', 'The sign-in request expired or is invalid. Please try again.');
+      throw new AppError(
+        400,
+        'INVALID_STATE',
+        'The sign-in request expired or is invalid. Please try again.',
+      );
     }
     const result = await this.identity.redeemCode(params.code, this.box.decrypt(pending.encryptedVerifier));
     if (result.nonce !== pending.nonce) {
@@ -170,13 +194,16 @@ export class AuthService {
         .values({ name: domain ?? `Tenant ${tenantId.slice(0, 8)}`, entraTenantId: tenantId })
         .onConflictDoNothing()
         .returning();
-      if (!org) [org] = await this.db.select().from(organizations).where(eq(organizations.entraTenantId, tenantId));
+      if (!org)
+        [org] = await this.db.select().from(organizations).where(eq(organizations.entraTenantId, tenantId));
     }
     const [{ n: existingUsers }] = await this.db
       .select({ n: sql<number>`count(*)` })
       .from(users)
       .where(eq(users.organizationId, org.id));
-    const isAdmin = Number(existingUsers) === 0 || (result.email ? this.config.adminEmails.includes(result.email.toLowerCase()) : false);
+    const isAdmin =
+      Number(existingUsers) === 0 ||
+      (result.email ? this.config.adminEmails.includes(result.email.toLowerCase()) : false);
     const [user] = await this.db
       .insert(users)
       .values({

@@ -1,4 +1,13 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Info, Loader2, X, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Loader2,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ApiError } from '../lib/api';
 import { humanize } from '../lib/format';
@@ -19,10 +28,16 @@ export function Button({
   className,
   disabled,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: 'sm' | 'md'; loading?: boolean; icon?: ReactNode }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
+  size?: 'sm' | 'md';
+  loading?: boolean;
+  icon?: ReactNode;
+}) {
   const styles: Record<ButtonVariant, string> = {
     primary: 'bg-brand-700 text-white hover:bg-brand-800 shadow-sm disabled:bg-brand-700/50',
-    secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm disabled:text-slate-400',
+    secondary:
+      'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 shadow-sm disabled:text-slate-400',
     ghost: 'text-slate-600 hover:bg-slate-100 disabled:text-slate-300',
     danger: 'bg-red-600 text-white hover:bg-red-700 shadow-sm disabled:bg-red-600/50',
   };
@@ -48,7 +63,21 @@ export function Button({
 // Layout primitives
 // ---------------------------------------------------------------------------
 
-export function Card({ title, actions, children, className, bodyClassName, subtitle }: { title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClassName?: string }) {
+export function Card({
+  title,
+  actions,
+  children,
+  className,
+  bodyClassName,
+  subtitle,
+}: {
+  title?: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  bodyClassName?: string;
+}) {
   return (
     <section className={cx('rounded-lg border border-slate-200 bg-white shadow-sm', className)}>
       {(title || actions) && (
@@ -65,7 +94,15 @@ export function Card({ title, actions, children, className, bodyClassName, subti
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -77,7 +114,21 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-export function Stat({ label, value, tone = 'default', hint, onClick, active }: { label: string; value: ReactNode; tone?: 'default' | 'green' | 'amber' | 'red' | 'blue' | 'violet' | 'slate'; hint?: ReactNode; onClick?: () => void; active?: boolean }) {
+export function Stat({
+  label,
+  value,
+  tone = 'default',
+  hint,
+  onClick,
+  active,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: 'default' | 'green' | 'amber' | 'red' | 'blue' | 'violet' | 'slate';
+  hint?: ReactNode;
+  onClick?: () => void;
+  active?: boolean;
+}) {
   const tones = {
     default: 'text-slate-900',
     green: 'text-emerald-700',
@@ -152,7 +203,15 @@ const STATUS_LABELS: Record<string, string> = {
   AUTO_MAPPED: 'Auto-mapped',
 };
 
-export function StatusBadge({ status, label, className }: { status: string | null | undefined; label?: string; className?: string }) {
+export function StatusBadge({
+  status,
+  label,
+  className,
+}: {
+  status: string | null | undefined;
+  label?: string;
+  className?: string;
+}) {
   if (!status) return <span className="text-xs text-slate-400">—</span>;
   return (
     <span
@@ -168,7 +227,15 @@ export function StatusBadge({ status, label, className }: { status: string | nul
   );
 }
 
-export function Pill({ children, tone = 'slate', title }: { children: ReactNode; tone?: 'slate' | 'violet' | 'teal' | 'amber' | 'blue' | 'red'; title?: string }) {
+export function Pill({
+  children,
+  tone = 'slate',
+  title,
+}: {
+  children: ReactNode;
+  tone?: 'slate' | 'violet' | 'teal' | 'amber' | 'blue' | 'red';
+  title?: string;
+}) {
   const tones = {
     slate: 'bg-slate-100 text-slate-600',
     violet: 'bg-violet-100 text-violet-700',
@@ -178,17 +245,38 @@ export function Pill({ children, tone = 'slate', title }: { children: ReactNode;
     red: 'bg-red-100 text-red-700',
   };
   return (
-    <span title={title} className={cx('inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium', tones[tone])}>
+    <span
+      title={title}
+      className={cx('inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium', tones[tone])}
+    >
       {children}
     </span>
   );
 }
 
-export function ProgressBar({ value, tone = 'brand', label }: { value: number; tone?: 'brand' | 'green' | 'amber' | 'red'; label?: string }) {
+export function ProgressBar({
+  value,
+  tone = 'brand',
+  label,
+}: {
+  value: number;
+  tone?: 'brand' | 'green' | 'amber' | 'red';
+  label?: string;
+}) {
   const tones = { brand: 'bg-brand-600', green: 'bg-emerald-500', amber: 'bg-amber-500', red: 'bg-red-500' };
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
-      <div className={cx('h-full rounded-full transition-all duration-500', tones[tone])} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+    <div
+      className="h-2 w-full overflow-hidden rounded-full bg-slate-100"
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={label}
+    >
+      <div
+        className={cx('h-full rounded-full transition-all duration-500', tones[tone])}
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
     </div>
   );
 }
@@ -205,7 +293,17 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
   );
 }
 
-export function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title: string; description?: ReactNode; action?: ReactNode }) {
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon?: ReactNode;
+  title: string;
+  description?: ReactNode;
+  action?: ReactNode;
+}) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
       {icon && <div className="mb-3 text-slate-400">{icon}</div>}
@@ -237,7 +335,15 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   );
 }
 
-export function Callout({ tone = 'info', title, children }: { tone?: 'info' | 'warning' | 'danger' | 'success'; title?: ReactNode; children?: ReactNode }) {
+export function Callout({
+  tone = 'info',
+  title,
+  children,
+}: {
+  tone?: 'info' | 'warning' | 'danger' | 'success';
+  title?: ReactNode;
+  children?: ReactNode;
+}) {
   const map = {
     info: { cls: 'border-sky-200 bg-sky-50 text-sky-900', Icon: Info },
     warning: { cls: 'border-amber-200 bg-amber-50 text-amber-900', Icon: AlertTriangle },
@@ -259,7 +365,17 @@ export function Callout({ tone = 'info', title, children }: { tone?: 'info' | 'w
 // Inputs
 // ---------------------------------------------------------------------------
 
-export function SearchInput({ value, onChange, placeholder = 'Search…', className }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string }) {
+export function SearchInput({
+  value,
+  onChange,
+  placeholder = 'Search…',
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
   return (
     <input
       type="search"
@@ -267,19 +383,39 @@ export function SearchInput({ value, onChange, placeholder = 'Search…', classN
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       aria-label={placeholder}
-      className={cx('w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:w-64', className)}
+      className={cx(
+        'w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:w-64',
+        className,
+      )}
     />
   );
 }
 
-export function Select({ value, onChange, options, label, className, disabled }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; label: string; className?: string; disabled?: boolean }) {
+export function Select({
+  value,
+  onChange,
+  options,
+  label,
+  className,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  label: string;
+  className?: string;
+  disabled?: boolean;
+}) {
   return (
     <select
       aria-label={label}
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className={cx('rounded-md border border-slate-300 bg-white py-1.5 pl-2.5 pr-8 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50', className)}
+      className={cx(
+        'rounded-md border border-slate-300 bg-white py-1.5 pl-2.5 pr-8 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50',
+        className,
+      )}
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -290,7 +426,19 @@ export function Select({ value, onChange, options, label, className, disabled }:
   );
 }
 
-export function Checkbox({ checked, onChange, label, disabled, indeterminate }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean; indeterminate?: boolean }) {
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  disabled,
+  indeterminate,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  indeterminate?: boolean;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (ref.current) ref.current.indeterminate = Boolean(indeterminate);
@@ -308,7 +456,15 @@ export function Checkbox({ checked, onChange, label, disabled, indeterminate }: 
   );
 }
 
-export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { value: T; label: ReactNode }[]; value: T; onChange: (v: T) => void }) {
+export function Tabs<T extends string>({
+  tabs,
+  value,
+  onChange,
+}: {
+  tabs: { value: T; label: ReactNode }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
   return (
     <div role="tablist" className="flex gap-1 border-b border-slate-200">
       {tabs.map((t) => (
@@ -320,7 +476,9 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { valu
           onClick={() => onChange(t.value)}
           className={cx(
             '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-            value === t.value ? 'border-brand-600 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800',
+            value === t.value
+              ? 'border-brand-600 text-brand-700'
+              : 'border-transparent text-slate-500 hover:text-slate-800',
           )}
         >
           {t.label}
@@ -330,7 +488,21 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { valu
   );
 }
 
-export function Modal({ open, onClose, title, children, footer, wide }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  wide,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
   const titleId = useId();
   useEffect(() => {
     if (!open) return;
@@ -340,35 +512,67 @@ export function Modal({ open, onClose, title, children, footer, wide }: { open: 
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onMouseDown={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      onMouseDown={onClose}
+    >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={cx('max-h-[90vh] w-full overflow-hidden rounded-xl bg-white shadow-xl', wide ? 'max-w-3xl' : 'max-w-lg')}
+        className={cx(
+          'max-h-[90vh] w-full overflow-hidden rounded-xl bg-white shadow-xl',
+          wide ? 'max-w-3xl' : 'max-w-lg',
+        )}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <h2 id={titleId} className="text-base font-semibold text-slate-900">
             {title}
           </h2>
-          <button type="button" onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Close"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="max-h-[65vh] overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3">{footer}</div>}
+        {footer && (
+          <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export function Disclosure({ summary, children, defaultOpen = false }: { summary: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+export function Disclosure({
+  summary,
+  children,
+  defaultOpen = false,
+}: {
+  summary: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
-        {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        {open ? (
+          <ChevronDown className="h-4 w-4 text-slate-400" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-slate-400" />
+        )}
         {summary}
       </button>
       {open && <div className="mt-2">{children}</div>}
@@ -384,11 +588,25 @@ export function Table({ children, className }: { children: ReactNode; className?
   );
 }
 export const Th = ({ children, className }: { children?: ReactNode; className?: string }) => (
-  <th scope="col" className={cx('whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500', className)}>
+  <th
+    scope="col"
+    className={cx(
+      'whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500',
+      className,
+    )}
+  >
     {children}
   </th>
 );
-export const Td = ({ children, className, colSpan }: { children?: ReactNode; className?: string; colSpan?: number }) => (
+export const Td = ({
+  children,
+  className,
+  colSpan,
+}: {
+  children?: ReactNode;
+  className?: string;
+  colSpan?: number;
+}) => (
   <td colSpan={colSpan} className={cx('px-3 py-2 align-top text-slate-700', className)}>
     {children}
   </td>

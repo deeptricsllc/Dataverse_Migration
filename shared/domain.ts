@@ -142,12 +142,7 @@ export interface EnvRef {
 // Dependencies
 // ---------------------------------------------------------------------------
 
-export type DependencyKind =
-  | 'IN_SELECTION'
-  | 'NOT_SELECTED'
-  | 'PLATFORM'
-  | 'SELF'
-  | 'MISSING_IN_TARGET';
+export type DependencyKind = 'IN_SELECTION' | 'NOT_SELECTED' | 'PLATFORM' | 'SELF' | 'MISSING_IN_TARGET';
 
 export interface DependencyEdgeDto {
   from: string;
@@ -174,7 +169,10 @@ export interface DependencyAnalysisDto {
   nodes: DependencyNodeDto[];
   cycles: { group: number; tables: string[]; resolvable: boolean; deferredEdges: DependencyEdgeDto[] }[];
   /** Tables required by the selection but not selected (excluding platform tables). */
-  missingDependencies: { table: string; requiredBy: { table: string; attribute: string; required: boolean }[] }[];
+  missingDependencies: {
+    table: string;
+    requiredBy: { table: string; attribute: string; required: boolean }[];
+  }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +319,8 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<MigrationRunStatus> = new Set([
   'CANCELLED',
 ]);
 
-export type RunEntityStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'SKIPPED';
+export type RunEntityStatus =
+  'PENDING' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'SKIPPED';
 export type RecordOutcome = 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED';
 export type RecordOperation = 'READ' | 'CREATE' | 'UPDATE' | 'MATCH' | 'RESOLVE_LOOKUP' | 'DEFERRED_UPDATE';
 
@@ -434,11 +433,7 @@ export interface RollbackPreviewDto {
 
 export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
 export type DifferenceType =
-  | 'MISSING_IN_TARGET'
-  | 'VALUE_MISMATCH'
-  | 'LOOKUP_MISMATCH'
-  | 'BROKEN_REFERENCE'
-  | 'PRE_EXISTING_DIFFERENCE';
+  'MISSING_IN_TARGET' | 'VALUE_MISMATCH' | 'LOOKUP_MISMATCH' | 'BROKEN_REFERENCE' | 'PRE_EXISTING_DIFFERENCE';
 
 export interface ValidationCheckDto {
   check: 'SCHEMA' | 'ROW_COUNT' | 'RECORD_EXISTENCE' | 'FIELD_VALUES' | 'REFERENCES';

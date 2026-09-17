@@ -67,9 +67,16 @@ export class MetadataService {
     private readonly logger: Logger,
   ) {}
 
-  async getCatalog(environmentId: string, conn: DataverseConnection, refresh = false): Promise<TableSummary[]> {
+  async getCatalog(
+    environmentId: string,
+    conn: DataverseConnection,
+    refresh = false,
+  ): Promise<TableSummary[]> {
     if (!refresh) {
-      const [cached] = await this.db.select().from(metadataCatalogs).where(eq(metadataCatalogs.environmentId, environmentId));
+      const [cached] = await this.db
+        .select()
+        .from(metadataCatalogs)
+        .where(eq(metadataCatalogs.environmentId, environmentId));
       if (cached && Date.now() - cached.fetchedAt.getTime() < METADATA_TTL_MS) return cached.tables;
     }
     const started = Date.now();
@@ -78,7 +85,10 @@ export class MetadataService {
       .insert(metadataCatalogs)
       .values({ environmentId, tables, fetchedAt: new Date() })
       .onConflictDoUpdate({ target: metadataCatalogs.environmentId, set: { tables, fetchedAt: new Date() } });
-    this.logger.info({ environmentId, tables: tables.length, ms: Date.now() - started }, 'Table catalog discovered');
+    this.logger.info(
+      { environmentId, tables: tables.length, ms: Date.now() - started },
+      'Table catalog discovered',
+    );
     return tables;
   }
 
@@ -96,7 +106,9 @@ export class MetadataService {
       const cached = await this.db
         .select()
         .from(metadataTables)
-        .where(and(eq(metadataTables.environmentId, environmentId), inArray(metadataTables.logicalName, unique)));
+        .where(
+          and(eq(metadataTables.environmentId, environmentId), inArray(metadataTables.logicalName, unique)),
+        );
       for (const row of cached) {
         if (Date.now() - row.fetchedAt.getTime() < METADATA_TTL_MS) result.set(row.logicalName, row.metadata);
       }
@@ -108,7 +120,13 @@ export class MetadataService {
         const metadata = await conn.getTable(name);
         await this.db
           .insert(metadataTables)
-          .values({ environmentId, logicalName: name, metadata, attributeCount: metadata.attributes.length, fetchedAt: new Date() })
+          .values({
+            environmentId,
+            logicalName: name,
+            metadata,
+            attributeCount: metadata.attributes.length,
+            fetchedAt: new Date(),
+          })
           .onConflictDoUpdate({
             target: [metadataTables.environmentId, metadataTables.logicalName],
             set: { metadata, attributeCount: metadata.attributes.length, fetchedAt: new Date() },
@@ -117,7 +135,10 @@ export class MetadataService {
       } catch (err) {
         const e = toDataverseError(err);
         if (e.code !== 'NOT_FOUND') {
-          this.logger.error({ environmentId, table: name, errorCode: e.code }, 'Metadata discovery failed for table');
+          this.logger.error(
+            { environmentId, table: name, errorCode: e.code },
+            'Metadata discovery failed for table',
+          );
           throw err;
         }
       } finally {
@@ -131,7 +152,12 @@ export class MetadataService {
     return (await this.getTables(environmentId, conn, [name], { refresh })).get(name);
   }
 
-  async count(environmentId: string, conn: DataverseConnection, table: TableSummary, fresh = false): Promise<RecordCount> {
+  async count(
+    environmentId: string,
+    conn: DataverseConnection,
+    table: TableSummary,
+    fresh = false,
+  ): Promise<RecordCount> {
     const key = `${environmentId}:${table.logicalName}`;
     const hit = this.countCache.get(key);
     if (!fresh && hit && Date.now() - hit.at < COUNT_TTL_MS) return hit.value;
@@ -151,7 +177,10 @@ export class MetadataService {
       try {
         out.set(t.logicalName, await this.count(environmentId, conn, t, fresh));
       } catch (err) {
-        this.logger.warn({ environmentId, table: t.logicalName, errorCode: toDataverseError(err).code }, 'Record count unavailable');
+        this.logger.warn(
+          { environmentId, table: t.logicalName, errorCode: toDataverseError(err).code },
+          'Record count unavailable',
+        );
         out.set(t.logicalName, null);
       }
     });

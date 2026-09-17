@@ -147,7 +147,10 @@ interface TableDef {
 function table(def: TableDef): TableMetadata {
   const pk = `${def.logicalName}id`;
   const attributes: AttributeMeta[] = [
-    { ...attr(pk, 'Uniqueidentifier', { display: def.displayName, create: true, update: false }), isPrimaryId: true },
+    {
+      ...attr(pk, 'Uniqueidentifier', { display: def.displayName, create: true, update: false }),
+      isPrimaryId: true,
+    },
     ...def.attributes,
   ];
   // Lookup "name" shadow columns exist in real Dataverse; include them to exercise filtering.
@@ -190,11 +193,32 @@ const auditColumns = () => [
   attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
   attr('modifiedon', 'DateTime', { display: 'Modified On', create: false, update: false }),
   attr('ownerid', 'Owner', { display: 'Owner', targets: ['systemuser', 'team'], required: 'SystemRequired' }),
-  attr('statecode', 'State', { display: 'Status', options: [{ value: 0, label: 'Active' }, { value: 1, label: 'Inactive' }], required: 'SystemRequired' }),
-  attr('statuscode', 'Status', { display: 'Status Reason', options: [{ value: 1, label: 'Active' }, { value: 2, label: 'Inactive' }] }),
+  attr('statecode', 'State', {
+    display: 'Status',
+    options: [
+      { value: 0, label: 'Active' },
+      { value: 1, label: 'Inactive' },
+    ],
+    required: 'SystemRequired',
+  }),
+  attr('statuscode', 'Status', {
+    display: 'Status Reason',
+    options: [
+      { value: 1, label: 'Active' },
+      { value: 2, label: 'Inactive' },
+    ],
+  }),
 ];
 
-const INDUSTRIES = opts('Accounting', 'Agriculture', 'Consulting', 'Financial', 'Manufacturing', 'Retail', 'Technology');
+const INDUSTRIES = opts(
+  'Accounting',
+  'Agriculture',
+  'Consulting',
+  'Financial',
+  'Manufacturing',
+  'Retail',
+  'Technology',
+);
 const key = (logicalName: string, attributes: string[], displayName: string): AlternateKeyMeta => ({
   logicalName,
   schemaName: logicalName,
@@ -215,21 +239,37 @@ function buildAccount({ env }: Variant): TableMetadata {
     primaryName: 'name',
     custom: false,
     attributes: [
-      attr('name', 'String', { display: 'Account Name', required: 'ApplicationRequired', maxLength: 160, primaryName: true, custom: false }),
+      attr('name', 'String', {
+        display: 'Account Name',
+        required: 'ApplicationRequired',
+        maxLength: 160,
+        primaryName: true,
+        custom: false,
+      }),
       attr('accountnumber', 'String', { display: 'Account Number', maxLength: 20 }),
       attr('telephone1', 'String', { display: 'Main Phone', maxLength: 50 }),
       attr('emailaddress1', 'String', { display: 'Email', maxLength: 100 }),
       attr('websiteurl', 'String', { display: 'Website', maxLength: env === 'qa' ? 100 : 200 }),
       attr('revenue', 'Money', { display: 'Annual Revenue', precision: 2 }),
       attr('numberofemployees', 'Integer', { display: 'Number of Employees' }),
-      attr('industrycode', 'Picklist', { display: 'Industry', options: env === 'qa' ? INDUSTRIES.slice(0, 6) : INDUSTRIES }),
+      attr('industrycode', 'Picklist', {
+        display: 'Industry',
+        options: env === 'qa' ? INDUSTRIES.slice(0, 6) : INDUSTRIES,
+      }),
       attr('description', 'Memo', { display: 'Description', maxLength: 2000 }),
       attr('creditonhold', 'Boolean', { display: 'Credit Hold' }),
       attr('parentaccountid', 'Lookup', { display: 'Parent Account', targets: ['account'] }),
       attr('primarycontactid', 'Lookup', { display: 'Primary Contact', targets: ['contact'] }),
       attr('transactioncurrencyid', 'Lookup', { display: 'Currency', targets: ['transactioncurrency'] }),
       attr('dtx_regionid', 'Lookup', { display: 'Region', targets: ['dtx_region'] }),
-      ...(env === 'qa' ? [] : [attr('dtx_tier', 'Picklist', { display: 'Customer Tier', options: opts('Bronze', 'Silver', 'Gold') })]),
+      ...(env === 'qa'
+        ? []
+        : [
+            attr('dtx_tier', 'Picklist', {
+              display: 'Customer Tier',
+              options: opts('Bronze', 'Silver', 'Gold'),
+            }),
+          ]),
       ...auditColumns(),
     ],
   });
@@ -243,17 +283,33 @@ function buildContact({ env }: Variant): TableMetadata {
     primaryName: 'fullname',
     custom: false,
     attributes: [
-      attr('fullname', 'String', { display: 'Full Name', create: false, update: false, primaryName: true, maxLength: 160 }),
+      attr('fullname', 'String', {
+        display: 'Full Name',
+        create: false,
+        update: false,
+        primaryName: true,
+        maxLength: 160,
+      }),
       attr('firstname', 'String', { display: 'First Name', maxLength: 50 }),
       attr('lastname', 'String', { display: 'Last Name', maxLength: 50, required: 'ApplicationRequired' }),
       attr('emailaddress1', 'String', { display: 'Email', maxLength: 100 }),
       attr('jobtitle', 'String', { display: 'Job Title', maxLength: 100 }),
       attr('birthdate', 'DateTime', { display: 'Birthday', behavior: 'DateOnly' }),
       attr('parentcustomerid', 'Customer', { display: 'Company Name', targets: ['account', 'contact'] }),
-      attr('preferredcontactmethodcode', 'Picklist', { display: 'Preferred Method of Contact', options: opts('Any', 'Email', 'Phone', 'Fax', 'Mail') }),
+      attr('preferredcontactmethodcode', 'Picklist', {
+        display: 'Preferred Method of Contact',
+        options: opts('Any', 'Email', 'Phone', 'Fax', 'Mail'),
+      }),
       attr('donotemail', 'Boolean', { display: 'Do not allow Emails' }),
       attr('dtx_nationalid', 'String', { display: 'National ID', maxLength: 20, secured: true }),
-      ...(env === 'qa' ? [attr('dtx_preferredchannel', 'Picklist', { display: 'Preferred Channel', options: opts('Web', 'Mobile', 'Branch') })] : []),
+      ...(env === 'qa'
+        ? [
+            attr('dtx_preferredchannel', 'Picklist', {
+              display: 'Preferred Channel',
+              options: opts('Web', 'Mobile', 'Branch'),
+            }),
+          ]
+        : []),
       ...auditColumns(),
     ],
   });
@@ -268,7 +324,12 @@ function buildProduct({ env }: Variant): TableMetadata {
     custom: false,
     ownership: 'OrganizationOwned',
     attributes: [
-      attr('name', 'String', { display: 'Name', required: 'SystemRequired', primaryName: true, custom: false }),
+      attr('name', 'String', {
+        display: 'Name',
+        required: 'SystemRequired',
+        primaryName: true,
+        custom: false,
+      }),
       attr('productnumber', 'String', { display: 'Product ID', required: 'SystemRequired', custom: false }),
       attr('price', 'Money', { display: 'List Price', precision: 2 }),
       attr('description', 'Memo', { display: 'Description' }),
@@ -276,7 +337,14 @@ function buildProduct({ env }: Variant): TableMetadata {
         ? attr('dtx_warrantymonths', 'String', { display: 'Warranty (months)', maxLength: 10 })
         : attr('dtx_warrantymonths', 'Integer', { display: 'Warranty (months)' }),
       attr('dtx_launchdate', 'DateTime', { display: 'Launch Date', behavior: 'DateOnly' }),
-      attr('statecode', 'State', { display: 'Status', options: [{ value: 0, label: 'Active' }, { value: 1, label: 'Retired' }], required: 'SystemRequired' }),
+      attr('statecode', 'State', {
+        display: 'Status',
+        options: [
+          { value: 0, label: 'Active' },
+          { value: 1, label: 'Retired' },
+        ],
+        required: 'SystemRequired',
+      }),
       attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
     ],
     keys: [key('dtx_productnumber_key', ['productnumber'], 'Product Number')],
@@ -295,7 +363,10 @@ function buildConfig({ env }: Variant): TableMetadata {
       attr('dtx_key', 'String', { display: 'Key', required: 'ApplicationRequired' }),
       attr('dtx_value', 'Memo', { display: 'Value', maxLength: env === 'qa' ? 500 : 4000 }),
       attr('dtx_isenabled', 'Boolean', { display: 'Enabled' }),
-      attr('dtx_category', 'Picklist', { display: 'Category', options: opts('General', 'Integration', 'Security') }),
+      attr('dtx_category', 'Picklist', {
+        display: 'Category',
+        options: opts('General', 'Integration', 'Security'),
+      }),
       attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
     ],
     keys: [key('dtx_configkey_key', ['dtx_key'], 'Config Key')],
@@ -328,7 +399,11 @@ function buildOffice(): TableMetadata {
     attributes: [
       attr('dtx_name', 'String', { display: 'Name', required: 'ApplicationRequired', primaryName: true }),
       attr('dtx_city', 'String', { display: 'City' }),
-      attr('dtx_regionid', 'Lookup', { display: 'Region', targets: ['dtx_region'], required: 'ApplicationRequired' }),
+      attr('dtx_regionid', 'Lookup', {
+        display: 'Region',
+        targets: ['dtx_region'],
+        required: 'ApplicationRequired',
+      }),
       attr('dtx_openedon', 'DateTime', { display: 'Opened On', behavior: 'DateOnly' }),
       attr('dtx_headcount', 'Integer', { display: 'Headcount' }),
       ...auditColumns(),
@@ -362,7 +437,13 @@ function buildAuditNote(): TableMetadata {
   });
 }
 
-function platformTable(logicalName: string, displayName: string, entitySetName: string, primaryName: string, extra: AttributeMeta[] = []) {
+function platformTable(
+  logicalName: string,
+  displayName: string,
+  entitySetName: string,
+  primaryName: string,
+  extra: AttributeMeta[] = [],
+) {
   return {
     ...table({
       logicalName,
@@ -371,13 +452,18 @@ function platformTable(logicalName: string, displayName: string, entitySetName: 
       primaryName,
       custom: false,
       ownership: 'BusinessOwned',
-      attributes: [attr(primaryName, 'String', { display: 'Name', primaryName: true, custom: false }), ...extra],
+      attributes: [
+        attr(primaryName, 'String', { display: 'Name', primaryName: true, custom: false }),
+        ...extra,
+      ],
     }),
   };
 }
 
 export function demoMetadata(env: DemoEnvKey): TableMetadata[] {
-  const variant: Variant = { env: env === 'demo-dev' || env === 'demo-prod' ? 'dev' : env === 'demo-qa' ? 'qa' : 'uat' };
+  const variant: Variant = {
+    env: env === 'demo-dev' || env === 'demo-prod' ? 'dev' : env === 'demo-qa' ? 'qa' : 'uat',
+  };
   const tables = [
     buildAccount(variant),
     buildContact(variant),
@@ -398,9 +484,20 @@ export function demoMetadata(env: DemoEnvKey): TableMetadata[] {
 }
 
 export function demoAutomation(env: DemoEnvKey, tableName: string): AutomationInfo {
-  const base: AutomationInfo = { table: tableName, pluginSteps: 0, workflows: 0, flows: 0, details: [], detectionSupported: true };
+  const base: AutomationInfo = {
+    table: tableName,
+    pluginSteps: 0,
+    workflows: 0,
+    flows: 0,
+    details: [],
+    detectionSupported: true,
+  };
   if (env === 'demo-qa' && tableName === 'account') {
-    return { ...base, pluginSteps: 1, details: ['Plug-in step: DeepTrics.Plugins.AccountNumberGenerator: Create of account'] };
+    return {
+      ...base,
+      pluginSteps: 1,
+      details: ['Plug-in step: DeepTrics.Plugins.AccountNumberGenerator: Create of account'],
+    };
   }
   if (env === 'demo-qa' && tableName === 'contact') {
     return { ...base, flows: 1, details: ['Flow: Notify account manager when a contact is created'] };
@@ -427,10 +524,69 @@ type Row = Record<string, FieldValue>;
 export type DemoDataset = Record<string, Row[]>;
 
 const lk = (logicalName: string, id: string) => ({ id, logicalName });
-const COMPANY_A = ['Contoso', 'Fabrikam', 'Northwind', 'Adventure', 'Tailspin', 'Litware', 'Proseware', 'Wingtip', 'Alpine', 'Coho', 'Lucerne', 'Margie', 'Humongous', 'Trey', 'Blue Yonder'];
-const COMPANY_B = ['Holdings', 'Logistics', 'Traders', 'Systems', 'Foods', 'Partners', 'Energy', 'Health', 'Labs', 'Group'];
-const FIRST = ['Avery', 'Jordan', 'Priya', 'Mateo', 'Chen', 'Fatima', 'Liam', 'Sofia', 'Noah', 'Aisha', 'Ethan', 'Mei', 'Lucas', 'Zara', 'Ravi', 'Elena'];
-const LAST = ['Patel', 'Garcia', 'Nguyen', 'Smith', 'Okafor', 'Kowalski', 'Tanaka', 'Rossi', 'Haddad', 'Johansson', 'Silva', 'Murphy', 'Kim', 'Reddy'];
+const COMPANY_A = [
+  'Contoso',
+  'Fabrikam',
+  'Northwind',
+  'Adventure',
+  'Tailspin',
+  'Litware',
+  'Proseware',
+  'Wingtip',
+  'Alpine',
+  'Coho',
+  'Lucerne',
+  'Margie',
+  'Humongous',
+  'Trey',
+  'Blue Yonder',
+];
+const COMPANY_B = [
+  'Holdings',
+  'Logistics',
+  'Traders',
+  'Systems',
+  'Foods',
+  'Partners',
+  'Energy',
+  'Health',
+  'Labs',
+  'Group',
+];
+const FIRST = [
+  'Avery',
+  'Jordan',
+  'Priya',
+  'Mateo',
+  'Chen',
+  'Fatima',
+  'Liam',
+  'Sofia',
+  'Noah',
+  'Aisha',
+  'Ethan',
+  'Mei',
+  'Lucas',
+  'Zara',
+  'Ravi',
+  'Elena',
+];
+const LAST = [
+  'Patel',
+  'Garcia',
+  'Nguyen',
+  'Smith',
+  'Okafor',
+  'Kowalski',
+  'Tanaka',
+  'Rossi',
+  'Haddad',
+  'Johansson',
+  'Silva',
+  'Murphy',
+  'Kim',
+  'Reddy',
+];
 const REGIONS = [
   ['NA', 'North America'],
   ['EMEA', 'Europe, Middle East & Africa'],
@@ -439,7 +595,23 @@ const REGIONS = [
   ['ANZ', 'Australia & New Zealand'],
   ['IN', 'India'],
 ];
-const CITIES = ['Seattle', 'Toronto', 'London', 'Berlin', 'Dubai', 'Singapore', 'Tokyo', 'São Paulo', 'Mexico City', 'Sydney', 'Auckland', 'Hyderabad', 'Bengaluru', 'Austin', 'Paris'];
+const CITIES = [
+  'Seattle',
+  'Toronto',
+  'London',
+  'Berlin',
+  'Dubai',
+  'Singapore',
+  'Tokyo',
+  'São Paulo',
+  'Mexico City',
+  'Sydney',
+  'Auckland',
+  'Hyderabad',
+  'Bengaluru',
+  'Austin',
+  'Paris',
+];
 
 export const CURRENCY_USD = demoGuid('transactioncurrency', 'USD');
 export const CURRENCY_EUR = demoGuid('transactioncurrency', 'EUR');
@@ -498,7 +670,12 @@ export function sourceDataset(): DemoDataset {
       'Routing rules',
       'integration.routing.rules',
       JSON.stringify(
-        Array.from({ length: 18 }, (_, i) => ({ rule: `route-${i + 1}`, queue: `queue-${(i % 4) + 1}`, priority: i % 3, match: `category eq ${i}` })),
+        Array.from({ length: 18 }, (_, i) => ({
+          rule: `route-${i + 1}`,
+          queue: `queue-${(i % 4) + 1}`,
+          priority: i % 3,
+          match: `category eq ${i}`,
+        })),
       ),
       2,
     ],
@@ -554,8 +731,12 @@ export function sourceDataset(): DemoDataset {
       fullname: `${first} ${last}`,
       emailaddress1: `${first}.${last}${i}@example.com`.toLowerCase(),
       jobtitle: pick(['Buyer', 'CFO', 'IT Director', 'Operations Manager', 'Analyst', null]),
-      birthdate: i % 3 === 0 ? `19${60 + (i % 40)}-${String(1 + (i % 12)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}` : null,
-      parentcustomerid: i % 10 === 9 ? null : lk('account', accountIds[Math.floor(i / 2.5) % accountIds.length]),
+      birthdate:
+        i % 3 === 0
+          ? `19${60 + (i % 40)}-${String(1 + (i % 12)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}`
+          : null,
+      parentcustomerid:
+        i % 10 === 9 ? null : lk('account', accountIds[Math.floor(i / 2.5) % accountIds.length]),
       preferredcontactmethodcode: 1 + (i % 5),
       donotemail: i % 13 === 0,
       dtx_nationalid: i % 4 === 0 ? `NID-${100000 + i}` : null,
@@ -631,7 +812,15 @@ export function qaDataset(source: DemoDataset): DemoDataset {
 }
 
 export function uatDataset(): DemoDataset {
-  return { ...platformRows(), dtx_region: [], dtx_office: [], account: [], contact: [], product: [], dtx_applicationconfig: [] };
+  return {
+    ...platformRows(),
+    dtx_region: [],
+    dtx_office: [],
+    account: [],
+    contact: [],
+    product: [],
+    dtx_applicationconfig: [],
+  };
 }
 
 export function datasetFor(env: DemoEnvKey): DemoDataset {

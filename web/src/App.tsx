@@ -20,7 +20,9 @@ function Protected() {
   const location = useLocation();
   if (session.isLoading) return <Spinner label="Loading session…" />;
   if (!session.data) {
-    return <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`} replace />;
+    return (
+      <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`} replace />
+    );
   }
   return (
     <SessionProvider user={session.data.user}>

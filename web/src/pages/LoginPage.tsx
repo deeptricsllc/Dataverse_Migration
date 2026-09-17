@@ -25,7 +25,10 @@ export function LoginPage() {
   const error = params.get('error');
   const session = useSessionQuery();
   const qc = useQueryClient();
-  const config = useQuery({ queryKey: ['auth-config'], queryFn: () => get<AuthConfigDto>('/api/auth/config') });
+  const config = useQuery({
+    queryKey: ['auth-config'],
+    queryFn: () => get<AuthConfigDto>('/api/auth/config'),
+  });
   const demo = useMutation({
     mutationFn: () => post<{ user: SessionUser; csrfToken: string }>('/api/auth/demo-login'),
     onSuccess: (data) => {
@@ -52,10 +55,15 @@ export function LoginPage() {
         <div className="rounded-2xl bg-white p-8 shadow-2xl">
           <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Discover, compare, migrate and validate Microsoft Dataverse environments with your organizational account.
+            Discover, compare, migrate and validate Microsoft Dataverse environments with your organizational
+            account.
           </p>
           <div className="mt-6 space-y-3">
-            {error && <Callout tone="danger" title="Sign-in failed">{error}</Callout>}
+            {error && (
+              <Callout tone="danger" title="Sign-in failed">
+                {error}
+              </Callout>
+            )}
             {config.isLoading && <Spinner />}
             {config.error && <ErrorState error={config.error} onRetry={() => config.refetch()} />}
             {config.data && (
@@ -69,13 +77,15 @@ export function LoginPage() {
                   </a>
                 ) : (
                   <Callout tone="info" title="Microsoft sign-in is not configured">
-                    Set <code>ENTRA_CLIENT_ID</code> and <code>ENTRA_CLIENT_SECRET</code> (see README → Microsoft Entra setup) to enable “Continue with Microsoft”.
+                    Set <code>ENTRA_CLIENT_ID</code> and <code>ENTRA_CLIENT_SECRET</code> (see README →
+                    Microsoft Entra setup) to enable “Continue with Microsoft”.
                   </Callout>
                 )}
                 {config.data.demoEnabled && (
                   <>
                     <div className="flex items-center gap-3 py-1 text-xs text-slate-400">
-                      <span className="h-px flex-1 bg-slate-200" /> or <span className="h-px flex-1 bg-slate-200" />
+                      <span className="h-px flex-1 bg-slate-200" /> or{' '}
+                      <span className="h-px flex-1 bg-slate-200" />
                     </div>
                     <button
                       type="button"

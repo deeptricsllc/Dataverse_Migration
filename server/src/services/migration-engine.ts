@@ -11,7 +11,13 @@ import {
   type TableMetadata,
 } from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
-import { migrationErrors, migrationPlans, migrationRecordMaps, migrationRunEntities, migrationRuns } from '../db/schema';
+import {
+  migrationErrors,
+  migrationPlans,
+  migrationRecordMaps,
+  migrationRunEntities,
+  migrationRuns,
+} from '../db/schema';
 import { DataverseError, toDataverseError } from '../dataverse/errors';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { DataverseConnection, WriteOptions } from '../dataverse/types';
@@ -113,14 +119,25 @@ export class MigrationEngine {
     const log = this.logger.child({ migrationRunId: runId, organizationId: run.organizationId });
     await this.db
       .update(migrationRuns)
-      .set({ status: 'RUNNING', startedAt: run.startedAt ?? new Date(), errorMessage: null, updatedAt: new Date() })
+      .set({
+        status: 'RUNNING',
+        startedAt: run.startedAt ?? new Date(),
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
       .where(eq(migrationRuns.id, runId));
     log.info({ attempt: run.attempt }, 'Migration run started');
 
     try {
       if (!run.executedByUserId) throw new FatalRunError('Run has no executing user');
-      const source = await this.environmentsSvc.getInOrganization(run.organizationId, run.sourceEnvironmentId);
-      const target = await this.environmentsSvc.getInOrganization(run.organizationId, run.targetEnvironmentId);
+      const source = await this.environmentsSvc.getInOrganization(
+        run.organizationId,
+        run.sourceEnvironmentId,
+      );
+      const target = await this.environmentsSvc.getInOrganization(
+        run.organizationId,
+        run.targetEnvironmentId,
+      );
       const sConn = this.connections.forEnvironment(source, run.executedByUserId, { migrationRunId: runId });
       const tConn = this.connections.forEnvironment(target, run.executedByUserId, { migrationRunId: runId });
       const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...run.options };
@@ -139,7 +156,8 @@ export class MigrationEngine {
       for (const e of entities) {
         const s = sourceMeta.get(e.logicalName);
         for (const m of e.mappings.filter((x) => x.isLookup)) {
-          for (const t of s?.attributes.find((a) => a.logicalName === m.sourceField)?.targets ?? []) referenced.add(t);
+          for (const t of s?.attributes.find((a) => a.logicalName === m.sourceField)?.targets ?? [])
+            referenced.add(t);
         }
       }
       const targetMeta = await this.metadata.getTables(
@@ -168,7 +186,10 @@ export class MigrationEngine {
         await this.migrateEntity(ctx, entity);
       }
 
-      await this.db.update(migrationRuns).set({ phase: 'PASS_2_DEFERRED_LOOKUPS', currentEntity: null }).where(eq(migrationRuns.id, runId));
+      await this.db
+        .update(migrationRuns)
+        .set({ phase: 'PASS_2_DEFERRED_LOOKUPS', currentEntity: null })
+        .where(eq(migrationRuns.id, runId));
       for (const entity of entities) {
         await this.checkControl(runId);
         await this.resolveDeferred(ctx, entity);
@@ -186,7 +207,10 @@ export class MigrationEngine {
         .update(migrationRuns)
         .set({ status, phase: 'DONE', currentEntity: null, completedAt: new Date(), updatedAt: new Date() })
         .where(eq(migrationRuns.id, runId));
-      await this.db.update(migrationPlans).set({ status: 'EXECUTED' }).where(eq(migrationPlans.id, run.planId));
+      await this.db
+        .update(migrationPlans)
+        .set({ status: 'EXECUTED' })
+        .where(eq(migrationPlans.id, run.planId));
       this.metadata.invalidateCounts(target.id);
       await this.audit.record({
         organizationId: run.organizationId,
@@ -196,9 +220,24 @@ export class MigrationEngine {
         sourceEnvironmentId: run.sourceEnvironmentId,
         targetEnvironmentId: run.targetEnvironmentId,
         runId,
-        details: { status, created: final.created, updated: final.updated, skipped: final.skipped, failed: final.failed },
+        details: {
+          status,
+          created: final.created,
+          updated: final.updated,
+          skipped: final.skipped,
+          failed: final.failed,
+        },
       });
-      log.info({ status, created: final.created, updated: final.updated, skipped: final.skipped, failed: final.failed }, 'Migration run finished');
+      log.info(
+        {
+          status,
+          created: final.created,
+          updated: final.updated,
+          skipped: final.skipped,
+          failed: final.failed,
+        },
+        'Migration run finished',
+      );
     } catch (err) {
       if (err instanceof RunInterrupted) {
         await this.refreshCounters(runId);
@@ -219,12 +258,18 @@ export class MigrationEngine {
         log.warn({ reason: err.reason }, 'Migration run interrupted');
         return;
       }
-      const message = err instanceof AppError || err instanceof FatalRunError ? err.message : errorMessage(err);
+      const message =
+        err instanceof AppError || err instanceof FatalRunError ? err.message : errorMessage(err);
       log.error({ error: message }, 'Migration run failed');
       await this.refreshCounters(runId).catch(() => undefined);
       await this.db
         .update(migrationRuns)
-        .set({ status: 'FAILED', errorMessage: message.slice(0, 2000), completedAt: new Date(), updatedAt: new Date() })
+        .set({
+          status: 'FAILED',
+          errorMessage: message.slice(0, 2000),
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(eq(migrationRuns.id, runId));
       await this.audit.record({
         organizationId: run.organizationId,
@@ -257,12 +302,17 @@ export class MigrationEngine {
     const [runEntity] = await this.db
       .select()
       .from(migrationRunEntities)
-      .where(and(eq(migrationRunEntities.runId, run.id), eq(migrationRunEntities.logicalName, entity.logicalName)));
+      .where(
+        and(eq(migrationRunEntities.runId, run.id), eq(migrationRunEntities.logicalName, entity.logicalName)),
+      );
     const s = ctx.sourceMeta.get(entity.logicalName);
     const t = ctx.targetMeta.get(entity.logicalName);
     const elog = log.child({ entity: entity.logicalName });
 
-    await this.db.update(migrationRuns).set({ currentEntity: entity.logicalName, updatedAt: new Date() }).where(eq(migrationRuns.id, run.id));
+    await this.db
+      .update(migrationRuns)
+      .set({ currentEntity: entity.logicalName, updatedAt: new Date() })
+      .where(eq(migrationRuns.id, run.id));
     await this.db
       .update(migrationRunEntities)
       .set({ status: 'RUNNING', startedAt: runEntity.startedAt ?? new Date(), completedAt: null })
@@ -279,19 +329,30 @@ export class MigrationEngine {
           retryable: false,
         },
       ]);
-      await this.db.update(migrationRunEntities).set({ status: 'FAILED', completedAt: new Date() }).where(eq(migrationRunEntities.id, runEntity.id));
+      await this.db
+        .update(migrationRunEntities)
+        .set({ status: 'FAILED', completedAt: new Date() })
+        .where(eq(migrationRunEntities.id, runEntity.id));
       return;
     }
 
     const total = await ctx.sConn.countRecords(s).catch(() => ({ count: 0, approximate: true }));
-    await this.db.update(migrationRunEntities).set({ total: total.count }).where(eq(migrationRunEntities.id, runEntity.id));
+    await this.db
+      .update(migrationRunEntities)
+      .set({ total: total.count })
+      .where(eq(migrationRunEntities.id, runEntity.id));
 
     const existingMaps = new Map(
       (
         await this.db
           .select({ sourceId: migrationRecordMaps.sourceId, outcome: migrationRecordMaps.outcome })
           .from(migrationRecordMaps)
-          .where(and(eq(migrationRecordMaps.runId, run.id), eq(migrationRecordMaps.logicalName, entity.logicalName)))
+          .where(
+            and(
+              eq(migrationRecordMaps.runId, run.id),
+              eq(migrationRecordMaps.logicalName, entity.logicalName),
+            ),
+          )
       ).map((m) => [m.sourceId, m.outcome]),
     );
 
@@ -310,7 +371,9 @@ export class MigrationEngine {
         await this.refreshCounters(run.id, runEntity.id);
         await ctx.heartbeat();
         if (ctx.options.stopOnFirstError && results.some((r) => r.outcome === 'FAILED')) {
-          throw new FatalRunError(`Stopped on first error in ${entity.logicalName} (stopOnFirstError enabled)`);
+          throw new FatalRunError(
+            `Stopped on first error in ${entity.logicalName} (stopOnFirstError enabled)`,
+          );
         }
       }
     } catch (err) {
@@ -320,16 +383,25 @@ export class MigrationEngine {
       elog.error({ errorCode: re.code }, 'Entity read failed');
       await this.persistErrors(run.id, entity.logicalName, null, [re]);
       await this.refreshCounters(run.id, runEntity.id);
-      await this.db.update(migrationRunEntities).set({ status: 'FAILED', completedAt: new Date() }).where(eq(migrationRunEntities.id, runEntity.id));
+      await this.db
+        .update(migrationRunEntities)
+        .set({ status: 'FAILED', completedAt: new Date() })
+        .where(eq(migrationRunEntities.id, runEntity.id));
       return;
     }
 
-    const [counts] = await this.db.select().from(migrationRunEntities).where(eq(migrationRunEntities.id, runEntity.id));
+    const [counts] = await this.db
+      .select()
+      .from(migrationRunEntities)
+      .where(eq(migrationRunEntities.id, runEntity.id));
     await this.db
       .update(migrationRunEntities)
       .set({ status: counts.failed > 0 ? 'COMPLETED_WITH_ERRORS' : 'COMPLETED', completedAt: new Date() })
       .where(eq(migrationRunEntities.id, runEntity.id));
-    elog.info({ created: counts.created, updated: counts.updated, skipped: counts.skipped, failed: counts.failed }, 'Entity migration finished');
+    elog.info(
+      { created: counts.created, updated: counts.updated, skipped: counts.skipped, failed: counts.failed },
+      'Entity migration finished',
+    );
   }
 
   private async processBatch(
@@ -343,7 +415,11 @@ export class MigrationEngine {
     await this.prefetchLookups(ctx, entity, records);
     const existingById = new Set<string>();
     if (entity.matchStrategy === 'PRIMARY_ID') {
-      const found = await ctx.tConn.retrieveByIds(t, records.map((r) => r.id), []);
+      const found = await ctx.tConn.retrieveByIds(
+        t,
+        records.map((r) => r.id),
+        [],
+      );
       for (const f of found) existingById.add(f.id.toLowerCase());
     }
     return mapLimit(records, 4, (record) => this.processRecord(ctx, entity, s, t, record, existingById));
@@ -357,7 +433,14 @@ export class MigrationEngine {
     record: DvRecord,
     existingById: Set<string>,
   ): Promise<RecordResult> {
-    const result: RecordResult = { sourceId: record.id, outcome: 'FAILED', targetId: null, matchMethod: null, deferred: null, errors: [] };
+    const result: RecordResult = {
+      sourceId: record.id,
+      outcome: 'FAILED',
+      targetId: null,
+      matchMethod: null,
+      deferred: null,
+      errors: [],
+    };
     const sAttrs = new Map(s.attributes.map((a) => [a.logicalName, a]));
     const tAttrs = new Map(t.attributes.map((a) => [a.logicalName, a]));
     const values: Record<string, FieldValue> = {};
@@ -367,7 +450,14 @@ export class MigrationEngine {
       const sAttr = sAttrs.get(m.sourceField);
       const tAttr = tAttrs.get(m.targetField);
       if (!sAttr || !tAttr) {
-        result.errors.push({ operation: 'CREATE', severity: 'ERROR', code: 'MAPPING_INVALID', field: m.sourceField, message: `Mapped column ${m.sourceField} → ${m.targetField} no longer exists`, retryable: false });
+        result.errors.push({
+          operation: 'CREATE',
+          severity: 'ERROR',
+          code: 'MAPPING_INVALID',
+          field: m.sourceField,
+          message: `Mapped column ${m.sourceField} → ${m.targetField} no longer exists`,
+          retryable: false,
+        });
         return result;
       }
       const raw = record.values[m.sourceField];
@@ -384,7 +474,10 @@ export class MigrationEngine {
         const resolved = await this.resolveLookup(ctx, raw);
         if (resolved) {
           values[tAttr.logicalName] = { id: resolved, logicalName: raw.logicalName };
-        } else if (tAttr.requiredLevel === 'SystemRequired' || tAttr.requiredLevel === 'ApplicationRequired') {
+        } else if (
+          tAttr.requiredLevel === 'SystemRequired' ||
+          tAttr.requiredLevel === 'ApplicationRequired'
+        ) {
           result.errors.push({
             operation: 'RESOLVE_LOOKUP',
             severity: 'ERROR',
@@ -408,7 +501,14 @@ export class MigrationEngine {
       }
       const converted = transformValue(sAttr, tAttr, raw);
       if (!converted.ok) {
-        result.errors.push({ operation: 'CREATE', severity: 'ERROR', code: 'VALUE_CONVERSION', field: m.sourceField, message: converted.error, retryable: false });
+        result.errors.push({
+          operation: 'CREATE',
+          severity: 'ERROR',
+          code: 'VALUE_CONVERSION',
+          field: m.sourceField,
+          message: converted.error,
+          retryable: false,
+        });
         return result;
       }
       values[tAttr.logicalName] = converted.value;
@@ -420,7 +520,12 @@ export class MigrationEngine {
     try {
       if (entity.matchStrategy === 'ALTERNATE_KEY' && entity.alternateKey) {
         const key = t.keys.find((k) => k.logicalName === entity.alternateKey);
-        if (!key) throw new DataverseError('VALIDATION', `Alternate key ${entity.alternateKey} is not defined in the target`, 400);
+        if (!key)
+          throw new DataverseError(
+            'VALIDATION',
+            `Alternate key ${entity.alternateKey} is not defined in the target`,
+            400,
+          );
         const match = await ctx.tConn.findByAlternateKey(t, key, values, []);
         if (match) {
           existingId = match.id;
@@ -494,7 +599,11 @@ export class MigrationEngine {
     for (const m of entity.mappings.filter((x) => x.isLookup)) {
       for (const r of records) {
         const v = r.values[m.sourceField];
-        if (isLookupValue(v) && !m.deferredTargets?.includes(v.logicalName) && !ctx.lookupCache.has(this.cacheKey(v.logicalName, v.id))) {
+        if (
+          isLookupValue(v) &&
+          !m.deferredTargets?.includes(v.logicalName) &&
+          !ctx.lookupCache.has(this.cacheKey(v.logicalName, v.id))
+        ) {
           if (!wanted.has(v.logicalName)) wanted.set(v.logicalName, new Set());
           wanted.get(v.logicalName)!.add(v.id.toLowerCase());
         }
@@ -514,7 +623,11 @@ export class MigrationEngine {
   private async resolveIds(ctx: ExecContext, logicalName: string, ids: string[]) {
     if (ids.length === 0) return;
     const maps = await this.db
-      .select({ sourceId: migrationRecordMaps.sourceId, targetId: migrationRecordMaps.targetId, runId: migrationRecordMaps.runId })
+      .select({
+        sourceId: migrationRecordMaps.sourceId,
+        targetId: migrationRecordMaps.targetId,
+        runId: migrationRecordMaps.runId,
+      })
       .from(migrationRecordMaps)
       .where(
         and(
@@ -536,14 +649,27 @@ export class MigrationEngine {
       else if (!earlier.has(m.sourceId)) earlier.set(m.sourceId, m.targetId!);
     }
     if (!tTable) return;
-    const toVerify = [...earlier.entries()].filter(([sid]) => !ctx.lookupCache.get(this.cacheKey(logicalName, sid)));
+    const toVerify = [...earlier.entries()].filter(
+      ([sid]) => !ctx.lookupCache.get(this.cacheKey(logicalName, sid)),
+    );
     if (toVerify.length) {
-      const found = new Set((await ctx.tConn.retrieveByIds(tTable, toVerify.map(([, tid]) => tid), [])).map((f) => f.id.toLowerCase()));
-      for (const [sid, tid] of toVerify) if (found.has(tid.toLowerCase())) ctx.lookupCache.set(this.cacheKey(logicalName, sid), tid);
+      const found = new Set(
+        (
+          await ctx.tConn.retrieveByIds(
+            tTable,
+            toVerify.map(([, tid]) => tid),
+            [],
+          )
+        ).map((f) => f.id.toLowerCase()),
+      );
+      for (const [sid, tid] of toVerify)
+        if (found.has(tid.toLowerCase())) ctx.lookupCache.set(this.cacheKey(logicalName, sid), tid);
     }
     const unresolved = ids.filter((id) => !ctx.lookupCache.get(this.cacheKey(logicalName, id)));
     if (unresolved.length) {
-      const found = new Set((await ctx.tConn.retrieveByIds(tTable, unresolved, [])).map((f) => f.id.toLowerCase()));
+      const found = new Set(
+        (await ctx.tConn.retrieveByIds(tTable, unresolved, [])).map((f) => f.id.toLowerCase()),
+      );
       for (const id of unresolved) if (found.has(id)) ctx.lookupCache.set(this.cacheKey(logicalName, id), id);
     }
   }
@@ -574,7 +700,10 @@ export class MigrationEngine {
         ),
       );
     if (pending.length === 0) return;
-    await this.db.update(migrationRuns).set({ currentEntity: entity.logicalName }).where(eq(migrationRuns.id, run.id));
+    await this.db
+      .update(migrationRuns)
+      .set({ currentEntity: entity.logicalName })
+      .where(eq(migrationRuns.id, run.id));
     const tAttrs = new Map(t.attributes.map((a) => [a.logicalName, a]));
     for (let i = 0; i < pending.length; i += ctx.options.batchSize) {
       await this.checkControl(run.id);
@@ -589,7 +718,10 @@ export class MigrationEngine {
           else {
             errors.push({
               operation: 'DEFERRED_UPDATE',
-              severity: tAttr?.requiredLevel === 'None' || tAttr?.requiredLevel === 'Recommended' ? 'WARNING' : 'ERROR',
+              severity:
+                tAttr?.requiredLevel === 'None' || tAttr?.requiredLevel === 'Recommended'
+                  ? 'WARNING'
+                  : 'ERROR',
               code: 'LOOKUP_UNRESOLVED',
               field: attr,
               message: `Deferred lookup ${attr} references ${lookup.logicalName} ${lookup.id}, which could not be resolved in the target`,
@@ -597,7 +729,9 @@ export class MigrationEngine {
             });
           }
         }
-        let status: 'RESOLVED' | 'FAILED' = errors.some((e) => e.severity === 'ERROR') ? 'FAILED' : 'RESOLVED';
+        let status: 'RESOLVED' | 'FAILED' = errors.some((e) => e.severity === 'ERROR')
+          ? 'FAILED'
+          : 'RESOLVED';
         if (Object.keys(values).length) {
           try {
             await ctx.tConn.updateRecord(t, map.targetId!, { values }, ctx.writeOptions);
@@ -686,7 +820,12 @@ export class MigrationEngine {
     }
   }
 
-  private async persistErrors(runId: string, logicalName: string, sourceRecordId: string | null, errors: RecordError[]) {
+  private async persistErrors(
+    runId: string,
+    logicalName: string,
+    sourceRecordId: string | null,
+    errors: RecordError[],
+  ) {
     if (!errors.length) return;
     await this.db.insert(migrationErrors).values(
       errors.map((e) => ({
@@ -709,30 +848,56 @@ export class MigrationEngine {
     const rows = await this.db
       .select({ status: migrationRecordMaps.deferredStatus, n: sql<number>`count(*)` })
       .from(migrationRecordMaps)
-      .where(and(eq(migrationRecordMaps.runId, runId), eq(migrationRecordMaps.logicalName, logicalName), isNotNull(migrationRecordMaps.deferredStatus)))
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          eq(migrationRecordMaps.logicalName, logicalName),
+          isNotNull(migrationRecordMaps.deferredStatus),
+        ),
+      )
       .groupBy(migrationRecordMaps.deferredStatus);
     const get = (s: string) => Number(rows.find((r) => r.status === s)?.n ?? 0);
     await this.db
       .update(migrationRunEntities)
-      .set({ deferredPending: get('PENDING'), deferredResolved: get('RESOLVED'), deferredFailed: get('FAILED') })
+      .set({
+        deferredPending: get('PENDING'),
+        deferredResolved: get('RESOLVED'),
+        deferredFailed: get('FAILED'),
+      })
       .where(and(eq(migrationRunEntities.runId, runId), eq(migrationRunEntities.logicalName, logicalName)));
   }
 
   /** Recomputes counters from the identity map (source of truth; safe across retries). */
   async refreshCounters(runId: string, runEntityId?: string) {
-    const entityRows = await this.db.select().from(migrationRunEntities).where(eq(migrationRunEntities.runId, runId));
+    const entityRows = await this.db
+      .select()
+      .from(migrationRunEntities)
+      .where(eq(migrationRunEntities.runId, runId));
     const grouped = await this.db
-      .select({ logicalName: migrationRecordMaps.logicalName, outcome: migrationRecordMaps.outcome, n: sql<number>`count(*)` })
+      .select({
+        logicalName: migrationRecordMaps.logicalName,
+        outcome: migrationRecordMaps.outcome,
+        n: sql<number>`count(*)`,
+      })
       .from(migrationRecordMaps)
       .where(eq(migrationRecordMaps.runId, runId))
       .groupBy(migrationRecordMaps.logicalName, migrationRecordMaps.outcome);
     const totals = { total: 0, processed: 0, created: 0, updated: 0, skipped: 0, failed: 0 };
     for (const e of entityRows) {
-      const get = (o: string) => Number(grouped.find((g) => g.logicalName === e.logicalName && g.outcome === o)?.n ?? 0);
-      const c = { created: get('CREATED'), updated: get('UPDATED'), skipped: get('SKIPPED'), failed: get('FAILED') };
+      const get = (o: string) =>
+        Number(grouped.find((g) => g.logicalName === e.logicalName && g.outcome === o)?.n ?? 0);
+      const c = {
+        created: get('CREATED'),
+        updated: get('UPDATED'),
+        skipped: get('SKIPPED'),
+        failed: get('FAILED'),
+      };
       const processed = c.created + c.updated + c.skipped + c.failed;
       if (!runEntityId || runEntityId === e.id) {
-        await this.db.update(migrationRunEntities).set({ ...c, processed }).where(eq(migrationRunEntities.id, e.id));
+        await this.db
+          .update(migrationRunEntities)
+          .set({ ...c, processed })
+          .where(eq(migrationRunEntities.id, e.id));
       }
       totals.total += Math.max(e.total, processed);
       totals.processed += processed;
@@ -741,7 +906,10 @@ export class MigrationEngine {
       totals.skipped += c.skipped;
       totals.failed += c.failed;
     }
-    await this.db.update(migrationRuns).set({ ...totals, updatedAt: new Date() }).where(eq(migrationRuns.id, runId));
+    await this.db
+      .update(migrationRuns)
+      .set({ ...totals, updatedAt: new Date() })
+      .where(eq(migrationRuns.id, runId));
     for (const e of entityRows) await this.refreshDeferredCounters(runId, e.logicalName);
     void SUCCESS_OUTCOMES;
   }

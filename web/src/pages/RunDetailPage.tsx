@@ -1,4 +1,10 @@
-import type { MigrationErrorDto, MigrationRunDto, RecordMapDto, RollbackPreviewDto, ValidationRunDto } from '@shared/domain';
+import type {
+  MigrationErrorDto,
+  MigrationRunDto,
+  RecordMapDto,
+  RollbackPreviewDto,
+  ValidationRunDto,
+} from '@shared/domain';
 import { TERMINAL_RUN_STATUSES } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Ban, Pause, Play, RotateCw, ShieldCheck } from 'lucide-react';
@@ -40,10 +46,14 @@ export function RunDetailPage() {
   const run = useQuery({
     queryKey: ['run', runId],
     queryFn: () => get<MigrationRunDto>(`/api/runs/${runId}`),
-    refetchInterval: (q) => (q.state.data && !TERMINAL_RUN_STATUSES.has(q.state.data.status) && q.state.data.status !== 'PAUSED' ? 1000 : false),
+    refetchInterval: (q) =>
+      q.state.data && !TERMINAL_RUN_STATUSES.has(q.state.data.status) && q.state.data.status !== 'PAUSED'
+        ? 1000
+        : false,
   });
   const control = useMutation({
-    mutationFn: (action: 'cancel' | 'pause' | 'resume' | 'retry') => post<MigrationRunDto>(`/api/runs/${runId}/${action}`),
+    mutationFn: (action: 'cancel' | 'pause' | 'resume' | 'retry') =>
+      post<MigrationRunDto>(`/api/runs/${runId}/${action}`),
     onSuccess: (data) => {
       qc.setQueryData(['run', runId], data);
       setConfirmCancel(false);
@@ -60,13 +70,18 @@ export function RunDetailPage() {
   const terminal = TERMINAL_RUN_STATUSES.has(r.status);
   const active = r.status === 'RUNNING' || r.status === 'QUEUED';
   const overall = r.status === 'COMPLETED' ? 100 : pct(r.processed, r.total);
-  const entitiesDone = r.entities.filter((e) => ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'].includes(e.status)).length;
+  const entitiesDone = r.entities.filter((e) =>
+    ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'].includes(e.status),
+  ).length;
 
   return (
     <>
       <WizardSteps
         current={terminal ? 8 : 7}
-        links={{ 6: `/migration/plans/${r.planId}?step=review`, ...(r.latestValidationRunId ? { 9: `/validation/${r.latestValidationRunId}` } : {}) }}
+        links={{
+          6: `/migration/plans/${r.planId}?step=review`,
+          ...(r.latestValidationRunId ? { 9: `/validation/${r.latestValidationRunId}` } : {}),
+        }}
       />
       <PageHeader
         title={`Migration run`}
@@ -75,42 +90,76 @@ export function RunDetailPage() {
             <Link to={`/migration/plans/${r.planId}`} className="font-medium text-brand-700 hover:underline">
               {r.planName}
             </Link>{' '}
-            · <span className="text-[var(--color-source)]">{r.sourceEnvironment.displayName}</span> <ArrowRight className="inline h-3.5 w-3.5" />{' '}
-            <span className="text-[var(--color-target)]">{r.targetEnvironment.displayName}</span> · <Mono>{r.id}</Mono>
+            · <span className="text-[var(--color-source)]">{r.sourceEnvironment.displayName}</span>{' '}
+            <ArrowRight className="inline h-3.5 w-3.5" />{' '}
+            <span className="text-[var(--color-target)]">{r.targetEnvironment.displayName}</span> ·{' '}
+            <Mono>{r.id}</Mono>
           </>
         }
         actions={
           <>
             {active && (
-              <Button icon={<Pause className="h-4 w-4" />} loading={control.isPending && control.variables === 'pause'} disabled={r.pauseRequested} onClick={() => control.mutate('pause')}>
+              <Button
+                icon={<Pause className="h-4 w-4" />}
+                loading={control.isPending && control.variables === 'pause'}
+                disabled={r.pauseRequested}
+                onClick={() => control.mutate('pause')}
+              >
                 {r.pauseRequested ? 'Pausing…' : 'Pause'}
               </Button>
             )}
             {r.status === 'PAUSED' && (
-              <Button variant="primary" icon={<Play className="h-4 w-4" />} loading={control.isPending} onClick={() => control.mutate('resume')}>
+              <Button
+                variant="primary"
+                icon={<Play className="h-4 w-4" />}
+                loading={control.isPending}
+                onClick={() => control.mutate('resume')}
+              >
                 Resume
               </Button>
             )}
             {(active || r.status === 'PAUSED') && (
-              <Button variant="danger" icon={<Ban className="h-4 w-4" />} disabled={r.cancelRequested} onClick={() => setConfirmCancel(true)}>
+              <Button
+                variant="danger"
+                icon={<Ban className="h-4 w-4" />}
+                disabled={r.cancelRequested}
+                onClick={() => setConfirmCancel(true)}
+              >
                 {r.cancelRequested ? 'Cancelling…' : 'Cancel'}
               </Button>
             )}
             {['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(r.status) && (
-              <Button icon={<RotateCw className="h-4 w-4" />} loading={control.isPending && control.variables === 'retry'} onClick={() => control.mutate('retry')}>
+              <Button
+                icon={<RotateCw className="h-4 w-4" />}
+                loading={control.isPending && control.variables === 'retry'}
+                onClick={() => control.mutate('retry')}
+              >
                 {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Retry failed records'}
               </Button>
             )}
             {terminal && (
-              <Button variant="primary" icon={<ShieldCheck className="h-4 w-4" />} loading={validate.isPending} onClick={() => validate.mutate()}>
+              <Button
+                variant="primary"
+                icon={<ShieldCheck className="h-4 w-4" />}
+                loading={validate.isPending}
+                onClick={() => validate.mutate()}
+              >
                 Validate
               </Button>
             )}
           </>
         }
       />
-      {control.error && <div className="mb-4"><ErrorState error={control.error} /></div>}
-      {validate.error && <div className="mb-4"><ErrorState error={validate.error} /></div>}
+      {control.error && (
+        <div className="mb-4">
+          <ErrorState error={control.error} />
+        </div>
+      )}
+      {validate.error && (
+        <div className="mb-4">
+          <ErrorState error={validate.error} />
+        </div>
+      )}
       {r.errorMessage && (
         <div className="mb-4">
           <Callout tone="danger" title="Run failed">
@@ -133,7 +182,13 @@ export function RunDetailPage() {
           <div className="flex items-center gap-3">
             <StatusBadge status={r.status} className="text-sm" />
             <span className="text-sm text-slate-600">
-              {r.phase === 'PASS_2_DEFERRED_LOOKUPS' ? 'Pass 2: setting deferred lookups' : r.phase === 'PASS_1' ? 'Pass 1: creating records' : r.phase === 'DONE' ? 'Finished' : 'Waiting for worker'}
+              {r.phase === 'PASS_2_DEFERRED_LOOKUPS'
+                ? 'Pass 2: setting deferred lookups'
+                : r.phase === 'PASS_1'
+                  ? 'Pass 1: creating records'
+                  : r.phase === 'DONE'
+                    ? 'Finished'
+                    : 'Waiting for worker'}
               {r.currentEntity && active && (
                 <>
                   {' '}
@@ -143,12 +198,25 @@ export function RunDetailPage() {
             </span>
           </div>
           <div className="text-sm text-slate-500">
-            Attempt {r.attempt} · started {fmtDate(r.startedAt)} · elapsed {fmtDuration(r.startedAt, r.completedAt)}
+            Attempt {r.attempt} · started {fmtDate(r.startedAt)} · elapsed{' '}
+            {fmtDuration(r.startedAt, r.completedAt)}
           </div>
         </div>
         <div className="mt-4 flex items-center gap-3">
           <div className="flex-1">
-            <ProgressBar value={overall} tone={r.status === 'FAILED' ? 'red' : r.failed > 0 ? 'amber' : r.status === 'COMPLETED' ? 'green' : 'brand'} label="Overall progress" />
+            <ProgressBar
+              value={overall}
+              tone={
+                r.status === 'FAILED'
+                  ? 'red'
+                  : r.failed > 0
+                    ? 'amber'
+                    : r.status === 'COMPLETED'
+                      ? 'green'
+                      : 'brand'
+              }
+              label="Overall progress"
+            />
           </div>
           <span className="w-14 text-right text-lg font-semibold tabular-nums" data-testid="overall-percent">
             {overall}%
@@ -160,8 +228,18 @@ export function RunDetailPage() {
           <Stat label="Created" tone="green" value={fmtNumber(r.created)} />
           <Stat label="Updated" tone="blue" value={fmtNumber(r.updated)} />
           <Stat label="Skipped" tone="slate" value={fmtNumber(r.skipped)} />
-          <Stat label="Failed" tone={r.failed ? 'red' : 'default'} value={fmtNumber(r.failed)} onClick={() => setTab('errors')} />
-          <Stat label="Warnings" tone={r.warningCount ? 'amber' : 'default'} value={fmtNumber(r.warningCount)} onClick={() => setTab('errors')} />
+          <Stat
+            label="Failed"
+            tone={r.failed ? 'red' : 'default'}
+            value={fmtNumber(r.failed)}
+            onClick={() => setTab('errors')}
+          />
+          <Stat
+            label="Warnings"
+            tone={r.warningCount ? 'amber' : 'default'}
+            value={fmtNumber(r.warningCount)}
+            onClick={() => setTab('errors')}
+          />
         </div>
       </Card>
 
@@ -204,10 +282,16 @@ export function RunDetailPage() {
                       <div className="font-medium text-slate-900">{e.displayName}</div>
                       <Mono>{e.logicalName}</Mono>
                     </Td>
-                    <Td><StatusBadge status={e.status} /></Td>
+                    <Td>
+                      <StatusBadge status={e.status} />
+                    </Td>
                     <Td>
                       <div className="flex items-center gap-2">
-                        <ProgressBar value={p} tone={e.failed ? 'amber' : e.status === 'COMPLETED' ? 'green' : 'brand'} label={`${e.displayName} progress`} />
+                        <ProgressBar
+                          value={p}
+                          tone={e.failed ? 'amber' : e.status === 'COMPLETED' ? 'green' : 'brand'}
+                          label={`${e.displayName} progress`}
+                        />
                         <span className="w-28 flex-none text-right text-xs tabular-nums text-slate-600">
                           {fmtNumber(e.processed)} / {fmtNumber(e.total)} · {p}%
                         </span>
@@ -216,14 +300,19 @@ export function RunDetailPage() {
                     <Td className="text-right tabular-nums">{fmtNumber(e.created)}</Td>
                     <Td className="text-right tabular-nums">{fmtNumber(e.updated)}</Td>
                     <Td className="text-right tabular-nums">{fmtNumber(e.skipped)}</Td>
-                    <Td className={`text-right tabular-nums ${e.failed ? 'font-semibold text-red-700' : ''}`}>{fmtNumber(e.failed)}</Td>
+                    <Td className={`text-right tabular-nums ${e.failed ? 'font-semibold text-red-700' : ''}`}>
+                      {fmtNumber(e.failed)}
+                    </Td>
                     <Td className="text-xs text-slate-600">
                       {e.deferredPending + e.deferredResolved + e.deferredFailed === 0 ? (
                         '—'
                       ) : (
                         <>
-                          {e.deferredResolved} resolved{e.deferredPending > 0 && ` · ${e.deferredPending} pending`}
-                          {e.deferredFailed > 0 && <span className="text-red-700"> · {e.deferredFailed} failed</span>}
+                          {e.deferredResolved} resolved
+                          {e.deferredPending > 0 && ` · ${e.deferredPending} pending`}
+                          {e.deferredFailed > 0 && (
+                            <span className="text-red-700"> · {e.deferredFailed} failed</span>
+                          )}
                         </>
                       )}
                     </Td>
@@ -252,7 +341,9 @@ export function RunDetailPage() {
         }
       >
         <p className="text-sm text-slate-700">
-          The run stops after the current batch. Records already written to <strong>{r.targetEnvironment.displayName}</strong> stay in place and remain listed in the record inventory. You can resume the remaining work later.
+          The run stops after the current batch. Records already written to{' '}
+          <strong>{r.targetEnvironment.displayName}</strong> stay in place and remain listed in the record
+          inventory. You can resume the remaining work later.
         </p>
       </Modal>
     </>
@@ -277,16 +368,57 @@ function ErrorsPanel({ run }: { run: MigrationRunDto }) {
       subtitle="Failures are isolated per record; the run continues. Retryable errors (throttling, transient or unresolved references) may succeed on retry."
       actions={
         <>
-          <Select label="Error kind" value={kind} onChange={(v) => { setKind(v as typeof kind); setPage(0); }} options={[{ value: 'all', label: 'All' }, { value: 'retryable', label: 'Retryable' }, { value: 'permanent', label: 'Permanent' }]} />
-          <Select label="Severity" value={severity} onChange={(v) => { setSeverity(v as typeof severity); setPage(0); }} options={[{ value: '', label: 'Errors & warnings' }, { value: 'ERROR', label: 'Errors' }, { value: 'WARNING', label: 'Warnings' }]} />
-          <Select label="Table" value={entity} onChange={(v) => { setEntity(v); setPage(0); }} options={[{ value: '', label: 'All tables' }, ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName }))]} />
+          <Select
+            label="Error kind"
+            value={kind}
+            onChange={(v) => {
+              setKind(v as typeof kind);
+              setPage(0);
+            }}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'retryable', label: 'Retryable' },
+              { value: 'permanent', label: 'Permanent' },
+            ]}
+          />
+          <Select
+            label="Severity"
+            value={severity}
+            onChange={(v) => {
+              setSeverity(v as typeof severity);
+              setPage(0);
+            }}
+            options={[
+              { value: '', label: 'Errors & warnings' },
+              { value: 'ERROR', label: 'Errors' },
+              { value: 'WARNING', label: 'Warnings' },
+            ]}
+          />
+          <Select
+            label="Table"
+            value={entity}
+            onChange={(v) => {
+              setEntity(v);
+              setPage(0);
+            }}
+            options={[
+              { value: '', label: 'All tables' },
+              ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName })),
+            ]}
+          />
         </>
       }
       bodyClassName="p-0"
     >
       {q.isLoading && <Spinner />}
-      {q.error && <div className="p-4"><ErrorState error={q.error} /></div>}
-      {q.data && q.data.total === 0 && <EmptyState title="No errors" description="Nothing matches these filters." />}
+      {q.error && (
+        <div className="p-4">
+          <ErrorState error={q.error} />
+        </div>
+      )}
+      {q.data && q.data.total === 0 && (
+        <EmptyState title="No errors" description="Nothing matches these filters." />
+      )}
       {q.data && q.data.total > 0 && (
         <>
           <Table>
@@ -305,14 +437,23 @@ function ErrorsPanel({ run }: { run: MigrationRunDto }) {
               {q.data.items.map((e) => (
                 <tr key={e.id} data-testid="run-error-row">
                   <Td>{e.entity}</Td>
-                  <Td><Mono>{e.sourceRecordId ?? '—'}</Mono></Td>
-                  <Td className="text-xs">{e.operation}{e.field && <div className="text-slate-500">field {e.field}</div>}</Td>
-                  <Td><Mono>{e.errorCode}</Mono></Td>
+                  <Td>
+                    <Mono>{e.sourceRecordId ?? '—'}</Mono>
+                  </Td>
+                  <Td className="text-xs">
+                    {e.operation}
+                    {e.field && <div className="text-slate-500">field {e.field}</div>}
+                  </Td>
+                  <Td>
+                    <Mono>{e.errorCode}</Mono>
+                  </Td>
                   <Td className="max-w-md text-xs">{e.message}</Td>
                   <Td className="space-y-1">
                     <StatusBadge status={e.severity} />
                     <div>{e.retryable ? <Pill tone="blue">retryable</Pill> : <Pill>permanent</Pill>}</div>
-                    {e.attempts > 1 && <div className="text-[11px] text-slate-500">{e.attempts} attempts</div>}
+                    {e.attempts > 1 && (
+                      <div className="text-[11px] text-slate-500">{e.attempts} attempts</div>
+                    )}
                   </Td>
                   <Td className="whitespace-nowrap text-xs text-slate-500">{fmtDate(e.createdAt)}</Td>
                 </tr>
@@ -332,7 +473,10 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
   const [page, setPage] = useState(0);
   const q = useQuery({
     queryKey: ['run-records', run.id, entity, outcome, page, run.processed],
-    queryFn: () => get<{ items: RecordMapDto[]; total: number }>(`/api/runs/${run.id}/records${qs({ entity: entity || undefined, outcome: outcome || undefined, limit: PAGE, offset: page * PAGE })}`),
+    queryFn: () =>
+      get<{ items: RecordMapDto[]; total: number }>(
+        `/api/runs/${run.id}/records${qs({ entity: entity || undefined, outcome: outcome || undefined, limit: PAGE, offset: page * PAGE })}`,
+      ),
   });
   return (
     <Card
@@ -340,14 +484,43 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
       subtitle="Source → target identity for every processed record. Used for lookup resolution, retries, validation and rollback."
       actions={
         <>
-          <Select label="Outcome" value={outcome} onChange={(v) => { setOutcome(v); setPage(0); }} options={[{ value: '', label: 'All outcomes' }, ...['CREATED', 'UPDATED', 'SKIPPED', 'FAILED'].map((o) => ({ value: o, label: o.toLowerCase() }))]} />
-          <Select label="Table" value={entity} onChange={(v) => { setEntity(v); setPage(0); }} options={[{ value: '', label: 'All tables' }, ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName }))]} />
+          <Select
+            label="Outcome"
+            value={outcome}
+            onChange={(v) => {
+              setOutcome(v);
+              setPage(0);
+            }}
+            options={[
+              { value: '', label: 'All outcomes' },
+              ...['CREATED', 'UPDATED', 'SKIPPED', 'FAILED'].map((o) => ({
+                value: o,
+                label: o.toLowerCase(),
+              })),
+            ]}
+          />
+          <Select
+            label="Table"
+            value={entity}
+            onChange={(v) => {
+              setEntity(v);
+              setPage(0);
+            }}
+            options={[
+              { value: '', label: 'All tables' },
+              ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName })),
+            ]}
+          />
         </>
       }
       bodyClassName="p-0"
     >
       {q.isLoading && <Spinner />}
-      {q.error && <div className="p-4"><ErrorState error={q.error} /></div>}
+      {q.error && (
+        <div className="p-4">
+          <ErrorState error={q.error} />
+        </div>
+      )}
       {q.data && q.data.total === 0 && <EmptyState title="No records" />}
       {q.data && q.data.total > 0 && (
         <>
@@ -366,11 +539,23 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
               {q.data.items.map((m) => (
                 <tr key={m.entity + m.sourceId}>
                   <Td>{m.entity}</Td>
-                  <Td><Mono>{m.sourceId}</Mono></Td>
-                  <Td><Mono>{m.targetId ?? '—'}</Mono></Td>
-                  <Td><StatusBadge status={m.outcome} /></Td>
+                  <Td>
+                    <Mono>{m.sourceId}</Mono>
+                  </Td>
+                  <Td>
+                    <Mono>{m.targetId ?? '—'}</Mono>
+                  </Td>
+                  <Td>
+                    <StatusBadge status={m.outcome} />
+                  </Td>
                   <Td className="text-xs">{m.matchMethod ?? '—'}</Td>
-                  <Td>{m.deferredStatus ? <StatusBadge status={m.deferredStatus} /> : <span className="text-xs text-slate-400">—</span>}</Td>
+                  <Td>
+                    {m.deferredStatus ? (
+                      <StatusBadge status={m.deferredStatus} />
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -383,12 +568,18 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
 }
 
 function RollbackPanel({ runId }: { runId: string }) {
-  const q = useQuery({ queryKey: ['rollback', runId], queryFn: () => get<RollbackPreviewDto>(`/api/runs/${runId}/rollback-preview`) });
+  const q = useQuery({
+    queryKey: ['rollback', runId],
+    queryFn: () => get<RollbackPreviewDto>(`/api/runs/${runId}/rollback-preview`),
+  });
   if (q.isLoading) return <Spinner />;
   if (q.error || !q.data) return <ErrorState error={q.error} />;
   const p = q.data;
   return (
-    <Card title="Rollback impact preview" subtitle="What reverting this run would involve, derived from the record identity inventory.">
+    <Card
+      title="Rollback impact preview"
+      subtitle="What reverting this run would involve, derived from the record identity inventory."
+    >
       <div className="space-y-4">
         <Callout tone="warning" title="Rollback execution: NOT YET SUPPORTED">
           {p.reason}

@@ -43,7 +43,8 @@ export function classifyHttpError(status: number, body: unknown, retryAfter?: st
   const platformCode = err?.code;
   const message = err?.message ?? `Dataverse request failed with HTTP ${status}`;
   const retryAfterSeconds = retryAfter ? Number(retryAfter) || undefined : undefined;
-  if (status === 429) return new DataverseError('THROTTLED', message, status, platformCode, retryAfterSeconds);
+  if (status === 429)
+    return new DataverseError('THROTTLED', message, status, platformCode, retryAfterSeconds);
   if (status === 401) return new DataverseError('AUTH_REQUIRED', message, status, platformCode);
   if (status === 403 || (platformCode && PRIVILEGE_CODES.has(platformCode))) {
     return new DataverseError('FORBIDDEN', message, status, platformCode);
@@ -55,7 +56,8 @@ export function classifyHttpError(status: number, body: unknown, retryAfter?: st
     return new DataverseError('REFERENCE_NOT_FOUND', message, status, platformCode);
   }
   if (status === 404) return new DataverseError('NOT_FOUND', message, status, platformCode);
-  if (status === 409 || status === 412) return new DataverseError('DUPLICATE_RECORD', message, status, platformCode);
+  if (status === 409 || status === 412)
+    return new DataverseError('DUPLICATE_RECORD', message, status, platformCode);
   if (status === 408) return new DataverseError('TIMEOUT', message, status, platformCode);
   if (status === 502 || status === 503 || status === 504) {
     return new DataverseError('SERVER_ERROR', message, status, platformCode, retryAfterSeconds, true);
@@ -68,7 +70,8 @@ export function classifyHttpError(status: number, body: unknown, retryAfter?: st
 export function toDataverseError(err: unknown): DataverseError {
   if (err instanceof DataverseError) return err;
   if (err instanceof Error) {
-    if (err.name === 'AbortError' || err.name === 'TimeoutError') return new DataverseError('TIMEOUT', err.message);
+    if (err.name === 'AbortError' || err.name === 'TimeoutError')
+      return new DataverseError('TIMEOUT', err.message);
     const cause = (err as { cause?: { code?: string } }).cause;
     if (err instanceof TypeError || cause?.code) return new DataverseError('NETWORK', err.message);
     return new DataverseError('UNKNOWN', err.message, undefined, undefined, undefined, false);

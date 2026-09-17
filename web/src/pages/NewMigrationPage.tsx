@@ -16,7 +16,10 @@ export function NewMigrationPage() {
   const key = ['candidates', source?.id, target?.id];
   const candidates = useQuery({
     queryKey: key,
-    queryFn: () => get<TableCandidateDto[]>(`/api/migration/candidates${qs({ sourceEnvironmentId: source?.id, targetEnvironmentId: target?.id })}`),
+    queryFn: () =>
+      get<TableCandidateDto[]>(
+        `/api/migration/candidates${qs({ sourceEnvironmentId: source?.id, targetEnvironmentId: target?.id })}`,
+      ),
     enabled: ready,
   });
   const create = useMutation({
@@ -34,7 +37,14 @@ export function NewMigrationPage() {
     return (
       <>
         <WizardSteps current={3} links={{ 1: '/environments' }} />
-        <EmptyState title="Select a source and target first" action={<Button variant="primary" onClick={() => navigate('/environments')}>Select environments</Button>} />
+        <EmptyState
+          title="Select a source and target first"
+          action={
+            <Button variant="primary" onClick={() => navigate('/environments')}>
+              Select environments
+            </Button>
+          }
+        />
       </>
     );
   }
@@ -47,7 +57,12 @@ export function NewMigrationPage() {
         title="Select tables to migrate"
         description="Choose the tables whose data should be copied from the source to the target. Dependencies are shown but never selected automatically."
         actions={
-          <Button variant="primary" disabled={selected.size === 0} loading={create.isPending} onClick={() => create.mutate()}>
+          <Button
+            variant="primary"
+            disabled={selected.size === 0}
+            loading={create.isPending}
+            onClick={() => create.mutate()}
+          >
             Generate migration plan ({selected.size})
           </Button>
         }
@@ -61,7 +76,11 @@ export function NewMigrationPage() {
           </Callout>
         </div>
       )}
-      {create.error && <div className="mb-4"><ErrorState error={create.error} /></div>}
+      {create.error && (
+        <div className="mb-4">
+          <ErrorState error={create.error} />
+        </div>
+      )}
       <Card>
         <div className="mb-4 max-w-md">
           <label htmlFor="plan-name" className="block text-xs font-medium text-slate-600">
@@ -78,7 +97,14 @@ export function NewMigrationPage() {
         </div>
         {candidates.isLoading && <Spinner label="Loading tables and record counts…" />}
         {candidates.error && <ErrorState error={candidates.error} onRetry={() => candidates.refetch()} />}
-        {candidates.data && <TableSelector candidates={candidates.data} selected={selected} onChange={setSelected} queryKey={key} />}
+        {candidates.data && (
+          <TableSelector
+            candidates={candidates.data}
+            selected={selected}
+            onChange={setSelected}
+            queryKey={key}
+          />
+        )}
       </Card>
     </>
   );

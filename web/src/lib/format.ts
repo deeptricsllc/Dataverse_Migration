@@ -1,4 +1,5 @@
-export const fmtNumber = (n: number | null | undefined) => (n === null || n === undefined ? '—' : n.toLocaleString());
+export const fmtNumber = (n: number | null | undefined) =>
+  n === null || n === undefined ? '—' : n.toLocaleString();
 
 export function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—';
@@ -27,7 +28,8 @@ export function fmtDuration(startIso: string | null | undefined, endIso?: string
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-export const pct = (part: number, total: number) => (total > 0 ? Math.min(100, Math.round((part / total) * 100)) : 0);
+export const pct = (part: number, total: number) =>
+  total > 0 ? Math.min(100, Math.round((part / total) * 100)) : 0;
 
 export const humanize = (s: string) =>
   s

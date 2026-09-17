@@ -33,7 +33,11 @@ import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { displayValue, transformValue, valuesEqual } from './values';
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({ id: e.id, displayName: e.displayName, url: e.url });
+const envRef = (e: { id: string; displayName: string; url: string }) => ({
+  id: e.id,
+  displayName: e.displayName,
+  url: e.url,
+});
 const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
 const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
@@ -57,7 +61,11 @@ export interface EntityComparisonInput {
   target: TableMetadata;
   mappings: { sourceField: string; targetField: string; isLookup: boolean }[];
   /** Records to compare: source record, target record (if found) and how it was migrated. */
-  pairs: { source: DvRecord; target: DvRecord | null; outcome: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED' | 'UNMAPPED' }[];
+  pairs: {
+    source: DvRecord;
+    target: DvRecord | null;
+    outcome: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED' | 'UNMAPPED';
+  }[];
   /** Resolves a source lookup to the expected target id (null = unknown). */
   expectedLookup: (logicalName: string, sourceId: string) => string | null;
 }
@@ -67,7 +75,12 @@ export interface EntityComparisonInput {
  * formatting-only differences (line endings, trailing whitespace, GUID case, precision,
  * date formatting) do not register as mismatches.
  */
-export function compareRecords(input: EntityComparisonInput): { matched: number; missing: number; different: number; diffs: PendingDiff[] } {
+export function compareRecords(input: EntityComparisonInput): {
+  matched: number;
+  missing: number;
+  different: number;
+  diffs: PendingDiff[];
+} {
   const sAttrs = new Map(input.source.attributes.map((a) => [a.logicalName, a]));
   const tAttrs = new Map(input.target.attributes.map((a) => [a.logicalName, a]));
   const diffs: PendingDiff[] = [];
@@ -149,7 +162,12 @@ export class ValidationService {
 
   async start(
     ctx: RequestContext,
-    input: { migrationRunId?: string; sourceEnvironmentId?: string; targetEnvironmentId?: string; tables?: string[] },
+    input: {
+      migrationRunId?: string;
+      sourceEnvironmentId?: string;
+      targetEnvironmentId?: string;
+      tables?: string[];
+    },
   ): Promise<ValidationRunDto> {
     let sourceId: string;
     let targetId: string;
@@ -159,9 +177,15 @@ export class ValidationService {
       const [run] = await this.db
         .select()
         .from(migrationRuns)
-        .where(and(eq(migrationRuns.id, input.migrationRunId), eq(migrationRuns.organizationId, ctx.organizationId)));
+        .where(
+          and(
+            eq(migrationRuns.id, input.migrationRunId),
+            eq(migrationRuns.organizationId, ctx.organizationId),
+          ),
+        );
       if (!run) throw notFound('Migration run');
-      if (['QUEUED', 'RUNNING'].includes(run.status)) throw badRequest('Wait for the migration run to finish before validating');
+      if (['QUEUED', 'RUNNING'].includes(run.status))
+        throw badRequest('Wait for the migration run to finish before validating');
       sourceId = run.sourceEnvironmentId;
       targetId = run.targetEnvironmentId;
       tables = run.planSnapshot.entities.map((e) => e.logicalName);
@@ -170,7 +194,8 @@ export class ValidationService {
       if (!input.sourceEnvironmentId || !input.targetEnvironmentId || !input.tables?.length) {
         throw badRequest('Provide a migration run, or source, target and tables');
       }
-      if (input.sourceEnvironmentId === input.targetEnvironmentId) throw badRequest('Source and target must be different environments');
+      if (input.sourceEnvironmentId === input.targetEnvironmentId)
+        throw badRequest('Source and target must be different environments');
       sourceId = input.sourceEnvironmentId;
       targetId = input.targetEnvironmentId;
       tables = [...new Set(input.tables)];
@@ -208,10 +233,18 @@ export class ValidationService {
     const [vr] = await this.db.select().from(validationRuns).where(eq(validationRuns.id, validationRunId));
     if (!vr || vr.status === 'COMPLETED' || vr.status === 'FAILED') return;
     const log = this.logger.child({ validationRunId, migrationRunId: vr.migrationRunId });
-    const progress = (progressMessage: string) => this.db.update(validationRuns).set({ progressMessage }).where(eq(validationRuns.id, validationRunId));
-    await this.db.update(validationRuns).set({ status: 'RUNNING', startedAt: new Date() }).where(eq(validationRuns.id, validationRunId));
-    await this.db.delete(validationEntityResults).where(eq(validationEntityResults.validationRunId, validationRunId));
-    await this.db.delete(validationDifferences).where(eq(validationDifferences.validationRunId, validationRunId));
+    const progress = (progressMessage: string) =>
+      this.db.update(validationRuns).set({ progressMessage }).where(eq(validationRuns.id, validationRunId));
+    await this.db
+      .update(validationRuns)
+      .set({ status: 'RUNNING', startedAt: new Date() })
+      .where(eq(validationRuns.id, validationRunId));
+    await this.db
+      .delete(validationEntityResults)
+      .where(eq(validationEntityResults.validationRunId, validationRunId));
+    await this.db
+      .delete(validationDifferences)
+      .where(eq(validationDifferences.validationRunId, validationRunId));
     log.info({ tables: vr.tables }, 'Validation started');
     try {
       if (!vr.createdByUserId) throw new Error('Validation has no initiating user');
@@ -220,14 +253,21 @@ export class ValidationService {
       const sConn = this.connections.forEnvironment(source, vr.createdByUserId, { validationRunId });
       const tConn = this.connections.forEnvironment(target, vr.createdByUserId, { validationRunId });
       const snapshot: RunPlanSnapshot | null = vr.migrationRunId
-        ? ((await this.db.select({ s: migrationRuns.planSnapshot }).from(migrationRuns).where(eq(migrationRuns.id, vr.migrationRunId)))[0]?.s ?? null)
+        ? ((
+            await this.db
+              .select({ s: migrationRuns.planSnapshot })
+              .from(migrationRuns)
+              .where(eq(migrationRuns.id, vr.migrationRunId))
+          )[0]?.s ?? null)
         : null;
 
       await progress('Loading metadata');
       const targetCatalog = await this.metadata.getCatalog(target.id, tConn, true);
       const sourceMeta = await this.metadata.getTables(source.id, sConn, vr.tables, { refresh: true });
       const referenced = new Set(vr.tables);
-      for (const t of sourceMeta.values()) for (const a of t.attributes) if (LOOKUP_TYPES.has(a.type)) (a.targets ?? []).forEach((x) => referenced.add(x));
+      for (const t of sourceMeta.values())
+        for (const a of t.attributes)
+          if (LOOKUP_TYPES.has(a.type)) (a.targets ?? []).forEach((x) => referenced.add(x));
       const targetMeta = await this.metadata.getTables(
         target.id,
         tConn,
@@ -290,7 +330,12 @@ export class ValidationService {
       log.error({ error: message }, 'Validation failed');
       await this.db
         .update(validationRuns)
-        .set({ status: 'FAILED', errorMessage: message.slice(0, 2000), completedAt: new Date(), progressMessage: 'Failed' })
+        .set({
+          status: 'FAILED',
+          errorMessage: message.slice(0, 2000),
+          completedAt: new Date(),
+          progressMessage: 'Failed',
+        })
         .where(eq(validationRuns.id, validationRunId));
       await this.audit.record({
         organizationId: vr.organizationId,
@@ -337,11 +382,17 @@ export class ValidationService {
 
     // 1. Schema
     if (!source || !target) {
-      checks.push({ check: 'SCHEMA', outcome: 'FAIL', message: `Table is missing in the ${!source ? 'source' : 'target'} environment` });
+      checks.push({
+        check: 'SCHEMA',
+        outcome: 'FAIL',
+        message: `Table is missing in the ${!source ? 'source' : 'target'} environment`,
+      });
       return this.saveEntity(vr.id, { ...base, outcome: 'FAIL' }, diffs);
     }
     const tableDiff = diffTableDeep(source, target);
-    const breaking = tableDiff.columns.filter((c) => c.status === 'INCOMPATIBLE' || c.differences.some((d) => d.breaking));
+    const breaking = tableDiff.columns.filter(
+      (c) => c.status === 'INCOMPATIBLE' || c.differences.some((d) => d.breaking),
+    );
     checks.push(
       tableDiff.status === 'MATCH'
         ? { check: 'SCHEMA', outcome: 'PASS', message: 'Schemas match' }
@@ -361,8 +412,16 @@ export class ValidationService {
       tc.count === sc.count
         ? { check: 'ROW_COUNT', outcome: 'PASS', message: `Row counts match: ${sc.count}${approx}` }
         : tc.count > sc.count
-          ? { check: 'ROW_COUNT', outcome: 'WARNING', message: `Target has ${tc.count - sc.count} more row(s) than source (${tc.count} vs ${sc.count})${approx}` }
-          : { check: 'ROW_COUNT', outcome: 'FAIL', message: `Target has ${sc.count - tc.count} fewer row(s) than source (${tc.count} vs ${sc.count})${approx}` },
+          ? {
+              check: 'ROW_COUNT',
+              outcome: 'WARNING',
+              message: `Target has ${tc.count - sc.count} more row(s) than source (${tc.count} vs ${sc.count})${approx}`,
+            }
+          : {
+              check: 'ROW_COUNT',
+              outcome: 'FAIL',
+              message: `Target has ${sc.count - tc.count} fewer row(s) than source (${tc.count} vs ${sc.count})${approx}`,
+            },
     );
 
     // Identity map for this migration run (or ID-based matching without one).
@@ -370,37 +429,78 @@ export class ValidationService {
       ? await this.db
           .select()
           .from(migrationRecordMaps)
-          .where(and(eq(migrationRecordMaps.runId, vr.migrationRunId), eq(migrationRecordMaps.logicalName, table)))
+          .where(
+            and(eq(migrationRecordMaps.runId, vr.migrationRunId), eq(migrationRecordMaps.logicalName, table)),
+          )
           .orderBy(asc(migrationRecordMaps.sourceId))
       : [];
     const mappings =
       p.snapshotEntity?.mappings ??
       source.attributes
-        .filter((a) => !a.attributeOf && !a.isPrimaryId && a.isValidForCreate && target.attributes.some((t) => t.logicalName === a.logicalName && t.type === a.type))
-        .filter((a) => !['ownerid', 'statecode', 'statuscode', 'createdon', 'modifiedon'].includes(a.logicalName))
-        .map((a) => ({ sourceField: a.logicalName, targetField: a.logicalName, isLookup: LOOKUP_TYPES.has(a.type) }));
+        .filter(
+          (a) =>
+            !a.attributeOf &&
+            !a.isPrimaryId &&
+            a.isValidForCreate &&
+            target.attributes.some((t) => t.logicalName === a.logicalName && t.type === a.type),
+        )
+        .filter(
+          (a) => !['ownerid', 'statecode', 'statuscode', 'createdon', 'modifiedon'].includes(a.logicalName),
+        )
+        .map((a) => ({
+          sourceField: a.logicalName,
+          targetField: a.logicalName,
+          isLookup: LOOKUP_TYPES.has(a.type),
+        }));
 
-    let pairs: EntityComparisonInput['pairs'] = [];
+    let pairs: EntityComparisonInput['pairs'];
     const failedMaps = maps.filter((m) => m.outcome === 'FAILED');
     const migrated = maps.filter((m) => m.outcome !== 'FAILED' && m.targetId);
     base.migratedRecords = migrated.length;
 
     const sampled = migrated.slice(0, MAX_RECORDS_PER_TABLE);
     if (vr.migrationRunId) {
-      const sourceRecords = await this.fetchByIds(p.sConn, source, sampled.map((m) => m.sourceId), mappings.map((m) => m.sourceField));
-      const targetRecords = await this.fetchByIds(p.tConn, target, sampled.map((m) => m.targetId!), mappings.map((m) => m.targetField));
+      const sourceRecords = await this.fetchByIds(
+        p.sConn,
+        source,
+        sampled.map((m) => m.sourceId),
+        mappings.map((m) => m.sourceField),
+      );
+      const targetRecords = await this.fetchByIds(
+        p.tConn,
+        target,
+        sampled.map((m) => m.targetId!),
+        mappings.map((m) => m.targetField),
+      );
       pairs = sampled
         .filter((m) => sourceRecords.has(m.sourceId))
-        .map((m) => ({ source: sourceRecords.get(m.sourceId)!, target: targetRecords.get(m.targetId!.toLowerCase()) ?? null, outcome: m.outcome }));
+        .map((m) => ({
+          source: sourceRecords.get(m.sourceId)!,
+          target: targetRecords.get(m.targetId!.toLowerCase()) ?? null,
+          outcome: m.outcome,
+        }));
     } else {
       // Without a run: compare records by identical primary id (sample).
       const sample: DvRecord[] = [];
-      for await (const page of p.sConn.queryRecords(source, mappings.map((m) => m.sourceField), { pageSize: 500 })) {
+      for await (const page of p.sConn.queryRecords(
+        source,
+        mappings.map((m) => m.sourceField),
+        { pageSize: 500 },
+      )) {
         sample.push(...page);
         if (sample.length >= MAX_RECORDS_PER_TABLE) break;
       }
-      const targetRecords = await this.fetchByIds(p.tConn, target, sample.map((r) => r.id), mappings.map((m) => m.targetField));
-      pairs = sample.map((r) => ({ source: r, target: targetRecords.get(r.id.toLowerCase()) ?? null, outcome: 'UNMAPPED' as const }));
+      const targetRecords = await this.fetchByIds(
+        p.tConn,
+        target,
+        sample.map((r) => r.id),
+        mappings.map((m) => m.targetField),
+      );
+      pairs = sample.map((r) => ({
+        source: r,
+        target: targetRecords.get(r.id.toLowerCase()) ?? null,
+        outcome: 'UNMAPPED' as const,
+      }));
     }
 
     // Expected lookup targets: identity maps for the environment pair, else same id.
@@ -434,7 +534,9 @@ export class ValidationService {
             ),
           )
           .orderBy(desc(migrationRecordMaps.updatedAt));
-        for (const r of rows) if (!expected.has(`${logicalName}:${r.sourceId}`)) expected.set(`${logicalName}:${r.sourceId}`, r.targetId!);
+        for (const r of rows)
+          if (!expected.has(`${logicalName}:${r.sourceId}`))
+            expected.set(`${logicalName}:${r.sourceId}`, r.targetId!);
       }
       const unresolved = idList.filter((id) => !expected.has(`${logicalName}:${id}`));
       const tTable = p.targetMeta.get(logicalName);
@@ -468,11 +570,18 @@ export class ValidationService {
     base.matched = cmp.matched;
     base.missing = cmp.missing + failedMaps.length;
     base.different = cmp.different;
-    const sampleNote = migrated.length > MAX_RECORDS_PER_TABLE ? ` (first ${MAX_RECORDS_PER_TABLE} of ${migrated.length} checked)` : '';
+    const sampleNote =
+      migrated.length > MAX_RECORDS_PER_TABLE
+        ? ` (first ${MAX_RECORDS_PER_TABLE} of ${migrated.length} checked)`
+        : '';
     if (vr.migrationRunId) {
       checks.push(
         base.missing === 0
-          ? { check: 'RECORD_EXISTENCE', outcome: 'PASS', message: `All ${pairs.length} migrated record(s) exist in the target${sampleNote}` }
+          ? {
+              check: 'RECORD_EXISTENCE',
+              outcome: 'PASS',
+              message: `All ${pairs.length} migrated record(s) exist in the target${sampleNote}`,
+            }
           : {
               check: 'RECORD_EXISTENCE',
               outcome: 'FAIL',
@@ -486,14 +595,28 @@ export class ValidationService {
         message: `${pairs.length - cmp.missing} of ${pairs.length} source record(s) found in target by identifier${cmp.missing ? `; ${cmp.missing} missing` : ''}`,
       });
     }
-    const valueFails = cmp.diffs.filter((d) => d.differenceType === 'VALUE_MISMATCH' || d.differenceType === 'LOOKUP_MISMATCH').length;
+    const valueFails = cmp.diffs.filter(
+      (d) => d.differenceType === 'VALUE_MISMATCH' || d.differenceType === 'LOOKUP_MISMATCH',
+    ).length;
     const preExisting = cmp.diffs.filter((d) => d.differenceType === 'PRE_EXISTING_DIFFERENCE').length;
     checks.push(
       valueFails > 0
-        ? { check: 'FIELD_VALUES', outcome: 'FAIL', message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)` }
+        ? {
+            check: 'FIELD_VALUES',
+            outcome: 'FAIL',
+            message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)`,
+          }
         : preExisting > 0
-          ? { check: 'FIELD_VALUES', outcome: 'WARNING', message: `${preExisting} difference(s) on pre-existing target records that were skipped` }
-          : { check: 'FIELD_VALUES', outcome: 'PASS', message: `${cmp.matched} record(s) match on ${mappings.length} mapped column(s)` },
+          ? {
+              check: 'FIELD_VALUES',
+              outcome: 'WARNING',
+              message: `${preExisting} difference(s) on pre-existing target records that were skipped`,
+            }
+          : {
+              check: 'FIELD_VALUES',
+              outcome: 'PASS',
+              message: `${cmp.matched} record(s) match on ${mappings.length} mapped column(s)`,
+            },
     );
 
     // 5. References: every lookup on checked target records must point at an existing record.
@@ -505,7 +628,10 @@ export class ValidationService {
         if (!isLookupValue(v)) continue;
         if (!refIds.has(v.logicalName)) refIds.set(v.logicalName, new Map());
         const byId = refIds.get(v.logicalName)!;
-        byId.set(v.id.toLowerCase(), [...(byId.get(v.id.toLowerCase()) ?? []), `${pair.target.id}|${m.targetField}|${pair.source.id}`]);
+        byId.set(v.id.toLowerCase(), [
+          ...(byId.get(v.id.toLowerCase()) ?? []),
+          `${pair.target.id}|${m.targetField}|${pair.source.id}`,
+        ]);
       }
     }
     let broken = 0;
@@ -513,7 +639,8 @@ export class ValidationService {
       const tTable = p.targetMeta.get(logicalName);
       const ids = [...byId.keys()];
       const found = new Set<string>();
-      if (tTable) (await p.tConn.retrieveByIds(tTable, ids, [])).forEach((r) => found.add(r.id.toLowerCase()));
+      if (tTable)
+        (await p.tConn.retrieveByIds(tTable, ids, [])).forEach((r) => found.add(r.id.toLowerCase()));
       for (const id of ids.filter((x) => !found.has(x))) {
         for (const ref of byId.get(id)!) {
           const [targetRecordId, field, sourceRecordId] = ref.split('|');
@@ -534,16 +661,26 @@ export class ValidationService {
     checks.push(
       broken === 0
         ? { check: 'REFERENCES', outcome: 'PASS', message: 'All lookup references resolve in the target' }
-        : { check: 'REFERENCES', outcome: 'FAIL', message: `${broken} lookup value(s) reference records that do not exist in the target` },
+        : {
+            check: 'REFERENCES',
+            outcome: 'FAIL',
+            message: `${broken} lookup value(s) reference records that do not exist in the target`,
+          },
     );
 
     return this.saveEntity(vr.id, { ...base, outcome: worst(checks.map((c) => c.outcome)) }, diffs);
   }
 
-  private async fetchByIds(conn: DataverseConnection, table: TableMetadata, ids: string[], columns: string[]) {
+  private async fetchByIds(
+    conn: DataverseConnection,
+    table: TableMetadata,
+    ids: string[],
+    columns: string[],
+  ) {
     const out = new Map<string, DvRecord>();
     for (let i = 0; i < ids.length; i += 200) {
-      for (const r of await conn.retrieveByIds(table, ids.slice(i, i + 200), columns)) out.set(r.id.toLowerCase(), r);
+      for (const r of await conn.retrieveByIds(table, ids.slice(i, i + 200), columns))
+        out.set(r.id.toLowerCase(), r);
     }
     return out;
   }
@@ -566,9 +703,11 @@ export class ValidationService {
     });
     const capped = diffs.slice(0, MAX_DIFFERENCES_PER_TABLE);
     for (let i = 0; i < capped.length; i += 200) {
-      await this.db.insert(validationDifferences).values(
-        capped.slice(i, i + 200).map((d) => ({ validationRunId, logicalName: result.logicalName, ...d })),
-      );
+      await this.db
+        .insert(validationDifferences)
+        .values(
+          capped.slice(i, i + 200).map((d) => ({ validationRunId, logicalName: result.logicalName, ...d })),
+        );
     }
     return result;
   }
@@ -650,19 +789,32 @@ export class ValidationService {
   async differences(
     ctx: RequestContext,
     id: string,
-    filter: { entity?: string; type?: DifferenceType; outcome?: ValidationOutcome; limit: number; offset: number },
+    filter: {
+      entity?: string;
+      type?: DifferenceType;
+      outcome?: ValidationOutcome;
+      limit: number;
+      offset: number;
+    },
   ): Promise<{ items: ValidationDifferenceDto[]; total: number }> {
     await this.get(ctx, id);
     const conditions = [eq(validationDifferences.validationRunId, id)];
     if (filter.entity) conditions.push(eq(validationDifferences.logicalName, filter.entity));
     if (filter.type) conditions.push(eq(validationDifferences.differenceType, filter.type));
     if (filter.outcome) conditions.push(eq(validationDifferences.outcome, filter.outcome));
-    const [total] = await this.db.select({ n: count() }).from(validationDifferences).where(and(...conditions));
+    const [total] = await this.db
+      .select({ n: count() })
+      .from(validationDifferences)
+      .where(and(...conditions));
     const rows = await this.db
       .select()
       .from(validationDifferences)
       .where(and(...conditions))
-      .orderBy(asc(validationDifferences.logicalName), asc(validationDifferences.sourceRecordId), asc(validationDifferences.field))
+      .orderBy(
+        asc(validationDifferences.logicalName),
+        asc(validationDifferences.sourceRecordId),
+        asc(validationDifferences.field),
+      )
       .limit(filter.limit)
       .offset(filter.offset);
     return {

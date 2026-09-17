@@ -23,8 +23,12 @@ export async function createTestApp(overrides: Record<string, string> = {}): Pro
     ENTRA_CLIENT_SECRET: '',
     ...overrides,
   });
-  const logger = createLogger('silent');
-  const database = await createDatabase({ databaseUrl: undefined, pgliteDataDir: 'memory://' });
+  const logger = createLogger(process.env.TEST_LOG_LEVEL ?? 'silent');
+  // TEST_DATABASE_URL runs the suite against a real (empty) PostgreSQL database instead of PGlite.
+  const database = await createDatabase({
+    databaseUrl: process.env.TEST_DATABASE_URL || undefined,
+    pgliteDataDir: 'memory://',
+  });
   await database.migrate(config.MIGRATIONS_DIR);
   const services = createServices(config, database.db, logger);
   const app = await buildApp(services, { logger, webDist: '__none__' });
@@ -57,7 +61,12 @@ export class ApiClient {
     return res.json();
   }
 
-  async request<T = any>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, body?: unknown, expectStatus = 200): Promise<T> {
+  async request<T = any>(
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    url: string,
+    body?: unknown,
+    expectStatus = 200,
+  ): Promise<T> {
     const res = await this.app.inject({
       method,
       url,
@@ -71,7 +80,8 @@ export class ApiClient {
   }
 
   get = <T = any>(url: string, expect = 200) => this.request<T>('GET', url, undefined, expect);
-  post = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('POST', url, body ?? {}, expect);
+  post = <T = any>(url: string, body?: unknown, expect = 200) =>
+    this.request<T>('POST', url, body ?? {}, expect);
   put = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('PUT', url, body, expect);
   patch = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('PATCH', url, body, expect);
 }

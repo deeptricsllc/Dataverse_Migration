@@ -29,7 +29,11 @@ import type { RequestContext } from './context';
 import type { PlanningService } from './planning-service';
 import type { RunPlanSnapshot } from './run-snapshot';
 
-const envRef = (e: { id: string; displayName: string; url: string }) => ({ id: e.id, displayName: e.displayName, url: e.url });
+const envRef = (e: { id: string; displayName: string; url: string }) => ({
+  id: e.id,
+  displayName: e.displayName,
+  url: e.url,
+});
 const ACTIVE = ['QUEUED', 'RUNNING', 'PAUSED'];
 
 export class MigrationRunService {
@@ -50,9 +54,17 @@ export class MigrationRunService {
     const plan = await this.planning.revalidate(ctx, planId);
     if (plan.entities.length === 0) throw badRequest('The plan has no tables');
     if (plan.blockerCount > 0) {
-      throw new AppError(409, 'PLAN_HAS_BLOCKERS', `The plan has ${plan.blockerCount} unresolved blocker(s)`, plan.issues.filter((i) => i.severity === 'BLOCKER'));
+      throw new AppError(
+        409,
+        'PLAN_HAS_BLOCKERS',
+        `The plan has ${plan.blockerCount} unresolved blocker(s)`,
+        plan.issues.filter((i) => i.severity === 'BLOCKER'),
+      );
     }
-    if (input.confirmSourceName.trim() !== plan.sourceEnvironment.displayName || input.confirmTargetName.trim() !== plan.targetEnvironment.displayName) {
+    if (
+      input.confirmSourceName.trim() !== plan.sourceEnvironment.displayName ||
+      input.confirmTargetName.trim() !== plan.targetEnvironment.displayName
+    ) {
       throw badRequest('Environment confirmation does not match the plan source and target names');
     }
     if (plan.warningCount > 0 && !input.acknowledgeWarnings) {
@@ -68,7 +80,10 @@ export class MigrationRunService {
           inArray(migrationRuns.status, ACTIVE),
         ),
       );
-    if (active) throw conflict('Another migration is already active against this target environment', { runId: active.id });
+    if (active)
+      throw conflict('Another migration is already active against this target environment', {
+        runId: active.id,
+      });
 
     const entityRows = await this.db
       .select()
@@ -78,7 +93,12 @@ export class MigrationRunService {
     const mappingRows = await this.db
       .select()
       .from(fieldMappings)
-      .where(inArray(fieldMappings.planEntityId, entityRows.map((e) => e.id)));
+      .where(
+        inArray(
+          fieldMappings.planEntityId,
+          entityRows.map((e) => e.id),
+        ),
+      );
     const snapshot: RunPlanSnapshot = {
       entities: entityRows.map((e) => ({
         logicalName: e.logicalName,
@@ -87,8 +107,18 @@ export class MigrationRunService {
         matchStrategy: e.matchStrategy,
         alternateKey: e.alternateKey,
         mappings: mappingRows
-          .filter((m) => m.planEntityId === e.id && (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL') && m.targetField)
-          .map((m) => ({ sourceField: m.sourceField, targetField: m.targetField!, isLookup: m.isLookup, deferredTargets: m.deferredTargets })),
+          .filter(
+            (m) =>
+              m.planEntityId === e.id &&
+              (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL') &&
+              m.targetField,
+          )
+          .map((m) => ({
+            sourceField: m.sourceField,
+            targetField: m.targetField!,
+            isLookup: m.isLookup,
+            deferredTargets: m.deferredTargets,
+          })),
       })),
     };
 
@@ -145,7 +175,11 @@ export class MigrationRunService {
     return run;
   }
 
-  async control(ctx: RequestContext, runId: string, action: 'cancel' | 'pause' | 'resume' | 'retry'): Promise<MigrationRunDto> {
+  async control(
+    ctx: RequestContext,
+    runId: string,
+    action: 'cancel' | 'pause' | 'resume' | 'retry',
+  ): Promise<MigrationRunDto> {
     const run = await this.loadRun(ctx.organizationId, runId);
     const auditBase = {
       organizationId: ctx.organizationId,
@@ -157,7 +191,10 @@ export class MigrationRunService {
     };
     if (action === 'cancel') {
       if (run.status === 'QUEUED' || run.status === 'PAUSED') {
-        await this.db.update(migrationRuns).set({ status: 'CANCELLED', cancelRequested: true, completedAt: new Date() }).where(eq(migrationRuns.id, runId));
+        await this.db
+          .update(migrationRuns)
+          .set({ status: 'CANCELLED', cancelRequested: true, completedAt: new Date() })
+          .where(eq(migrationRuns.id, runId));
       } else if (run.status === 'RUNNING') {
         await this.db.update(migrationRuns).set({ cancelRequested: true }).where(eq(migrationRuns.id, runId));
       } else {
@@ -165,7 +202,8 @@ export class MigrationRunService {
       }
       await this.audit.record({ ...auditBase, action: 'MIGRATION_CANCEL_REQUESTED', outcome: 'REQUESTED' });
     } else if (action === 'pause') {
-      if (run.status !== 'RUNNING' && run.status !== 'QUEUED') throw conflict(`Cannot pause a run in status ${run.status}`);
+      if (run.status !== 'RUNNING' && run.status !== 'QUEUED')
+        throw conflict(`Cannot pause a run in status ${run.status}`);
       await this.db.update(migrationRuns).set({ pauseRequested: true }).where(eq(migrationRuns.id, runId));
       await this.audit.record({ ...auditBase, action: 'MIGRATION_PAUSE_REQUESTED', outcome: 'REQUESTED' });
     } else if (action === 'resume') {
@@ -174,15 +212,27 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
       if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
-        throw conflict(`Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`);
+        throw conflict(
+          `Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`,
+        );
       }
       const [active] = await this.db
         .select({ id: migrationRuns.id })
         .from(migrationRuns)
-        .where(and(eq(migrationRuns.targetEnvironmentId, run.targetEnvironmentId), inArray(migrationRuns.status, ACTIVE)));
+        .where(
+          and(
+            eq(migrationRuns.targetEnvironmentId, run.targetEnvironmentId),
+            inArray(migrationRuns.status, ACTIVE),
+          ),
+        );
       if (active) throw conflict('Another migration is already active against this target environment');
       await this.requeue(ctx, runId, true);
-      await this.audit.record({ ...auditBase, action: 'MIGRATION_RETRY_REQUESTED', outcome: 'REQUESTED', details: { attempt: run.attempt + 1 } });
+      await this.audit.record({
+        ...auditBase,
+        action: 'MIGRATION_RETRY_REQUESTED',
+        outcome: 'REQUESTED',
+        details: { attempt: run.attempt + 1 },
+      });
     }
     return this.get(ctx, runId);
   }
@@ -313,7 +363,14 @@ export class MigrationRunService {
   async errors(
     ctx: RequestContext,
     runId: string,
-    filter: { entity?: string; kind?: 'all' | 'retryable' | 'permanent'; severity?: 'ERROR' | 'WARNING'; includeResolved?: boolean; limit: number; offset: number },
+    filter: {
+      entity?: string;
+      kind?: 'all' | 'retryable' | 'permanent';
+      severity?: 'ERROR' | 'WARNING';
+      includeResolved?: boolean;
+      limit: number;
+      offset: number;
+    },
   ): Promise<{ items: MigrationErrorDto[]; total: number }> {
     await this.loadRun(ctx.organizationId, runId);
     const conditions = [eq(migrationErrors.runId, runId)];
@@ -322,7 +379,10 @@ export class MigrationRunService {
     if (filter.kind === 'permanent') conditions.push(eq(migrationErrors.retryable, false));
     if (filter.severity) conditions.push(eq(migrationErrors.severity, filter.severity));
     if (!filter.includeResolved) conditions.push(eq(migrationErrors.resolved, false));
-    const [total] = await this.db.select({ n: count() }).from(migrationErrors).where(and(...conditions));
+    const [total] = await this.db
+      .select({ n: count() })
+      .from(migrationErrors)
+      .where(and(...conditions));
     const rows = await this.db
       .select()
       .from(migrationErrors)
@@ -352,13 +412,21 @@ export class MigrationRunService {
   async records(
     ctx: RequestContext,
     runId: string,
-    filter: { entity?: string; outcome?: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED'; limit: number; offset: number },
+    filter: {
+      entity?: string;
+      outcome?: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED';
+      limit: number;
+      offset: number;
+    },
   ): Promise<{ items: RecordMapDto[]; total: number }> {
     await this.loadRun(ctx.organizationId, runId);
     const conditions = [eq(migrationRecordMaps.runId, runId)];
     if (filter.entity) conditions.push(eq(migrationRecordMaps.logicalName, filter.entity));
     if (filter.outcome) conditions.push(eq(migrationRecordMaps.outcome, filter.outcome));
-    const [total] = await this.db.select({ n: count() }).from(migrationRecordMaps).where(and(...conditions));
+    const [total] = await this.db
+      .select({ n: count() })
+      .from(migrationRecordMaps)
+      .where(and(...conditions));
     const rows = await this.db
       .select()
       .from(migrationRecordMaps)
@@ -388,11 +456,16 @@ export class MigrationRunService {
   async rollbackPreview(ctx: RequestContext, runId: string): Promise<RollbackPreviewDto> {
     const run = await this.get(ctx, runId);
     const grouped = await this.db
-      .select({ logicalName: migrationRecordMaps.logicalName, outcome: migrationRecordMaps.outcome, n: count() })
+      .select({
+        logicalName: migrationRecordMaps.logicalName,
+        outcome: migrationRecordMaps.outcome,
+        n: count(),
+      })
       .from(migrationRecordMaps)
       .where(eq(migrationRecordMaps.runId, runId))
       .groupBy(migrationRecordMaps.logicalName, migrationRecordMaps.outcome);
-    const get = (t: string, o: string) => Number(grouped.find((g) => g.logicalName === t && g.outcome === o)?.n ?? 0);
+    const get = (t: string, o: string) =>
+      Number(grouped.find((g) => g.logicalName === t && g.outcome === o)?.n ?? 0);
     const entities = run.entities.map((e) => ({
       entity: e.logicalName,
       displayName: e.displayName,
@@ -403,9 +476,13 @@ export class MigrationRunService {
     }));
     const warnings: string[] = [];
     if (entities.some((e) => e.updated > 0)) {
-      warnings.push('Records UPDATED by this run cannot be restored: previous values (before-images) were not captured.');
+      warnings.push(
+        'Records UPDATED by this run cannot be restored: previous values (before-images) were not captured.',
+      );
     }
-    warnings.push('Created records may have been modified or referenced by other records in the target since the run.');
+    warnings.push(
+      'Created records may have been modified or referenced by other records in the target since the run.',
+    );
     warnings.push('Deleting records can trigger cascade deletes and plug-ins in the target environment.');
     if (!['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
       warnings.push('The run is still active; the inventory is incomplete.');

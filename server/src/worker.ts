@@ -11,11 +11,16 @@ const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL, config.LOG_PRETTY).child({ process: 'worker' });
 
 if (!config.DATABASE_URL) {
-  logger.error('The standalone worker requires DATABASE_URL (PostgreSQL). With embedded PGlite the web process runs jobs itself.');
+  logger.error(
+    'The standalone worker requires DATABASE_URL (PostgreSQL). With embedded PGlite the web process runs jobs itself.',
+  );
   process.exit(1);
 }
 
-const database = await createDatabase({ databaseUrl: config.DATABASE_URL, pgliteDataDir: config.PGLITE_DATA_DIR });
+const database = await createDatabase({
+  databaseUrl: config.DATABASE_URL,
+  pgliteDataDir: config.PGLITE_DATA_DIR,
+});
 await database.migrate(config.MIGRATIONS_DIR);
 const services = createServices(config, database.db, logger);
 const worker = services.createWorker();

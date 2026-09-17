@@ -38,20 +38,33 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
   });
 
   it('rejects state-changing requests without CSRF token', async () => {
-    const res = await t.app.inject({ method: 'POST', url: '/api/environments/discover', headers: { cookie: api.cookie } });
+    const res = await t.app.inject({
+      method: 'POST',
+      url: '/api/environments/discover',
+      headers: { cookie: api.cookie },
+    });
     expect(res.statusCode).toBe(403);
   });
 
   it('discovers environments and tests connections', async () => {
     const envs = await api.post<EnvironmentDto[]>('/api/environments/discover');
     expect(envs.map((e) => e.displayName)).toEqual(
-      expect.arrayContaining(['DeepTrics Development', 'DeepTrics QA', 'DeepTrics UAT', 'DeepTrics Production']),
+      expect.arrayContaining([
+        'DeepTrics Development',
+        'DeepTrics QA',
+        'DeepTrics UAT',
+        'DeepTrics Production',
+      ]),
     );
     dev = envs.find((e) => e.displayName === 'DeepTrics Development')!;
     qa = envs.find((e) => e.displayName === 'DeepTrics QA')!;
     const prod = envs.find((e) => e.displayName === 'DeepTrics Production')!;
-    expect((await api.post<EnvironmentDto>(`/api/environments/${dev.id}/test`)).connectionStatus).toBe('CONNECTED');
-    expect((await api.post<EnvironmentDto>(`/api/environments/${qa.id}/test`)).connectionStatus).toBe('CONNECTED');
+    expect((await api.post<EnvironmentDto>(`/api/environments/${dev.id}/test`)).connectionStatus).toBe(
+      'CONNECTED',
+    );
+    expect((await api.post<EnvironmentDto>(`/api/environments/${qa.id}/test`)).connectionStatus).toBe(
+      'CONNECTED',
+    );
     const failed = await api.post<EnvironmentDto>(`/api/environments/${prod.id}/test`);
     expect(failed.connectionStatus).toBe('FAILED');
     expect(failed.connectionMessage).toContain('not a member');
@@ -66,7 +79,10 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
 
   let comparisonId: string;
   it('analyzes schemas and classifies differences', async () => {
-    const run = await api.post<ComparisonRunDto>('/api/comparisons', { sourceEnvironmentId: dev.id, targetEnvironmentId: qa.id });
+    const run = await api.post<ComparisonRunDto>('/api/comparisons', {
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: qa.id,
+    });
     await worker.drain();
     const done = await api.get<ComparisonRunDto>(`/api/comparisons/${run.id}`);
     expect(done.status).toBe('COMPLETED');
@@ -76,17 +92,25 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
     expect(byName.get('dtx_legacyimport')!.status).toBe('SOURCE_ONLY');
     expect(byName.get('dtx_auditnote')!.status).toBe('TARGET_ONLY');
     expect(byName.get('product')!.status).toBe('INCOMPATIBLE');
-    expect(byName.get('product')!.columns.find((c) => c.logicalName === 'dtx_warrantymonths')!.status).toBe('INCOMPATIBLE');
+    expect(byName.get('product')!.columns.find((c) => c.logicalName === 'dtx_warrantymonths')!.status).toBe(
+      'INCOMPATIBLE',
+    );
     expect(byName.get('account')!.status).toBe('DIFFERENT');
-    expect(byName.get('account')!.columns.find((c) => c.logicalName === 'dtx_tier')!.status).toBe('SOURCE_ONLY');
-    expect(byName.get('contact')!.columns.find((c) => c.logicalName === 'dtx_preferredchannel')!.status).toBe('TARGET_ONLY');
+    expect(byName.get('account')!.columns.find((c) => c.logicalName === 'dtx_tier')!.status).toBe(
+      'SOURCE_ONLY',
+    );
+    expect(byName.get('contact')!.columns.find((c) => c.logicalName === 'dtx_preferredchannel')!.status).toBe(
+      'TARGET_ONLY',
+    );
     expect(byName.get('dtx_office')!.status).toBe('MATCH');
     expect(done.summary!.sourceOnly).toBeGreaterThan(0);
   });
 
   let plan: MigrationPlanDto;
   it('creates a plan with dependency order, cycles and mappings', async () => {
-    const candidates = await api.get(`/api/migration/candidates?sourceEnvironmentId=${dev.id}&targetEnvironmentId=${qa.id}`);
+    const candidates = await api.get(
+      `/api/migration/candidates?sourceEnvironmentId=${dev.id}&targetEnvironmentId=${qa.id}`,
+    );
     const account = candidates.find((c: { logicalName: string }) => c.logicalName === 'account');
     expect(account.sourceCount).toBe(120);
     expect(account.targetCount).toBe(15);
@@ -102,29 +126,57 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
     expect(order.indexOf('dtx_region')).toBeLessThan(order.indexOf('account'));
     expect(order.indexOf('account')).toBeLessThan(order.indexOf('contact'));
     expect(plan.dependencyAnalysis!.cycles.every((c) => c.resolvable)).toBe(true);
-    const deferred = plan.dependencyAnalysis!.cycles.flatMap((c) => c.deferredEdges.map((e) => `${e.from}.${e.attribute}`));
-    expect(deferred).toEqual(expect.arrayContaining(['account.parentaccountid', 'account.primarycontactid', 'dtx_region.dtx_headofficeid']));
+    const deferred = plan.dependencyAnalysis!.cycles.flatMap((c) =>
+      c.deferredEdges.map((e) => `${e.from}.${e.attribute}`),
+    );
+    expect(deferred).toEqual(
+      expect.arrayContaining([
+        'account.parentaccountid',
+        'account.primarycontactid',
+        'dtx_region.dtx_headofficeid',
+      ]),
+    );
     expect(plan.blockerCount).toBe(0);
     expect(plan.issues.some((i) => i.code === 'SERVER_SIDE_LOGIC')).toBe(true);
     const product = plan.entities.find((e) => e.logicalName === 'product')!;
     expect(product.matchStrategy).toBe('ALTERNATE_KEY');
     expect(product.mappingSummary.INCOMPATIBLE).toBe(1);
 
-    const mappings = await api.get(`/api/plans/${plan.id}/entities/${plan.entities.find((e) => e.logicalName === 'account')!.id}/mappings`);
+    const mappings = await api.get(
+      `/api/plans/${plan.id}/entities/${plan.entities.find((e) => e.logicalName === 'account')!.id}/mappings`,
+    );
     const tier = mappings.mappings.find((m: { sourceField: string }) => m.sourceField === 'dtx_tier');
     expect(tier.status).toBe('UNMAPPED');
-    expect(mappings.mappings.find((m: { sourceField: string }) => m.sourceField === 'ownerid').status).toBe('IGNORED');
+    expect(mappings.mappings.find((m: { sourceField: string }) => m.sourceField === 'ownerid').status).toBe(
+      'IGNORED',
+    );
   });
 
   it('blocks execution when a blocker exists and without confirmation', async () => {
     const withLegacy = await api.put<MigrationPlanDto>(`/api/plans/${plan.id}/tables`, {
       tables: [...plan.entities.map((e) => e.logicalName), 'dtx_legacyimport'],
     });
-    expect(withLegacy.issues.some((i) => i.severity === 'BLOCKER' && i.code === 'TABLE_MISSING_IN_TARGET')).toBe(true);
-    await api.post(`/api/plans/${plan.id}/execute`, { confirmSourceName: 'DeepTrics Development', confirmTargetName: 'DeepTrics QA', acknowledgeWarnings: true }, 409);
-    plan = await api.put<MigrationPlanDto>(`/api/plans/${plan.id}/tables`, { tables: plan.entities.map((e) => e.logicalName) });
+    expect(
+      withLegacy.issues.some((i) => i.severity === 'BLOCKER' && i.code === 'TABLE_MISSING_IN_TARGET'),
+    ).toBe(true);
+    await api.post(
+      `/api/plans/${plan.id}/execute`,
+      {
+        confirmSourceName: 'DeepTrics Development',
+        confirmTargetName: 'DeepTrics QA',
+        acknowledgeWarnings: true,
+      },
+      409,
+    );
+    plan = await api.put<MigrationPlanDto>(`/api/plans/${plan.id}/tables`, {
+      tables: plan.entities.map((e) => e.logicalName),
+    });
     expect(plan.blockerCount).toBe(0);
-    await api.post(`/api/plans/${plan.id}/execute`, { confirmSourceName: 'Wrong', confirmTargetName: 'DeepTrics QA', acknowledgeWarnings: true }, 400);
+    await api.post(
+      `/api/plans/${plan.id}/execute`,
+      { confirmSourceName: 'Wrong', confirmTargetName: 'DeepTrics QA', acknowledgeWarnings: true },
+      400,
+    );
   });
 
   let run: MigrationRunDto;
@@ -175,7 +227,9 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
   it('previews rollback impact without executing deletions', async () => {
     const preview = await api.get(`/api/runs/${run.id}/rollback-preview`);
     expect(preview.executionStatus).toBe('NOT_YET_SUPPORTED');
-    expect(preview.entities.find((x: { entity: string }) => x.entity === 'account').created).toBe(run.entities.find((x) => x.logicalName === 'account')!.created);
+    expect(preview.entities.find((x: { entity: string }) => x.entity === 'account').created).toBe(
+      run.entities.find((x) => x.logicalName === 'account')!.created,
+    );
     expect(preview.deletionOrder[preview.deletionOrder.length - 1]).toBe(run.entities[0].logicalName);
   });
 
@@ -192,7 +246,9 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
     const account = validation.entities.find((x) => x.logicalName === 'account')!;
     expect(account.missing).toBeGreaterThan(0);
     expect(account.brokenReferences).toBe(0);
-    const diffs = await api.get(`/api/validations/${validation.id}/differences?entity=account&type=PRE_EXISTING_DIFFERENCE`);
+    const diffs = await api.get(
+      `/api/validations/${validation.id}/differences?entity=account&type=PRE_EXISTING_DIFFERENCE`,
+    );
     expect(diffs.total).toBeGreaterThan(0);
     expect(diffs.items.some((d: { field: string }) => d.field === 'telephone1')).toBe(true);
     const contact = validation.entities.find((x) => x.logicalName === 'contact')!;
@@ -204,27 +260,43 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
   });
 
   it('keeps data isolated between organizations (IDOR protection)', async () => {
-    const t2 = await createTestApp();
-    try {
-      // A different database represents another tenant; ids from this tenant must 404 there.
-      const other = new ApiClient(t2.app);
-      await other.demoLogin();
-      await other.get(`/api/runs/${run.id}`, 404);
-      await other.get(`/api/validations/${validation.id}`, 404);
-      await other.get(`/api/plans/${plan.id}`, 404);
-    } finally {
-      await t2.close();
-    }
+    // With TEST_DATABASE_URL both apps share one database, so the separate-database case is skipped.
+    const t2 = process.env.TEST_DATABASE_URL ? null : await createTestApp();
+    if (t2)
+      try {
+        // A different database represents another tenant; ids from this tenant must 404 there.
+        const other = new ApiClient(t2.app);
+        await other.demoLogin();
+        await other.get(`/api/runs/${run.id}`, 404);
+        await other.get(`/api/validations/${validation.id}`, 404);
+        await other.get(`/api/plans/${plan.id}`, 404);
+      } finally {
+        await t2.close();
+      }
     // Same database, another organization.
     const { organizations, users, sessions } = await import('../../server/src/db/schema');
     const { sha256 } = await import('../../server/src/lib/crypto');
     const db = t.services.db;
-    const [org] = await db.insert(organizations).values({ name: 'Other Corp', entraTenantId: '00000000-0000-0000-0000-000000000001' }).returning();
+    const [org] = await db
+      .insert(organizations)
+      .values({ name: 'Other Corp', entraTenantId: '00000000-0000-0000-0000-000000000001' })
+      .returning();
     const [user] = await db
       .insert(users)
-      .values({ organizationId: org.id, externalId: 'other', authProvider: 'microsoft', displayName: 'Other', role: 'ADMIN' })
+      .values({
+        organizationId: org.id,
+        externalId: 'other',
+        authProvider: 'microsoft',
+        displayName: 'Other',
+        role: 'ADMIN',
+      })
       .returning();
-    await db.insert(sessions).values({ id: sha256('other-token'), userId: user.id, csrfToken: 'x', expiresAt: new Date(Date.now() + 3600_000) });
+    await db.insert(sessions).values({
+      id: sha256('other-token'),
+      userId: user.id,
+      csrfToken: 'x',
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
     const intruder = new ApiClient(t.app);
     intruder.cookie = 'dvm_session=other-token';
     intruder.csrf = 'x';
@@ -239,7 +311,16 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
   it('records an audit trail and dashboard data', async () => {
     const audit = await api.get('/api/audit');
     const actions = new Set(audit.map((a: { action: string }) => a.action));
-    for (const a of ['AUTH_SIGN_IN', 'ENVIRONMENTS_DISCOVERED', 'ENVIRONMENT_CONNECTION_TESTED', 'COMPARISON_REQUESTED', 'MIGRATION_PLAN_CREATED', 'MIGRATION_EXECUTION_REQUESTED', 'MIGRATION_RETRY_REQUESTED', 'VALIDATION_REQUESTED']) {
+    for (const a of [
+      'AUTH_SIGN_IN',
+      'ENVIRONMENTS_DISCOVERED',
+      'ENVIRONMENT_CONNECTION_TESTED',
+      'COMPARISON_REQUESTED',
+      'MIGRATION_PLAN_CREATED',
+      'MIGRATION_EXECUTION_REQUESTED',
+      'MIGRATION_RETRY_REQUESTED',
+      'VALIDATION_REQUESTED',
+    ]) {
       expect(actions.has(a)).toBe(true);
     }
     const dash = await api.get('/api/dashboard');

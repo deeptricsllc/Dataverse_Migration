@@ -18,7 +18,10 @@ export interface Database {
  *  - otherwise: embedded PGlite (PostgreSQL compiled to WASM) persisted to PGLITE_DATA_DIR,
  *    or in-memory when the directory is 'memory://'. Same schema and SQL migrations as production.
  */
-export async function createDatabase(opts: { databaseUrl?: string; pgliteDataDir: string }): Promise<Database> {
+export async function createDatabase(opts: {
+  databaseUrl?: string;
+  pgliteDataDir: string;
+}): Promise<Database> {
   if (opts.databaseUrl) {
     const { Pool } = await import('pg');
     const { drizzle } = await import('drizzle-orm/node-postgres');

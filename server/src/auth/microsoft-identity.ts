@@ -17,9 +17,11 @@ import { AppError } from '../lib/errors';
 import { scrubSecrets } from '../logger';
 
 /** Delegated scope used at sign-in: Global Discovery Service (lists Dataverse instances). */
-export const discoveryScope = (discoveryUrl: string) => `${discoveryUrl.replace(/\/+$/, '')}/user_impersonation`;
+export const discoveryScope = (discoveryUrl: string) =>
+  `${discoveryUrl.replace(/\/+$/, '')}/user_impersonation`;
 /** Delegated scope for a specific Dataverse environment. */
-export const dataverseScope = (environmentUrl: string) => `${environmentUrl.replace(/\/+$/, '')}/user_impersonation`;
+export const dataverseScope = (environmentUrl: string) =>
+  `${environmentUrl.replace(/\/+$/, '')}/user_impersonation`;
 export const POWER_PLATFORM_SCOPE = 'https://service.powerapps.com//.default';
 
 export interface SignInResult {
@@ -82,7 +84,13 @@ export class MicrosoftIdentityService {
 
   async getAuthCodeUrl(params: { state: string; nonce: string; codeChallenge: string }): Promise<string> {
     return this.client().getAuthCodeUrl({
-      scopes: ['openid', 'profile', 'email', 'offline_access', discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)],
+      scopes: [
+        'openid',
+        'profile',
+        'email',
+        'offline_access',
+        discoveryScope(this.config.DATAVERSE_DISCOVERY_URL),
+      ],
       redirectUri: this.config.redirectUri,
       state: params.state,
       nonce: params.nonce,
@@ -110,13 +118,20 @@ export class MicrosoftIdentityService {
         scopes: [discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)],
       });
     } catch (err) {
-      this.logger.warn({ err: { name: (err as Error).name, message: scrubSecrets((err as Error).message) } }, 'Microsoft sign-in failed');
+      this.logger.warn(
+        { err: { name: (err as Error).name, message: scrubSecrets((err as Error).message) } },
+        'Microsoft sign-in failed',
+      );
       throw new AppError(401, 'MICROSOFT_SIGN_IN_FAILED', 'Microsoft sign-in failed. Please try again.');
     }
     const claims = (result.idTokenClaims ?? {}) as Record<string, unknown>;
     const account = result.account;
     if (!account || typeof claims.oid !== 'string' || typeof claims.tid !== 'string') {
-      throw new AppError(401, 'MICROSOFT_SIGN_IN_FAILED', 'Sign-in response did not include an organizational identity');
+      throw new AppError(
+        401,
+        'MICROSOFT_SIGN_IN_FAILED',
+        'Sign-in response did not include an organizational identity',
+      );
     }
     return {
       tenantId: claims.tid,
@@ -167,7 +182,8 @@ export class MicrosoftIdentityService {
     if (!account) throw new AppError(401, 'REAUTH_REQUIRED', 'Microsoft session expired. Sign in again.');
     try {
       const result = await client.acquireTokenSilent({ account, scopes });
-      if (!result?.accessToken) throw new AppError(401, 'REAUTH_REQUIRED', 'Could not obtain an access token');
+      if (!result?.accessToken)
+        throw new AppError(401, 'REAUTH_REQUIRED', 'Could not obtain an access token');
       return result.accessToken;
     } catch (err) {
       if (err instanceof AppError) throw err;

@@ -8,7 +8,9 @@ const bool = (def: boolean) =>
   z
     .string()
     .optional()
-    .transform((v) => (v === undefined || v === '' ? def : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase())));
+    .transform((v) =>
+      v === undefined || v === '' ? def : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase()),
+    );
 
 const isProduction = process.env.NODE_ENV === 'production';
 

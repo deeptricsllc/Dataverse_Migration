@@ -21,7 +21,9 @@ export class SecretBox {
     if (version !== 'v1' || !iv || !tag || data === undefined) throw new Error('Unsupported ciphertext');
     const decipher = crypto.createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64url'));
     decipher.setAuthTag(Buffer.from(tag, 'base64url'));
-    return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8');
+    return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString(
+      'utf8',
+    );
   }
 }
 

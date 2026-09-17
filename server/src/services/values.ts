@@ -6,7 +6,11 @@ const round = (n: number, precision: number | null | undefined) =>
   precision == null ? n : Math.round(n * 10 ** precision) / 10 ** precision;
 
 /** Converts a source column value into the representation expected by the target column. */
-export function transformValue(source: AttributeMeta, target: AttributeMeta, value: FieldValue | undefined): TransformResult {
+export function transformValue(
+  source: AttributeMeta,
+  target: AttributeMeta,
+  value: FieldValue | undefined,
+): TransformResult {
   if (value === null || value === undefined) return { ok: true, value: null };
   switch (target.type) {
     case 'String':
@@ -30,7 +34,8 @@ export function transformValue(source: AttributeMeta, target: AttributeMeta, val
       if (typeof value !== 'boolean') return { ok: false, error: 'Value is not a boolean' };
       return { ok: true, value };
     case 'DateTime': {
-      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return { ok: false, error: 'Invalid date/time' };
+      if (typeof value !== 'string' || Number.isNaN(Date.parse(value)))
+        return { ok: false, error: 'Invalid date/time' };
       if (target.dateTimeBehavior === 'DateOnly') return { ok: true, value: value.slice(0, 10) };
       return { ok: true, value: new Date(value).toISOString() };
     }
@@ -55,7 +60,10 @@ export function transformValue(source: AttributeMeta, target: AttributeMeta, val
 }
 
 /** Normalizes a value so formatting-only differences do not register as mismatches. */
-export function normalizeForCompare(attr: AttributeMeta, value: FieldValue | undefined): string | number | boolean | null {
+export function normalizeForCompare(
+  attr: AttributeMeta,
+  value: FieldValue | undefined,
+): string | number | boolean | null {
   if (value === undefined || value === null) return null;
   switch (attr.type) {
     case 'String':
@@ -94,7 +102,11 @@ export function normalizeForCompare(attr: AttributeMeta, value: FieldValue | und
   }
 }
 
-export function valuesEqual(attr: AttributeMeta, a: FieldValue | undefined, b: FieldValue | undefined): boolean {
+export function valuesEqual(
+  attr: AttributeMeta,
+  a: FieldValue | undefined,
+  b: FieldValue | undefined,
+): boolean {
   const na = normalizeForCompare(attr, a);
   const nb = normalizeForCompare(attr, b);
   if (typeof na === 'number' && typeof nb === 'number') {
