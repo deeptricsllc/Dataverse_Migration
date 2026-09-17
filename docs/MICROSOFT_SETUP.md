@@ -74,6 +74,14 @@ Discovery lists only environments where the signed-in user has access. For each 
   `sdkmessageprocessingstep` and `workflow`. Without it the plan shows "detection unavailable" instead of failing.
 - **Target:** **Create**, **Write** and **Read** on the migrated tables, plus **Append / Append To**
   for lookups. Preserving record IDs (the default) needs no extra privilege.
+- **Ownership and audit preservation** (optional, off by default):
+  - reading both user directories needs read access to `systemuser`, `team` and `businessunit`;
+  - preserving **created on** needs "Override Created on or Created by for Records during Data Import"
+    (`prvOverrideCreatedOnCreatedBy`) in the target;
+  - preserving **created by / modified by** writes records while impersonating the mapped user and needs
+    "Act on Behalf of Another User" (`prvActOnBehalfOfAnotherUser`) in the target. The User mapping page
+    runs a read-only check for this before you execute;
+  - **modified on** can never be preserved: Dataverse always stamps it with the migration time.
 - **Bypass custom business logic** (optional, off by default): the target user needs
   `prvBypassCustomBusinessLogic`. The server also requires `ALLOW_BUSINESS_LOGIC_BYPASS=true`
   and the app **ADMIN** role, and every use is audited.

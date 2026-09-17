@@ -10,6 +10,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   Mono,
   PageHeader,
   Pill,
@@ -139,6 +140,13 @@ export function ComparePage() {
               >
                 Analyze
               </Button>
+            )}
+            {completed && (
+              <ExportButton
+                href={`/api/comparisons/${activeId}/tables.csv`}
+                label="Export differences"
+                size="md"
+              />
             )}
             {completed && !pairMismatch && (
               <Button variant="primary" onClick={() => navigate('/migration/new')}>

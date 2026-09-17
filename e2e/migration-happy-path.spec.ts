@@ -80,10 +80,23 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByTestId('mapping-dtx_tier')).toContainText('Unmapped');
   await expect(page.getByTestId('mapping-ownerid')).toContainText('Ignored');
 
+  // 6b. User mapping and ownership/audit options
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'User mapping' }).click();
+  await page.getByRole('button', { name: 'Load and match users' }).click();
+  await expect(page.getByTestId('principal-Priya Patel')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('principal-Priya Patel')).toContainText('entra object id');
+  await expect(page.getByTestId('principal-Legacy Integration Account')).toContainText('Unmatched');
+  await page.getByRole('button', { name: 'Run check' }).click();
+  await expect(page.getByText(/may act on behalf of other users/)).toBeVisible();
+  await page.goBack();
+
   // 7. Review & execute
   await page.getByRole('button', { name: 'Continue: Review plan' }).click();
   await expect(page.getByRole('heading', { name: 'Issues' })).toBeVisible();
   await expect(page.getByTestId('issue-WARNING').first()).toBeVisible();
+  await page.getByTestId('preserve-ownership').click();
+  await expect(page.getByTestId('preserve-ownership')).toBeChecked();
+  await expect(page.getByTestId('issue-INFO').first()).toBeVisible();
   await page.getByRole('button', { name: 'Execute migration' }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   await expect(dialog.getByText('DeepTrics Development').first()).toBeVisible();
@@ -101,6 +114,7 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByTestId('overall-percent')).toContainText('%');
   await page.getByRole('tab', { name: /Errors/ }).click();
   await expect(page.getByTestId('run-error-row').first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Export CSV' }).first()).toBeVisible();
   await page.getByRole('tab', { name: 'Rollback preview' }).click();
   await expect(page.getByText('Rollback execution: NOT YET SUPPORTED')).toBeVisible();
 
@@ -112,6 +126,11 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByText('Record existence')).toBeVisible();
   await page.getByRole('button', { name: 'Inspect differences for Account' }).click();
   await expect(page.getByTestId('difference-row').first()).toBeVisible();
+  // Exports are available for the team to work from outside the app.
+  const exportLink = page.getByRole('link', { name: 'Export differences' });
+  await expect(exportLink).toBeVisible();
+  const download = await Promise.all([page.waitForEvent('download'), exportLink.click()]).then((r) => r[0]);
+  expect(download.suggestedFilename()).toMatch(/^validation-differences-.*\.csv$/);
 
   // 10. Reopen: history persists
   const reportUrl = page.url();

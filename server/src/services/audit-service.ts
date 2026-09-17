@@ -25,6 +25,7 @@ export type AuditAction =
   | 'VALIDATION_REQUESTED'
   | 'VALIDATION_COMPLETED'
   | 'TABLE_CATEGORY_CHANGED'
+  | 'PRINCIPAL_MAPPING_CHANGED'
   | 'DEMO_DATA_RESET';
 
 export interface AuditInput {

@@ -8,6 +8,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   Mono,
   PageHeader,
   Select,
@@ -135,7 +136,11 @@ export function ValidationReportPage() {
             />
           </div>
 
-          <Card title="Results by table" bodyClassName="p-0">
+          <Card
+            title="Results by table"
+            actions={<ExportButton href={`/api/validations/${v.id}/summary.csv`} label="Export summary" />}
+            bodyClassName="p-0"
+          >
             <Table>
               <thead className="bg-slate-50">
                 <tr>
@@ -277,6 +282,14 @@ export function ValidationReportPage() {
                       { value: 'FAIL', label: 'Fail' },
                       { value: 'WARNING', label: 'Warning' },
                     ]}
+                  />
+                  <ExportButton
+                    href={`/api/validations/${v.id}/differences.csv${qs({
+                      entity: entity || undefined,
+                      type: type || undefined,
+                      outcome: outcome || undefined,
+                    })}`}
+                    label="Export differences"
                   />
                 </>
               }

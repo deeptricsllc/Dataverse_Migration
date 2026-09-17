@@ -13,6 +13,7 @@ import { MetadataService } from './metadata-service';
 import { MigrationEngine } from './migration-engine';
 import { MigrationRunService } from './migration-run-service';
 import { PlanningService } from './planning-service';
+import { PrincipalService } from './principal-service';
 import { ValidationService } from './validation-service';
 
 export type Services = ReturnType<typeof createServices>;
@@ -26,6 +27,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   const environments = new EnvironmentService(db, connections, audit, logger);
   const metadata = new MetadataService(db, logger);
   const comparisons = new ComparisonService(db, environments, metadata, connections, queue, audit, logger);
+  const principals = new PrincipalService(db, environments, connections, audit, logger);
   const planning = new PlanningService(
     db,
     config,
@@ -33,11 +35,12 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     metadata,
     connections,
     comparisons,
+    principals,
     audit,
     logger,
   );
   const runs = new MigrationRunService(db, planning, queue, audit, logger);
-  const engine = new MigrationEngine(db, environments, metadata, connections, audit, logger);
+  const engine = new MigrationEngine(db, environments, metadata, connections, principals, audit, logger);
   const validation = new ValidationService(db, environments, metadata, connections, queue, audit, logger);
   const insights = new InsightsService(
     db,
@@ -71,6 +74,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     connections,
     queue,
     environments,
+    principals,
     metadata,
     comparisons,
     planning,

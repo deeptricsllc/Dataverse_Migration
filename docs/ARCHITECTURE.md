@@ -62,17 +62,48 @@
      (verified to still exist in the target) → same ID already in the target. Unresolved required
      lookups fail the record; unresolved optional ones are left empty with a warning.
    - Match existing target records by primary ID (batched `In` query) or alternate key.
-   - Apply the conflict strategy: `SKIP_EXISTING` (default), `CREATE_ONLY` or `UPSERT`. Creates
+   - Apply the conflict strategy: `SKIP_EXISTING` (default), `CREATE_ONLY`, `UPSERT` or `SYNC`.
+     `SYNC` reads the matched target record, writes only the columns whose normalized values differ,
+     and records `UNCHANGED` without writing when everything matches, so modifiedon / modifiedby stay
+     untouched. Creates
      preserve source GUIDs, and updates use `If-Match: *` so they never create.
    - Persist the identity map, per-record structured errors, counters and heartbeat. Check the
      cancel/pause flags between batches.
 3. **PASS 2**: set deferred lookups on created/updated records.
-4. Transient failures (429/502/503/504/network/timeouts) retry inside the client with bounded
+4. **PASS 3** (only with "preserve modified by"): one impersonated update per record so that
+   modifiedby matches the mapped source user.
+5. Transient failures (429/502/503/504/network/timeouts) retry inside the client with bounded
    exponential backoff, honoring `Retry-After`. Permanent failures are recorded once per attempt.
    Authentication failures stop the run (`FAILED`) with a clear message.
 
 Run states: `QUEUED → RUNNING → COMPLETED | COMPLETED_WITH_ERRORS | FAILED | CANCELLED`, plus `PAUSED`.
 Retry re-queues the same run (`attempt + 1`) and only reprocesses records that did not succeed.
+
+## Ownership and audit fields
+
+Users, teams and business units have different record ids in every environment, so
+`PrincipalService` builds a source -> target map (`principal_maps`) from both directories,
+matching on Entra object id, then login, then email, then a unique display name. Manual overrides
+and exclusions always win over automatic matches.
+
+| Field           | Mechanism                                                            | Requirement                                                                   |
+| --------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Owner           | written on create/update as the mapped principal                     | mapped user or team                                                           |
+| Created on      | `overriddencreatedon` on create                                      | target exposes the column; Dataverse requires `prvOverrideCreatedOnCreatedBy` |
+| Created by      | record created while impersonating the mapped user (`MSCRMCallerID`) | `prvActOnBehalfOfAnotherUser`, verified by a read-only check before execution |
+| Modified by     | PASS 3 impersonated update                                           | same privilege, plus one extra write per record                               |
+| **Modified on** | **not possible**                                                     | Dataverse always stamps it with the write time                                |
+
+An unmapped principal never blocks a record: the write falls back to the migrating user and a
+`PRINCIPAL_UNMAPPED` warning is recorded for that record.
+
+## Exports
+
+Every review surface has a CSV export (`server/src/lib/csv.ts`): schema comparison, plan issues,
+migration errors, record inventory, validation summary and differences, and the user mapping.
+Exports reuse the same tenant-scoped services and masking as the UI, quote per RFC 4180, start with
+a UTF-8 BOM for Excel, and neutralize leading `=`, `+`, `-` and `@` so spreadsheet formulas cannot
+execute.
 
 ## Validation
 

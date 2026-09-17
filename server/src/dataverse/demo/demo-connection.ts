@@ -1,6 +1,6 @@
 import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { AutomationInfo } from '../../../../shared/domain';
+import type { AutomationInfo, PrincipalDto, PrincipalTable } from '../../../../shared/domain';
 import {
   LOOKUP_TYPES,
   isLookupValue,
@@ -17,7 +17,8 @@ import { sleep, withRetry, type RetryPolicy } from '../retry';
 import type { DataverseConnection, RecordCount, WhoAmI, WriteOptions, WriteRecord } from '../types';
 import {
   DEMO_ORGANIZATION_ID,
-  DEMO_USER_SYSTEMUSER_ID,
+  DEMO_SIGNED_IN_USER,
+  demoUserId,
   demoAutomation,
   demoGuid,
   demoMetadata,
@@ -72,7 +73,7 @@ export class DemoConnection implements DataverseConnection {
   async whoAmI(): Promise<WhoAmI> {
     await this.simulate();
     return {
-      userId: DEMO_USER_SYSTEMUSER_ID,
+      userId: demoUserId(this.env.key, DEMO_SIGNED_IN_USER),
       businessUnitId: demoGuid('businessunit', 'root'),
       organizationId: demoGuid(DEMO_ORGANIZATION_ID, this.env.key),
     };
@@ -372,14 +373,26 @@ export class DemoConnection implements DataverseConnection {
             );
           }
         }
+        const now = new Date().toISOString();
+        // The caller is the impersonated user when one is supplied (MSCRMCallerID), exactly
+        // like Dataverse: createdby/modifiedby follow the caller, modifiedon never does.
+        const caller = {
+          id: (options.impersonateUserId ?? demoUserId(this.env.key, DEMO_SIGNED_IN_USER)).toLowerCase(),
+          logicalName: 'systemuser',
+        };
+        const backdated = record.values.overriddencreatedon;
         const data: Record<string, unknown> = {
           ...record.values,
           [t.primaryIdAttribute]: id,
-          createdon: new Date().toISOString(),
-          modifiedon: new Date().toISOString(),
-          ownerid: { id: DEMO_USER_SYSTEMUSER_ID, logicalName: 'systemuser' },
-          statecode: 0,
+          createdon: typeof backdated === 'string' ? backdated : now,
+          modifiedon: now,
+          createdby: caller,
+          modifiedby: caller,
+          // Ownership defaults to the caller unless the write supplies an owner.
+          ownerid: record.values.ownerid ?? caller,
+          statecode: record.values.statecode ?? 0,
         };
+        delete data.overriddencreatedon;
         this.computed(t, data);
         const inserted = await this.db
           .insert(demoRecords)
@@ -436,7 +449,16 @@ export class DemoConnection implements DataverseConnection {
             );
           }
         }
-        const data = { ...existing.data, ...record.values, modifiedon: new Date().toISOString() };
+        const caller = {
+          id: (options.impersonateUserId ?? demoUserId(this.env.key, DEMO_SIGNED_IN_USER)).toLowerCase(),
+          logicalName: 'systemuser',
+        };
+        const data = {
+          ...existing.data,
+          ...record.values,
+          modifiedon: new Date().toISOString(),
+          modifiedby: caller,
+        };
         this.computed(t, data);
         await this.db
           .update(demoRecords)
@@ -463,6 +485,44 @@ export class DemoConnection implements DataverseConnection {
         '0x80040220',
       );
     }
+  }
+
+  async listPrincipals(table: PrincipalTable): Promise<PrincipalDto[]> {
+    await this.simulate();
+    const rows = await this.db
+      .select()
+      .from(demoRecords)
+      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, table)));
+    return rows
+      .map((r) => {
+        const d = r.data as Record<string, string | boolean | null>;
+        return {
+          id: r.recordId,
+          name: String(d.fullname ?? d.name ?? '(unnamed)'),
+          login: (d.domainname as string) ?? null,
+          email: (d.internalemailaddress as string) ?? (d.emailaddress as string) ?? null,
+          entraObjectId: (d.azureactivedirectoryobjectid as string) ?? null,
+          disabled: Boolean(d.isdisabled),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async checkImpersonation(targetUserId: string): Promise<{ allowed: boolean; message: string }> {
+    await this.simulate();
+    const [user] = await this.db
+      .select({ id: demoRecords.recordId })
+      .from(demoRecords)
+      .where(
+        and(
+          eq(demoRecords.environmentKey, this.env.key),
+          eq(demoRecords.logicalName, 'systemuser'),
+          eq(demoRecords.recordId, targetUserId.toLowerCase()),
+        ),
+      );
+    return user
+      ? { allowed: true, message: 'The demo user may act on behalf of other users in this environment' }
+      : { allowed: false, message: `User ${targetUserId} does not exist in this environment` };
   }
 
   async detectAutomation(tables: TableSummary[]): Promise<AutomationInfo[]> {

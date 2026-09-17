@@ -1,7 +1,8 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
+import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
 import type { Services } from '../services/container';
 
@@ -225,12 +226,16 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.patch('/api/plans/:id/options', async (req) => {
     const patch = z
       .object({
-        conflictStrategy: z.enum(['SKIP_EXISTING', 'CREATE_ONLY', 'UPSERT']).optional(),
+        conflictStrategy: z.enum(['SKIP_EXISTING', 'CREATE_ONLY', 'UPSERT', 'SYNC']).optional(),
         batchSize: z.number().int().min(1).max(500).optional(),
         maxRetries: z.number().int().min(0).max(10).optional(),
         bypassCustomBusinessLogic: z.boolean().optional(),
         suppressFlowTriggers: z.boolean().optional(),
         stopOnFirstError: z.boolean().optional(),
+        preserveOwnership: z.boolean().optional(),
+        preserveCreatedOn: z.boolean().optional(),
+        preserveCreatedBy: z.boolean().optional(),
+        preserveModifiedBy: z.boolean().optional(),
       })
       .strict()
       .parse(req.body);
@@ -306,11 +311,323 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const q = page
       .extend({
         entity: tableName.optional(),
-        outcome: z.enum(['CREATED', 'UPDATED', 'SKIPPED', 'FAILED']).optional(),
+        outcome: z.enum(['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED', 'FAILED']).optional(),
       })
       .parse(req.query);
     return s.runs.records(req.ctx, id, q);
   });
+  // --- CSV exports -----------------------------------------------------------
+  // Everything a team needs to review or fix issues outside the application.
+  const sendCsv = (reply: FastifyReply, name: string, headers: string[], rows: CsvValue[][]) =>
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${name}"`)
+      .send(toCsv(headers, rows));
+
+  app.get('/api/runs/:id/errors.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        entity: tableName.optional(),
+        kind: z.enum(['all', 'retryable', 'permanent']).optional(),
+        severity: z.enum(['ERROR', 'WARNING']).optional(),
+        includeResolved: z.enum(['true', 'false']).optional(),
+      })
+      .parse(req.query);
+    const run = await s.runs.get(req.ctx, id);
+    const { items } = await s.runs.errors(req.ctx, id, {
+      ...q,
+      includeResolved: q.includeResolved === 'true',
+      limit: 50_000,
+      offset: 0,
+    });
+    return sendCsv(
+      reply,
+      csvFileName(['migration-errors', run.planName]),
+      [
+        'Table',
+        'Source record id',
+        'Operation',
+        'Field',
+        'Severity',
+        'Error code',
+        'Message',
+        'Retryable',
+        'Attempts',
+        'Resolved',
+        'Occurred at',
+      ],
+      items.map((e) => [
+        e.entity,
+        e.sourceRecordId,
+        e.operation,
+        e.field,
+        e.severity,
+        e.errorCode,
+        e.message,
+        e.retryable,
+        e.attempts,
+        e.resolved,
+        e.createdAt,
+      ]),
+    );
+  });
+
+  app.get('/api/runs/:id/records.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        entity: tableName.optional(),
+        outcome: z.enum(['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED', 'FAILED']).optional(),
+      })
+      .parse(req.query);
+    const run = await s.runs.get(req.ctx, id);
+    const { items } = await s.runs.records(req.ctx, id, { ...q, limit: 100_000, offset: 0 });
+    return sendCsv(
+      reply,
+      csvFileName(['migration-records', run.planName]),
+      ['Table', 'Source id', 'Target id', 'Outcome', 'Matched by', 'Deferred lookups', 'Updated at'],
+      items.map((m) => [
+        m.entity,
+        m.sourceId,
+        m.targetId,
+        m.outcome,
+        m.matchMethod,
+        m.deferredStatus,
+        m.updatedAt,
+      ]),
+    );
+  });
+
+  app.get('/api/validations/:id/differences.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        entity: tableName.optional(),
+        type: z
+          .enum([
+            'MISSING_IN_TARGET',
+            'VALUE_MISMATCH',
+            'LOOKUP_MISMATCH',
+            'BROKEN_REFERENCE',
+            'PRE_EXISTING_DIFFERENCE',
+          ])
+          .optional(),
+        outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
+      })
+      .parse(req.query);
+    const run = await s.validation.get(req.ctx, id);
+    const { items } = await s.validation.differences(req.ctx, id, { ...q, limit: 50_000, offset: 0 });
+    return sendCsv(
+      reply,
+      csvFileName([
+        'validation-differences',
+        run.sourceEnvironment.displayName,
+        run.targetEnvironment.displayName,
+      ]),
+      [
+        'Table',
+        'Source record id',
+        'Target record id',
+        'Field',
+        'Source value',
+        'Target value',
+        'Difference',
+        'Outcome',
+      ],
+      items.map((d) => [
+        d.entity,
+        d.sourceRecordId,
+        d.targetRecordId,
+        d.field,
+        d.sourceValue,
+        d.targetValue,
+        d.differenceType,
+        d.outcome,
+      ]),
+    );
+  });
+
+  app.get('/api/validations/:id/summary.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.validation.get(req.ctx, id);
+    return sendCsv(
+      reply,
+      csvFileName([
+        'validation-summary',
+        run.sourceEnvironment.displayName,
+        run.targetEnvironment.displayName,
+      ]),
+      [
+        'Table',
+        'Outcome',
+        'Source rows',
+        'Target rows',
+        'Migrated',
+        'Checked',
+        'Matched',
+        'Missing',
+        'Different',
+        'Broken references',
+        'Checks',
+      ],
+      run.entities.map((e) => [
+        e.logicalName,
+        e.outcome,
+        e.sourceCount,
+        e.targetCount,
+        e.migratedRecords,
+        e.checkedRecords,
+        e.matched,
+        e.missing,
+        e.different,
+        e.brokenReferences,
+        e.checks.map((c) => `${c.check}: ${c.outcome} - ${c.message}`).join(' | '),
+      ]),
+    );
+  });
+
+  app.get('/api/comparisons/:id/tables.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.comparisons.get(req.ctx, id);
+    const tables = await s.comparisons.tables(req.ctx, id);
+    const describe = (d: { property: string; source: unknown; target: unknown; note?: string }) =>
+      `${d.property}: ${String(d.source)} -> ${String(d.target)}${d.note ? ` (${d.note})` : ''}`;
+    const rows: CsvValue[][] = [];
+    for (const t of tables) {
+      rows.push([
+        t.logicalName,
+        t.displayName,
+        t.status,
+        '',
+        '',
+        '',
+        '',
+        t.differences.map(describe).join(' | '),
+      ]);
+      for (const c of t.columns.filter((x) => x.status !== 'MATCH')) {
+        rows.push([
+          t.logicalName,
+          t.displayName,
+          t.status,
+          c.logicalName,
+          c.status,
+          c.sourceType,
+          c.targetType,
+          c.differences.map(describe).join(' | '),
+        ]);
+      }
+    }
+    return sendCsv(
+      reply,
+      csvFileName([
+        'schema-comparison',
+        run.sourceEnvironment.displayName,
+        run.targetEnvironment.displayName,
+      ]),
+      [
+        'Table',
+        'Display name',
+        'Table status',
+        'Column',
+        'Column status',
+        'Source type',
+        'Target type',
+        'Differences',
+      ],
+      rows,
+    );
+  });
+
+  app.get('/api/plans/:id/issues.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const plan = await s.planning.get(req.ctx, id);
+    return sendCsv(
+      reply,
+      csvFileName(['plan-issues', plan.name]),
+      ['Severity', 'Code', 'Table', 'Field', 'Message', 'Resolution'],
+      plan.issues.map((i) => [i.severity, i.code, i.table, i.field, i.message, i.resolution]),
+    );
+  });
+
+  app.get('/api/principal-mappings.csv', async (req, reply) => {
+    const q = z.object({ sourceEnvironmentId: uuid, targetEnvironmentId: uuid }).parse(req.query);
+    const summary = await s.principals.list(req.ctx, q.sourceEnvironmentId, q.targetEnvironmentId);
+    return sendCsv(
+      reply,
+      csvFileName([
+        'user-mapping',
+        summary.sourceEnvironment.displayName,
+        summary.targetEnvironment.displayName,
+      ]),
+      [
+        'Type',
+        'Source name',
+        'Source login',
+        'Source email',
+        'Source id',
+        'Target name',
+        'Target id',
+        'Status',
+        'Matched by',
+        'Confidence',
+        'Note',
+      ],
+      summary.mappings.map((m) => [
+        m.logicalName,
+        m.source.name,
+        m.source.login,
+        m.source.email,
+        m.source.id,
+        m.target?.name,
+        m.target?.id,
+        m.status,
+        m.matchMethod,
+        m.confidence,
+        m.note,
+      ]),
+    );
+  });
+
+  // --- Principal (user / team / business unit) mapping ------------------------
+
+  app.get('/api/principal-mappings', async (req) => {
+    const q = z.object({ sourceEnvironmentId: uuid, targetEnvironmentId: uuid }).parse(req.query);
+    return s.principals.list(req.ctx, q.sourceEnvironmentId, q.targetEnvironmentId);
+  });
+
+  app.post('/api/principal-mappings/refresh', async (req) => {
+    const body = z
+      .object({
+        sourceEnvironmentId: uuid,
+        targetEnvironmentId: uuid,
+        refreshDirectory: z.boolean().optional(),
+      })
+      .parse(req.body);
+    return s.principals.refresh(req.ctx, body.sourceEnvironmentId, body.targetEnvironmentId, {
+      refreshDirectory: body.refreshDirectory,
+    });
+  });
+
+  app.put('/api/principal-mappings', async (req) => {
+    const body = z
+      .object({
+        sourceEnvironmentId: uuid,
+        targetEnvironmentId: uuid,
+        logicalName: z.enum(['systemuser', 'team', 'businessunit']),
+        sourceId: z.string().max(80),
+        targetId: z.string().max(80).nullable(),
+        ignore: z.boolean().optional(),
+      })
+      .parse(req.body);
+    return s.principals.setMapping(req.ctx, body);
+  });
+
+  app.post('/api/principal-mappings/impersonation-check', async (req) => {
+    const body = z.object({ sourceEnvironmentId: uuid, targetEnvironmentId: uuid }).parse(req.body);
+    return s.principals.checkImpersonation(req.ctx, body.sourceEnvironmentId, body.targetEnvironmentId);
+  });
+
   app.get('/api/runs/:id/rollback-preview', async (req) =>
     s.runs.rollbackPreview(req.ctx, idParams.parse(req.params).id),
   );

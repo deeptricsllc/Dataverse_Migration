@@ -22,6 +22,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   Modal,
   Mono,
   PageHeader,
@@ -51,7 +52,12 @@ export function PlanPage() {
     queryFn: () => get<MigrationPlanDto>(`/api/plans/${planId}`),
   });
   const setStep = (s: Step) => setParams({ step: s });
-  const setPlan = (p: MigrationPlanDto) => qc.setQueryData(['plan', planId], p);
+  const setPlan = (p: MigrationPlanDto) => {
+    // Write the fresh plan, then invalidate: a refetch that was already in flight must not
+    // overwrite it with a pre-update snapshot.
+    qc.setQueryData(['plan', planId], p);
+    void qc.invalidateQueries({ queryKey: ['plan', planId] });
+  };
 
   if (plan.isLoading) return <Spinner label="Loading plan…" />;
   if (plan.error || !plan.data) return <ErrorState error={plan.error ?? new Error('Plan not found')} />;
@@ -840,6 +846,11 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
                   'Create missing records; never modify records that already exist.',
                 ],
                 [
+                  'SYNC',
+                  'Sync (insert new, update changed)',
+                  'Create missing records, update only the columns that differ, and leave identical records untouched so their modified on / modified by do not change.',
+                ],
+                [
                   'CREATE_ONLY',
                   'Create only',
                   'Create records; matching existing records are reported as failures.',
@@ -898,6 +909,80 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
               />
               Suppress Power Automate flow triggers
             </label>
+            <fieldset
+              className="space-y-2 rounded-md border border-slate-200 p-2"
+              disabled={options.isPending}
+            >
+              <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+                Ownership & audit fields
+              </legend>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={o.preserveOwnership}
+                  onChange={(e) => options.mutate({ preserveOwnership: e.target.checked })}
+                  data-testid="preserve-ownership"
+                />
+                <span>
+                  Preserve <strong>owner</strong>
+                  <span className="block text-xs text-slate-500">
+                    Assigns each record to the mapped target user or team instead of you.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={o.preserveCreatedOn}
+                  onChange={(e) => options.mutate({ preserveCreatedOn: e.target.checked })}
+                />
+                <span>
+                  Preserve <strong>created on</strong>
+                  <span className="block text-xs text-slate-500">
+                    Backdates records via overriddencreatedon.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={o.preserveCreatedBy}
+                  onChange={(e) => options.mutate({ preserveCreatedBy: e.target.checked })}
+                />
+                <span>
+                  Preserve <strong>created by</strong>
+                  <span className="block text-xs text-slate-500">
+                    Creates each record while impersonating the mapped user (needs the “Act on Behalf of
+                    Another User” privilege).
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={o.preserveModifiedBy}
+                  onChange={(e) => options.mutate({ preserveModifiedBy: e.target.checked })}
+                />
+                <span>
+                  Preserve <strong>modified by</strong>
+                  <span className="block text-xs text-slate-500">
+                    Adds one impersonated update per record after the data passes.
+                  </span>
+                </span>
+              </label>
+              <p className="px-1 text-xs text-slate-500">
+                <strong>Modified on</strong> cannot be preserved: Dataverse always stamps it with the
+                migration time.{' '}
+                <Link to="/users" className="font-medium text-brand-700 underline">
+                  Map users
+                </Link>{' '}
+                first; unmapped users fall back to you and are reported per record.
+              </p>
+            </fieldset>
             <div className="rounded-md border border-slate-200 p-2">
               <label
                 className={cx(
@@ -932,13 +1017,16 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
         title="Issues"
         subtitle="Execution is blocked while any BLOCKER remains. Warnings must be acknowledged."
         actions={
-          <Button
-            icon={<RefreshCw className="h-4 w-4" />}
-            loading={revalidate.isPending}
-            onClick={() => revalidate.mutate()}
-          >
-            Re-validate plan
-          </Button>
+          <>
+            <ExportButton href={`/api/plans/${plan.id}/issues.csv`} label="Export issues" />
+            <Button
+              icon={<RefreshCw className="h-4 w-4" />}
+              loading={revalidate.isPending}
+              onClick={() => revalidate.mutate()}
+            >
+              Re-validate plan
+            </Button>
+          </>
         }
       >
         {revalidate.error && (

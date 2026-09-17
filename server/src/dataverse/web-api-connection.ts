@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { AutomationInfo } from '../../../shared/domain';
+import type { AutomationInfo, PrincipalDto, PrincipalTable } from '../../../shared/domain';
 import {
   LOOKUP_TYPES,
   isLookupValue,
@@ -384,7 +384,65 @@ export class WebApiConnection implements DataverseConnection {
     if (options.bypassCustomBusinessLogic)
       headers['MSCRM.BypassBusinessLogicExecution'] = 'CustomSync,CustomAsync';
     if (options.suppressFlowTriggers) headers['MSCRM.SuppressCallbackRegistrationExpanderJob'] = 'true';
+    // Impersonation: the record is created/updated as this user, so createdby/modifiedby match
+    // the source. Requires prvActOnBehalfOfAnotherUser for the signed-in user.
+    if (options.impersonateUserId) headers['MSCRMCallerID'] = options.impersonateUserId;
     return headers;
+  }
+
+  private static readonly PRINCIPAL_QUERIES: Record<
+    PrincipalTable,
+    { set: string; id: string; select: string }
+  > = {
+    systemuser: {
+      set: 'systemusers',
+      id: 'systemuserid',
+      select:
+        'systemuserid,fullname,domainname,internalemailaddress,azureactivedirectoryobjectid,isdisabled,applicationid',
+    },
+    team: { set: 'teams', id: 'teamid', select: 'teamid,name,emailaddress,azureactivedirectoryobjectid' },
+    businessunit: { set: 'businessunits', id: 'businessunitid', select: 'businessunitid,name,isdisabled' },
+  };
+
+  /** Users, teams or business units for principal mapping (owner / created by / modified by). */
+  async listPrincipals(table: PrincipalTable): Promise<PrincipalDto[]> {
+    const q = WebApiConnection.PRINCIPAL_QUERIES[table];
+    const filter = table === 'team' ? '&$filter=teamtype eq 0' : '';
+    const rows = await this.getAll(`${q.set}?$select=${q.select}${filter}`);
+    return rows
+      .filter((r) => !(table === 'systemuser' && r.applicationid))
+      .map((r) => ({
+        id: String(r[q.id]).toLowerCase(),
+        name: r.fullname ?? r.name ?? '(unnamed)',
+        login: r.domainname ?? null,
+        email: r.internalemailaddress ?? r.emailaddress ?? null,
+        entraObjectId: r.azureactivedirectoryobjectid
+          ? String(r.azureactivedirectoryobjectid).toLowerCase()
+          : null,
+        disabled: Boolean(r.isdisabled),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Read-only probe: can the signed-in user act on behalf of another user here? */
+  async checkImpersonation(targetUserId: string): Promise<{ allowed: boolean; message: string }> {
+    if (!GUID.test(targetUserId)) return { allowed: false, message: 'No mapped target user to test with' };
+    try {
+      await this.request('GET', 'WhoAmI', { headers: { MSCRMCallerID: targetUserId } });
+      return {
+        allowed: true,
+        message: 'The signed-in user may act on behalf of other users in this environment',
+      };
+    } catch (err) {
+      const e = toDataverseError(err);
+      if (e.code === 'FORBIDDEN' || e.code === 'VALIDATION') {
+        return {
+          allowed: false,
+          message: `Impersonation is not permitted: ${e.message}. Grant prvActOnBehalfOfAnotherUser ("Act on Behalf of Another User") in the target.`,
+        };
+      }
+      throw err;
+    }
   }
 
   async createRecord(table: TableMetadata, record: WriteRecord, options: WriteOptions): Promise<string> {

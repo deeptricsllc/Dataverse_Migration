@@ -25,8 +25,9 @@ import { AppError, errorMessage } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
+import type { PrincipalService } from './principal-service';
 import type { RunPlanSnapshot } from './run-snapshot';
-import { transformValue } from './values';
+import { transformValue, valuesEqual } from './values';
 
 type RunRow = typeof migrationRuns.$inferSelect;
 type SnapshotEntity = RunPlanSnapshot['entities'][number];
@@ -44,10 +45,12 @@ interface RecordError {
 
 interface RecordResult {
   sourceId: string;
-  outcome: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED';
+  outcome: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
   targetId: string | null;
   matchMethod: string | null;
   deferred: Record<string, LookupValue> | null;
+  /** Pass 3 work: re-stamp modifiedby as the mapped source user. */
+  audit: { modifiedById: string; field: string; value: FieldValue } | null;
   errors: RecordError[];
 }
 
@@ -59,7 +62,27 @@ class RunInterrupted extends Error {
 
 class FatalRunError extends Error {}
 
-const SUCCESS_OUTCOMES = ['CREATED', 'UPDATED', 'SKIPPED'] as const;
+const SUCCESS_OUTCOMES = ['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED'] as const;
+
+/** Target columns to read for SYNC comparison (empty for every other strategy). */
+function syncCompareColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
+  if (options.conflictStrategy !== 'SYNC') return [];
+  const columns = entity.mappings.map((m) => m.targetField);
+  if (options.preserveOwnership && entity.audit.ownerField) columns.push(entity.audit.ownerField);
+  return [...new Set(columns)];
+}
+
+/** Source audit columns to read when ownership / audit preservation is enabled. */
+function auditSourceColumns(options: PlanOptions, entity: SnapshotEntity): string[] {
+  const a = entity.audit;
+  const columns: (string | null)[] = [
+    options.preserveOwnership ? a.ownerField : null,
+    options.preserveCreatedOn ? a.createdOnField : null,
+    options.preserveCreatedBy ? a.createdByField : null,
+    options.preserveModifiedBy ? a.modifiedByField : null,
+  ];
+  return columns.filter((c): c is string => Boolean(c));
+}
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -109,6 +132,7 @@ export class MigrationEngine {
     private readonly environmentsSvc: EnvironmentService,
     private readonly metadata: MetadataService,
     private readonly connections: ConnectionFactory,
+    private readonly principals: PrincipalService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
   ) {}
@@ -167,6 +191,13 @@ export class MigrationEngine {
         { refresh: true },
       );
 
+      // Users/teams/business units keep different ids per environment: resolve them through
+      // the principal map, which also drives ownership and created-by preservation.
+      const principalMap = await this.principals.resolutionMap(
+        run.organizationId,
+        run.sourceEnvironmentId,
+        run.targetEnvironmentId,
+      );
       const ctx: ExecContext = {
         run,
         log,
@@ -177,7 +208,8 @@ export class MigrationEngine {
         sourceMeta,
         targetMeta,
         heartbeat,
-        lookupCache: new Map(),
+        lookupCache: new Map(principalMap),
+        principalMap,
       };
 
       await this.db.update(migrationRuns).set({ phase: 'PASS_1' }).where(eq(migrationRuns.id, runId));
@@ -193,6 +225,17 @@ export class MigrationEngine {
       for (const entity of entities) {
         await this.checkControl(runId);
         await this.resolveDeferred(ctx, entity);
+      }
+
+      if (options.preserveModifiedBy) {
+        await this.db
+          .update(migrationRuns)
+          .set({ phase: 'PASS_3_AUDIT', currentEntity: null })
+          .where(eq(migrationRuns.id, runId));
+        for (const entity of entities) {
+          await this.checkControl(runId);
+          await this.stampModifiedBy(ctx, entity);
+        }
       }
 
       await this.refreshCounters(runId);
@@ -356,7 +399,10 @@ export class MigrationEngine {
       ).map((m) => [m.sourceId, m.outcome]),
     );
 
-    const sourceColumns = entity.mappings.map((m) => m.sourceField);
+    const sourceColumns = [
+      ...entity.mappings.map((m) => m.sourceField),
+      ...auditSourceColumns(ctx.options, entity),
+    ];
     const pageSize = Math.max(1, Math.min(ctx.options.batchSize, 500));
     try {
       for await (const page of ctx.sConn.queryRecords(s, sourceColumns, { pageSize })) {
@@ -414,15 +460,26 @@ export class MigrationEngine {
     // Batch-resolve lookups and existing target records before per-record writes.
     await this.prefetchLookups(ctx, entity, records);
     const existingById = new Set<string>();
+    const existingTargetRecords = new Map<string, DvRecord>();
+    // SYNC compares against the current target values, so read every column the run may write:
+    // the mapped ones plus the ownership column when ownership is preserved.
+    const compareColumns = syncCompareColumns(ctx.options, entity);
     if (entity.matchStrategy === 'PRIMARY_ID') {
       const found = await ctx.tConn.retrieveByIds(
         t,
         records.map((r) => r.id),
-        [],
+        compareColumns,
       );
-      for (const f of found) existingById.add(f.id.toLowerCase());
+      for (const f of found) {
+        existingById.add(f.id.toLowerCase());
+        existingTargetRecords.set(f.id.toLowerCase(), f);
+      }
     }
-    return mapLimit(records, 4, (record) => this.processRecord(ctx, entity, s, t, record, existingById));
+    return mapLimit(records, 4, async (record) => {
+      const result = await this.processRecord(ctx, entity, s, t, record, existingById, existingTargetRecords);
+      // Alternate-key matches are resolved per record; fetch the match for SYNC comparison.
+      return result;
+    });
   }
 
   private async processRecord(
@@ -432,6 +489,7 @@ export class MigrationEngine {
     t: TableMetadata,
     record: DvRecord,
     existingById: Set<string>,
+    existingTargetRecords: Map<string, DvRecord>,
   ): Promise<RecordResult> {
     const result: RecordResult = {
       sourceId: record.id,
@@ -439,6 +497,7 @@ export class MigrationEngine {
       targetId: null,
       matchMethod: null,
       deferred: null,
+      audit: null,
       errors: [],
     };
     const sAttrs = new Map(s.attributes.map((a) => [a.logicalName, a]));
@@ -526,10 +585,16 @@ export class MigrationEngine {
             `Alternate key ${entity.alternateKey} is not defined in the target`,
             400,
           );
-        const match = await ctx.tConn.findByAlternateKey(t, key, values, []);
+        const match = await ctx.tConn.findByAlternateKey(
+          t,
+          key,
+          values,
+          syncCompareColumns(ctx.options, entity),
+        );
         if (match) {
           existingId = match.id;
           matchMethod = `ALTERNATE_KEY:${key.logicalName}`;
+          existingTargetRecords.set(match.id, match);
         }
       } else if (existingById.has(record.id.toLowerCase())) {
         existingId = record.id.toLowerCase();
@@ -540,6 +605,65 @@ export class MigrationEngine {
       result.errors.push(toRecordError(err, 'MATCH'));
       return result;
     }
+
+    // Ownership and audit preservation (only what Dataverse actually allows to be written).
+    const audit = entity.audit;
+    const principal = (field: string | null): { value: LookupValue | null; unmapped: boolean } => {
+      if (!field) return { value: null, unmapped: false };
+      const raw = record.values[field];
+      if (!isLookupValue(raw)) return { value: null, unmapped: false };
+      const mapped = ctx.principalMap.get(`${raw.logicalName}:${raw.id.toLowerCase()}`);
+      return mapped
+        ? { value: { id: mapped, logicalName: raw.logicalName }, unmapped: false }
+        : { value: null, unmapped: true };
+    };
+    let impersonateUserId: string | null = null;
+    if (ctx.options.preserveOwnership && audit.ownerField) {
+      const owner = principal(audit.ownerField);
+      if (owner.value) values[audit.ownerField] = owner.value;
+      else if (owner.unmapped) {
+        result.errors.push({
+          operation: 'RESOLVE_PRINCIPAL',
+          severity: 'WARNING',
+          code: 'PRINCIPAL_UNMAPPED',
+          field: audit.ownerField,
+          message: `Owner is not mapped to a target user; the record is owned by the migrating user instead`,
+          retryable: true,
+        });
+      }
+    }
+    if (ctx.options.preserveCreatedOn && audit.createdOnField && audit.overriddenCreatedOnField) {
+      const createdOn = record.values[audit.createdOnField];
+      if (typeof createdOn === 'string') values[audit.overriddenCreatedOnField] = createdOn;
+    }
+    if (ctx.options.preserveCreatedBy && audit.createdByField) {
+      const createdBy = principal(audit.createdByField);
+      if (createdBy.value) impersonateUserId = createdBy.value.id;
+      else if (createdBy.unmapped) {
+        result.errors.push({
+          operation: 'RESOLVE_PRINCIPAL',
+          severity: 'WARNING',
+          code: 'PRINCIPAL_UNMAPPED',
+          field: audit.createdByField,
+          message: 'Created by is not mapped to a target user; the migrating user is recorded instead',
+          retryable: true,
+        });
+      }
+    }
+    let auditWork: RecordResult['audit'] = null;
+    if (ctx.options.preserveModifiedBy && audit.modifiedByField && audit.touchField) {
+      const modifiedBy = principal(audit.modifiedByField);
+      if (modifiedBy.value && modifiedBy.value.id !== impersonateUserId) {
+        auditWork = {
+          modifiedById: modifiedBy.value.id,
+          field: audit.touchField.target,
+          value: values[audit.touchField.target] ?? null,
+        };
+      }
+    }
+    const writeOptions: WriteOptions = impersonateUserId
+      ? { ...ctx.writeOptions, impersonateUserId }
+      : ctx.writeOptions;
 
     const strategy = ctx.options.conflictStrategy;
     try {
@@ -559,29 +683,62 @@ export class MigrationEngine {
           });
           return result;
         }
-        await ctx.tConn.updateRecord(t, existingId, { values }, ctx.writeOptions);
+        let changes = values;
+        if (strategy === 'SYNC') {
+          // Compare with the target and write only what actually differs, so records that already
+          // match keep their modifiedon / modifiedby untouched.
+          const current = existingTargetRecords.get(existingId);
+          if (!current) {
+            result.errors.push({
+              operation: 'COMPARE',
+              severity: 'ERROR',
+              code: 'TARGET_READ_FAILED',
+              message: 'Could not read the existing target record to compare values',
+              retryable: true,
+            });
+            return result;
+          }
+          changes = {};
+          const tAttrsByName = new Map(t.attributes.map((a) => [a.logicalName, a]));
+          for (const [field, value] of Object.entries(values)) {
+            const attr = tAttrsByName.get(field);
+            if (!attr) continue;
+            // overriddencreatedon only applies to creates.
+            if (field === audit.overriddenCreatedOnField) continue;
+            if (!valuesEqual(attr, value, current.values[field] ?? null)) changes[field] = value;
+          }
+          if (Object.keys(changes).length === 0) {
+            return { ...result, outcome: 'UNCHANGED', targetId: existingId, matchMethod };
+          }
+        }
+        await ctx.tConn.updateRecord(t, existingId, { values: changes }, writeOptions);
         return {
           ...result,
           outcome: 'UPDATED',
           targetId: existingId,
           matchMethod,
           deferred: Object.keys(deferred).length ? deferred : null,
+          audit: auditWork,
         };
       }
       // Preserve the source identifier when creating so references and re-runs stay stable.
-      const createdId = await ctx.tConn.createRecord(t, { id: record.id, values }, ctx.writeOptions);
+      const createdId = await ctx.tConn.createRecord(t, { id: record.id, values }, writeOptions);
       return {
         ...result,
         outcome: 'CREATED',
         targetId: createdId,
         matchMethod: 'PRESERVED_ID',
         deferred: Object.keys(deferred).length ? deferred : null,
+        audit: auditWork,
       };
     } catch (err) {
       if (isFatal(err)) throw err;
       const e = toRecordError(err, existingId ? 'UPDATE' : 'CREATE');
       if (e.code.startsWith('FORBIDDEN') && ctx.options.bypassCustomBusinessLogic) {
         e.message = `${e.message} (bypassing custom business logic requires the prvBypassCustomBusinessLogic privilege)`;
+      }
+      if (e.code.startsWith('FORBIDDEN') && impersonateUserId) {
+        e.message = `${e.message} (preserving "created by" impersonates the mapped user and requires prvActOnBehalfOfAnotherUser)`;
       }
       result.errors.push(e);
       return result;
@@ -766,6 +923,64 @@ export class MigrationEngine {
     }
   }
 
+  /**
+   * PASS 3: re-stamp "modified by". Dataverse never lets a client write modifiedby directly, so
+   * the record is updated once more while impersonating the mapped source user. modifiedon always
+   * becomes the migration time; that cannot be preserved by any supported API.
+   */
+  private async stampModifiedBy(ctx: ExecContext, entity: SnapshotEntity) {
+    const { run } = ctx;
+    const t = ctx.targetMeta.get(entity.logicalName);
+    if (!t) return;
+    const pending = await this.db
+      .select()
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, run.id),
+          eq(migrationRecordMaps.logicalName, entity.logicalName),
+          eq(migrationRecordMaps.auditStatus, 'PENDING'),
+          isNotNull(migrationRecordMaps.targetId),
+        ),
+      );
+    if (pending.length === 0) return;
+    await this.db
+      .update(migrationRuns)
+      .set({ currentEntity: entity.logicalName })
+      .where(eq(migrationRuns.id, run.id));
+    for (let i = 0; i < pending.length; i += ctx.options.batchSize) {
+      await this.checkControl(run.id);
+      const batch = pending.slice(i, i + ctx.options.batchSize);
+      await mapLimit(batch, 4, async (map) => {
+        const work = map.auditPending;
+        if (!work) return;
+        try {
+          await ctx.tConn.updateRecord(
+            t,
+            map.targetId!,
+            { values: { [work.field]: work.value as FieldValue } },
+            { ...ctx.writeOptions, impersonateUserId: work.modifiedById },
+          );
+          await this.db
+            .update(migrationRecordMaps)
+            .set({ auditStatus: 'DONE', updatedAt: new Date() })
+            .where(eq(migrationRecordMaps.id, map.id));
+        } catch (err) {
+          if (isFatal(err)) throw err;
+          const e = toRecordError(err, 'AUDIT_UPDATE');
+          e.severity = 'WARNING';
+          e.message = `Could not set "modified by" to the mapped source user: ${e.message}`;
+          await this.db
+            .update(migrationRecordMaps)
+            .set({ auditStatus: 'FAILED', updatedAt: new Date() })
+            .where(eq(migrationRecordMaps.id, map.id));
+          await this.persistErrors(run.id, entity.logicalName, map.sourceId, [e]);
+        }
+      });
+      await ctx.heartbeat();
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Persistence
   // ---------------------------------------------------------------------------
@@ -786,6 +1001,8 @@ export class MigrationEngine {
           matchMethod: r.matchMethod,
           deferredLookups: r.deferred,
           deferredStatus: r.deferred ? 'PENDING' : null,
+          auditPending: r.audit,
+          auditStatus: r.audit ? 'PENDING' : null,
         })
         .onConflictDoUpdate({
           target: [migrationRecordMaps.runId, migrationRecordMaps.logicalName, migrationRecordMaps.sourceId],
@@ -795,6 +1012,8 @@ export class MigrationEngine {
             matchMethod: r.matchMethod,
             deferredLookups: r.deferred,
             deferredStatus: r.deferred ? 'PENDING' : null,
+            auditPending: r.audit,
+            auditStatus: r.audit ? 'PENDING' : null,
             attempts: sql`${migrationRecordMaps.attempts} + 1`,
             updatedAt: new Date(),
           },
@@ -882,17 +1101,18 @@ export class MigrationEngine {
       .from(migrationRecordMaps)
       .where(eq(migrationRecordMaps.runId, runId))
       .groupBy(migrationRecordMaps.logicalName, migrationRecordMaps.outcome);
-    const totals = { total: 0, processed: 0, created: 0, updated: 0, skipped: 0, failed: 0 };
+    const totals = { total: 0, processed: 0, created: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0 };
     for (const e of entityRows) {
       const get = (o: string) =>
         Number(grouped.find((g) => g.logicalName === e.logicalName && g.outcome === o)?.n ?? 0);
       const c = {
         created: get('CREATED'),
         updated: get('UPDATED'),
+        unchanged: get('UNCHANGED'),
         skipped: get('SKIPPED'),
         failed: get('FAILED'),
       };
-      const processed = c.created + c.updated + c.skipped + c.failed;
+      const processed = c.created + c.updated + c.unchanged + c.skipped + c.failed;
       if (!runEntityId || runEntityId === e.id) {
         await this.db
           .update(migrationRunEntities)
@@ -903,6 +1123,7 @@ export class MigrationEngine {
       totals.processed += processed;
       totals.created += c.created;
       totals.updated += c.updated;
+      totals.unchanged += c.unchanged;
       totals.skipped += c.skipped;
       totals.failed += c.failed;
     }
@@ -927,4 +1148,6 @@ interface ExecContext {
   heartbeat: () => Promise<void>;
   /** sourceLogicalName:sourceId -> targetId (null = known missing). */
   lookupCache: Map<string, string | null>;
+  /** `${logicalName}:${sourceId}` -> target id for users, teams and business units. */
+  principalMap: ReadonlyMap<string, string>;
 }

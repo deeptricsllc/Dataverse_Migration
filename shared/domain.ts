@@ -179,7 +179,7 @@ export interface DependencyAnalysisDto {
 // Migration planning
 // ---------------------------------------------------------------------------
 
-export type ConflictStrategy = 'SKIP_EXISTING' | 'CREATE_ONLY' | 'UPSERT';
+export type ConflictStrategy = 'SKIP_EXISTING' | 'CREATE_ONLY' | 'UPSERT' | 'SYNC';
 export type MatchStrategy = 'PRIMARY_ID' | 'ALTERNATE_KEY';
 export type IssueSeverity = 'BLOCKER' | 'WARNING' | 'INFO';
 export type MappingStatus = 'AUTO_MAPPED' | 'MANUAL' | 'UNMAPPED' | 'INCOMPATIBLE' | 'IGNORED';
@@ -197,6 +197,22 @@ export interface PlanOptions {
   suppressFlowTriggers: boolean;
   /** Stop the whole run on first failure instead of continuing. */
   stopOnFirstError: boolean;
+  /** Assign migrated records to the mapped owner from the source instead of the migrating user. */
+  preserveOwnership: boolean;
+  /** Backdate created on via overriddencreatedon. */
+  preserveCreatedOn: boolean;
+  /** Create records impersonating the mapped source "created by" user (needs privilege). */
+  preserveCreatedBy: boolean;
+  /** Final pass impersonating the mapped "modified by" user (extra write per record). */
+  preserveModifiedBy: boolean;
+}
+
+/** Dataverse columns that only the audit/ownership options can write. */
+export interface AuditPreservation {
+  owner: boolean;
+  createdOn: boolean;
+  createdBy: boolean;
+  modifiedBy: boolean;
 }
 
 export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
@@ -206,6 +222,10 @@ export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
   bypassCustomBusinessLogic: false,
   suppressFlowTriggers: false,
   stopOnFirstError: false,
+  preserveOwnership: false,
+  preserveCreatedOn: false,
+  preserveCreatedBy: false,
+  preserveModifiedBy: false,
 };
 
 export interface PlanIssue {
@@ -321,16 +341,74 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<MigrationRunStatus> = new Set([
 
 export type RunEntityStatus =
   'PENDING' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'SKIPPED';
-export type RecordOutcome = 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED';
-export type RecordOperation = 'READ' | 'CREATE' | 'UPDATE' | 'MATCH' | 'RESOLVE_LOOKUP' | 'DEFERRED_UPDATE';
+export type RecordOutcome = 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
+export type RecordOperation =
+  | 'READ'
+  | 'CREATE'
+  | 'UPDATE'
+  | 'MATCH'
+  | 'COMPARE'
+  | 'RESOLVE_LOOKUP'
+  | 'RESOLVE_PRINCIPAL'
+  | 'DEFERRED_UPDATE'
+  | 'AUDIT_UPDATE';
 
 export interface RunCounters {
   total: number;
   processed: number;
   created: number;
   updated: number;
+  /** Matched in the target and identical to the source: deliberately not written. */
+  unchanged: number;
   skipped: number;
   failed: number;
+}
+
+// ---------------------------------------------------------------------------
+// Principal (user / team / business unit) mapping
+// ---------------------------------------------------------------------------
+
+export type PrincipalTable = 'systemuser' | 'team' | 'businessunit';
+export type PrincipalMatchStatus = 'AUTO_MATCHED' | 'MANUAL' | 'UNMATCHED' | 'IGNORED';
+
+export interface PrincipalDto {
+  id: string;
+  name: string;
+  /** Domain/login name (systemuser) or null. */
+  login: string | null;
+  email: string | null;
+  /** Entra object id when available: the most reliable match key. */
+  entraObjectId: string | null;
+  disabled: boolean;
+}
+
+export interface PrincipalMappingDto {
+  logicalName: PrincipalTable;
+  source: PrincipalDto;
+  target: PrincipalDto | null;
+  status: PrincipalMatchStatus;
+  /** How the match was made: ENTRA_OBJECT_ID, LOGIN, EMAIL, NAME or MANUAL. */
+  matchMethod: string | null;
+  confidence: number;
+  note: string | null;
+}
+
+export interface PrincipalMappingSummaryDto {
+  sourceEnvironment: EnvRef;
+  targetEnvironment: EnvRef;
+  refreshedAt: string | null;
+  counts: { total: number; matched: number; unmatched: number; manual: number; ignored: number };
+  mappings: PrincipalMappingDto[];
+  /** Target principals available for manual selection. */
+  targetPrincipals: Record<PrincipalTable, PrincipalDto[]>;
+  capabilities: ImpersonationCapabilityDto | null;
+}
+
+export interface ImpersonationCapabilityDto {
+  checkedAt: string;
+  /** Whether the target accepted an impersonated call (prvActOnBehalfOfAnotherUser). */
+  canImpersonate: boolean;
+  message: string;
 }
 
 export interface MigrationRunEntityDto extends RunCounters {

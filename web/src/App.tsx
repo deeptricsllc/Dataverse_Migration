@@ -12,6 +12,7 @@ import { PlanPage } from './pages/PlanPage';
 import { RunDetailPage } from './pages/RunDetailPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { UserMappingPage } from './pages/UserMappingPage';
 import { ValidationPage } from './pages/ValidationPage';
 import { ValidationReportPage } from './pages/ValidationReportPage';
 
@@ -40,6 +41,7 @@ export function App() {
         <Route path="environments" element={<EnvironmentsPage />} />
         <Route path="compare" element={<ComparePage />} />
         <Route path="compare/:comparisonId" element={<ComparePage />} />
+        <Route path="users" element={<UserMappingPage />} />
         <Route path="migration" element={<MigrationPage />} />
         <Route path="migration/new" element={<NewMigrationPage />} />
         <Route path="migration/plans/:planId" element={<PlanPage />} />

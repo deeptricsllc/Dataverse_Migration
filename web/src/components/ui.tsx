@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Download,
   Info,
   Loader2,
   X,
@@ -577,6 +578,32 @@ export function Disclosure({
       </button>
       {open && <div className="mt-2">{children}</div>}
     </div>
+  );
+}
+
+/** Downloads a server-generated CSV (same session, no data passes through the client). */
+export function ExportButton({
+  href,
+  label = 'Export CSV',
+  size = 'sm',
+}: {
+  href: string;
+  label?: string;
+  size?: 'sm' | 'md';
+}) {
+  return (
+    <a
+      href={href}
+      download
+      data-testid="export-csv"
+      className={cx(
+        'inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50',
+        size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3.5 py-2 text-sm',
+      )}
+    >
+      <Download className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} aria-hidden />
+      {label}
+    </a>
   );
 }
 

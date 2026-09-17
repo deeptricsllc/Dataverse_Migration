@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldCheck,
   Truck,
+  Users,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -22,6 +23,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/environments', label: 'Environments', icon: Database },
   { to: '/compare', label: 'Compare', icon: GitCompareArrows },
+  { to: '/users', label: 'User mapping', icon: Users },
   { to: '/migration', label: 'Migration', icon: Truck },
   { to: '/validation', label: 'Validation', icon: ShieldCheck },
   { to: '/runs', label: 'Runs', icon: History },

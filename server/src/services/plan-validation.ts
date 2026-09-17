@@ -23,6 +23,14 @@ export interface PlanValidationEntity {
   matchStrategy: MatchStrategy;
   alternateKey: string | null;
   automation: AutomationInfo | null;
+  audit?: {
+    ownerField: string | null;
+    createdOnField: string | null;
+    createdByField: string | null;
+    modifiedByField: string | null;
+    overriddenCreatedOnField: string | null;
+    touchField: { source: string; target: string } | null;
+  } | null;
 }
 
 export interface PlanValidationInput {
@@ -30,6 +38,8 @@ export interface PlanValidationInput {
   dependencies: DependencyAnalysisDto;
   options: PlanOptions;
   bypassAllowed: boolean;
+  /** Principal mapping state for ownership / audit preservation. */
+  principals?: { total: number; unmatched: number; canImpersonate: boolean | null };
 }
 
 const MAPPED = new Set(['AUTO_MAPPED', 'MANUAL']);
@@ -248,6 +258,95 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
       code: 'FLOW_TRIGGERS_SUPPRESSED',
       table: null,
       message: 'Power Automate flows triggered by Dataverse events will not run for migrated records.',
+    });
+  }
+  // Ownership and audit preservation: state precisely what Dataverse can and cannot do.
+  const audit = input.options;
+  if (audit.preserveOwnership || audit.preserveCreatedBy || audit.preserveModifiedBy) {
+    const p = input.principals;
+    if (!p || p.total === 0) {
+      add({
+        severity: 'BLOCKER',
+        code: 'PRINCIPALS_NOT_MAPPED',
+        table: null,
+        message:
+          'Ownership/audit preservation is enabled but users have not been mapped for this environment pair.',
+        resolution: 'Open User mapping and refresh the directories.',
+      });
+    } else if (p.unmatched > 0) {
+      add({
+        severity: 'WARNING',
+        code: 'PRINCIPALS_UNMATCHED',
+        table: null,
+        message: `${p.unmatched} of ${p.total} source users/teams have no target match. Their records fall back to the migrating user and are reported per record.`,
+        resolution: 'Map them manually in User mapping, or accept the fallback.',
+      });
+    }
+  }
+  if (audit.preserveCreatedBy || audit.preserveModifiedBy) {
+    const canImpersonate = input.principals?.canImpersonate;
+    add({
+      severity: canImpersonate === false ? 'BLOCKER' : 'WARNING',
+      code: 'AUDIT_IMPERSONATION',
+      table: null,
+      message:
+        canImpersonate === false
+          ? 'Preserving created by / modified by requires the "Act on Behalf of Another User" privilege (prvActOnBehalfOfAnotherUser) in the target, which this account does not have.'
+          : 'Records are written while impersonating the mapped source users so that created by / modified by match the source. Every write is audited.',
+      resolution:
+        canImpersonate === null ? 'Run the impersonation check on the User mapping page.' : undefined,
+    });
+    add({
+      severity: 'INFO',
+      code: 'MODIFIED_ON_NOT_PRESERVABLE',
+      table: null,
+      message: 'Modified on always becomes the migration time: Dataverse does not allow it to be written.',
+    });
+  }
+  if (audit.preserveModifiedBy) {
+    add({
+      severity: 'INFO',
+      code: 'AUDIT_EXTRA_WRITE',
+      table: null,
+      message: 'Preserving "modified by" performs one extra update per record after the data passes.',
+    });
+  }
+  for (const e of input.entities) {
+    if (!e.audit) continue;
+    if (audit.preserveOwnership && !e.audit.ownerField) {
+      add({
+        severity: 'INFO',
+        code: 'OWNERSHIP_NOT_APPLICABLE',
+        table: e.logicalName,
+        message:
+          'This table has no owner column (organization-owned); ownership preservation does not apply.',
+      });
+    }
+    if (audit.preserveCreatedOn && !e.audit.overriddenCreatedOnField) {
+      add({
+        severity: 'WARNING',
+        code: 'CREATED_ON_NOT_PRESERVABLE',
+        table: e.logicalName,
+        message:
+          'The target does not expose overriddencreatedon for this table; created on will be the migration time.',
+      });
+    }
+    if (audit.preserveModifiedBy && !e.audit.touchField) {
+      add({
+        severity: 'WARNING',
+        code: 'MODIFIED_BY_NOT_PRESERVABLE',
+        table: e.logicalName,
+        message: 'No writable mapped column is available to re-stamp "modified by" for this table.',
+      });
+    }
+  }
+  if (input.options.conflictStrategy === 'SYNC') {
+    add({
+      severity: 'INFO',
+      code: 'SYNC_STRATEGY',
+      table: null,
+      message:
+        'Sync: missing records are created, changed records are updated field by field, and identical records are left untouched (their modified on / modified by stay as they are).',
     });
   }
   if (input.options.conflictStrategy === 'UPSERT') {

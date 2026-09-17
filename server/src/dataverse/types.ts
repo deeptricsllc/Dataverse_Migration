@@ -1,4 +1,4 @@
-import type { AutomationInfo } from '../../../shared/domain';
+import type { AutomationInfo, PrincipalDto, PrincipalTable } from '../../../shared/domain';
 import type {
   AlternateKeyMeta,
   DvRecord,
@@ -29,6 +29,11 @@ export interface WriteRecord {
 export interface WriteOptions {
   bypassCustomBusinessLogic: boolean;
   suppressFlowTriggers: boolean;
+  /**
+   * Execute the write as this target user (Dataverse MSCRMCallerID). Used to preserve
+   * "created by" / "modified by". Requires prvActOnBehalfOfAnotherUser in the target.
+   */
+  impersonateUserId?: string | null;
 }
 
 /**
@@ -63,6 +68,12 @@ export interface DataverseConnection {
 
   /** Detects server-side logic (plug-ins, workflows, flows) that runs on create/update. */
   detectAutomation(tables: TableSummary[]): Promise<AutomationInfo[]>;
+
+  /** Users, teams or business units available in this environment (for principal mapping). */
+  listPrincipals(table: PrincipalTable): Promise<PrincipalDto[]>;
+
+  /** Verifies whether this connection may impersonate another user (no data is written). */
+  checkImpersonation(targetUserId: string): Promise<{ allowed: boolean; message: string }>;
 }
 
 export interface DiscoveredEnvironment {

@@ -23,6 +23,7 @@ import {
   Pill,
   ProgressBar,
   Select,
+  ExportButton,
   Spinner,
   Stat,
   StatusBadge,
@@ -227,6 +228,12 @@ export function RunDetailPage() {
           <Stat label="Processed" value={fmtNumber(r.processed)} hint={`of ${fmtNumber(r.total)}`} />
           <Stat label="Created" tone="green" value={fmtNumber(r.created)} />
           <Stat label="Updated" tone="blue" value={fmtNumber(r.updated)} />
+          <Stat
+            label="Unchanged"
+            tone="slate"
+            value={fmtNumber(r.unchanged)}
+            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : undefined}
+          />
           <Stat label="Skipped" tone="slate" value={fmtNumber(r.skipped)} />
           <Stat
             label="Failed"
@@ -267,6 +274,7 @@ export function RunDetailPage() {
                 <Th className="w-64">Progress</Th>
                 <Th className="text-right">Created</Th>
                 <Th className="text-right">Updated</Th>
+                <Th className="text-right">Unchanged</Th>
                 <Th className="text-right">Skipped</Th>
                 <Th className="text-right">Failed</Th>
                 <Th>Deferred lookups</Th>
@@ -299,6 +307,7 @@ export function RunDetailPage() {
                     </Td>
                     <Td className="text-right tabular-nums">{fmtNumber(e.created)}</Td>
                     <Td className="text-right tabular-nums">{fmtNumber(e.updated)}</Td>
+                    <Td className="text-right tabular-nums">{fmtNumber(e.unchanged)}</Td>
                     <Td className="text-right tabular-nums">{fmtNumber(e.skipped)}</Td>
                     <Td className={`text-right tabular-nums ${e.failed ? 'font-semibold text-red-700' : ''}`}>
                       {fmtNumber(e.failed)}
@@ -406,6 +415,9 @@ function ErrorsPanel({ run }: { run: MigrationRunDto }) {
               ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName })),
             ]}
           />
+          <ExportButton
+            href={`/api/runs/${run.id}/errors.csv${qs({ kind, entity: entity || undefined, severity: severity || undefined })}`}
+          />
         </>
       }
       bodyClassName="p-0"
@@ -493,7 +505,7 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
             }}
             options={[
               { value: '', label: 'All outcomes' },
-              ...['CREATED', 'UPDATED', 'SKIPPED', 'FAILED'].map((o) => ({
+              ...['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED', 'FAILED'].map((o) => ({
                 value: o,
                 label: o.toLowerCase(),
               })),
@@ -510,6 +522,9 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
               { value: '', label: 'All tables' },
               ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName })),
             ]}
+          />
+          <ExportButton
+            href={`/api/runs/${run.id}/records.csv${qs({ entity: entity || undefined, outcome: outcome || undefined })}`}
           />
         </>
       }

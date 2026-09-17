@@ -25,6 +25,7 @@ import type {
   ValidationSummary,
   AutomationInfo,
 } from '../../../shared/domain';
+import type { PrincipalDto, PrincipalMatchStatus, PrincipalTable } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
@@ -349,6 +350,8 @@ export const migrationPlanEntities = pgTable(
       .default(sql`'[]'::jsonb`),
     cycleGroup: integer('cycle_group'),
     automation: jsonb('automation').$type<AutomationInfo | null>(),
+    /** Which ownership/audit columns this table can preserve (computed from both schemas). */
+    audit: jsonb('audit').$type<RunPlanSnapshot['entities'][number]['audit'] | null>(),
   },
   (t) => [uniqueIndex('migration_plan_entities_uq').on(t.planId, t.logicalName)],
 );
@@ -417,6 +420,7 @@ export const migrationRuns = pgTable(
     processed: integer('processed').notNull().default(0),
     created: integer('created').notNull().default(0),
     updated: integer('updated').notNull().default(0),
+    unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
@@ -451,6 +455,7 @@ export const migrationRunEntities = pgTable(
     processed: integer('processed').notNull().default(0),
     created: integer('created').notNull().default(0),
     updated: integer('updated').notNull().default(0),
+    unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
     deferredPending: integer('deferred_pending').notNull().default(0),
@@ -477,7 +482,7 @@ export const migrationRecordMaps = pgTable(
     logicalName: text('logical_name').notNull(),
     sourceId: text('source_id').notNull(),
     targetId: text('target_id'),
-    outcome: text('outcome').$type<'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED'>().notNull(),
+    outcome: text('outcome').$type<'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED'>().notNull(),
     matchMethod: text('match_method'),
     /** Lookups deferred to pass 2: attribute -> source lookup value. */
     deferredLookups: jsonb('deferred_lookups').$type<Record<
@@ -485,6 +490,13 @@ export const migrationRecordMaps = pgTable(
       { id: string; logicalName: string }
     > | null>(),
     deferredStatus: text('deferred_status').$type<'PENDING' | 'RESOLVED' | 'FAILED' | null>(),
+    /** Pass 3: re-stamp modifiedby as the mapped source user (impersonated update). */
+    auditPending: jsonb('audit_pending').$type<{
+      modifiedById: string;
+      field: string;
+      value: unknown;
+    } | null>(),
+    auditStatus: text('audit_status').$type<'PENDING' | 'DONE' | 'FAILED' | null>(),
     attempts: integer('attempts').notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -525,6 +537,63 @@ export const migrationErrors = pgTable(
   (t) => [
     index('migration_errors_run_idx').on(t.runId, t.createdAt),
     index('migration_errors_record_idx').on(t.runId, t.logicalName, t.sourceRecordId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Principal (user / team / business unit) mapping
+// ---------------------------------------------------------------------------
+
+/** Cached directory of principals per environment, used for matching and manual selection. */
+export const principalDirectory = pgTable(
+  'principal_directory',
+  {
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').$type<PrincipalTable>().notNull(),
+    principalId: text('principal_id').notNull(),
+    data: jsonb('data').$type<PrincipalDto>().notNull(),
+    fetchedAt: ts('fetched_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.environmentId, t.logicalName, t.principalId] })],
+);
+
+/**
+ * Source principal -> target principal for one environment pair. Drives ownership and
+ * created-by/modified-by preservation, and lookups to users, teams and business units.
+ */
+export const principalMaps = pgTable(
+  'principal_maps',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    sourceEnvironmentId: uuid('source_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    targetEnvironmentId: uuid('target_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').$type<PrincipalTable>().notNull(),
+    sourceId: text('source_id').notNull(),
+    targetId: text('target_id'),
+    status: text('status').$type<PrincipalMatchStatus>().notNull(),
+    matchMethod: text('match_method'),
+    confidence: integer('confidence').notNull().default(0),
+    note: text('note'),
+    updatedByUserId: uuid('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('principal_maps_uq').on(
+      t.sourceEnvironmentId,
+      t.targetEnvironmentId,
+      t.logicalName,
+      t.sourceId,
+    ),
+    index('principal_maps_org_idx').on(t.organizationId),
   ],
 );
 

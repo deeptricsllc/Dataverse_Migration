@@ -19,6 +19,7 @@ import {
   users,
   validationDifferences,
   validationEntityResults,
+  principalMaps,
   validationRuns,
 } from '../db/schema';
 import type { ConnectionFactory } from '../dataverse/factory';
@@ -29,6 +30,7 @@ import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
+import type { PlanOptions } from '../../../shared/domain';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { displayValue, transformValue, valuesEqual } from './values';
@@ -64,7 +66,7 @@ export interface EntityComparisonInput {
   pairs: {
     source: DvRecord;
     target: DvRecord | null;
-    outcome: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED' | 'UNMAPPED';
+    outcome: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED' | 'UNMAPPED';
   }[];
   /** Resolves a source lookup to the expected target id (null = unknown). */
   expectedLookup: (logicalName: string, sourceId: string) => string | null;
@@ -252,14 +254,33 @@ export class ValidationService {
       const target = await this.environmentsSvc.getInOrganization(vr.organizationId, vr.targetEnvironmentId);
       const sConn = this.connections.forEnvironment(source, vr.createdByUserId, { validationRunId });
       const tConn = this.connections.forEnvironment(target, vr.createdByUserId, { validationRunId });
-      const snapshot: RunPlanSnapshot | null = vr.migrationRunId
-        ? ((
-            await this.db
-              .select({ s: migrationRuns.planSnapshot })
-              .from(migrationRuns)
-              .where(eq(migrationRuns.id, vr.migrationRunId))
-          )[0]?.s ?? null)
-        : null;
+      const [runRow] = vr.migrationRunId
+        ? await this.db
+            .select({ s: migrationRuns.planSnapshot, o: migrationRuns.options })
+            .from(migrationRuns)
+            .where(eq(migrationRuns.id, vr.migrationRunId))
+        : [];
+      const snapshot: RunPlanSnapshot | null = runRow?.s ?? null;
+      const runOptions = runRow?.o ?? null;
+      // Users/teams have different ids per environment: the principal map says which target
+      // principal a source principal became.
+      const principalRows = await this.db
+        .select({
+          logicalName: principalMaps.logicalName,
+          sourceId: principalMaps.sourceId,
+          targetId: principalMaps.targetId,
+        })
+        .from(principalMaps)
+        .where(
+          and(
+            eq(principalMaps.sourceEnvironmentId, vr.sourceEnvironmentId),
+            eq(principalMaps.targetEnvironmentId, vr.targetEnvironmentId),
+            inArray(principalMaps.status, ['AUTO_MATCHED', 'MANUAL']),
+          ),
+        );
+      const principalMap = new Map(
+        principalRows.filter((r) => r.targetId).map((r) => [`${r.logicalName}:${r.sourceId}`, r.targetId!]),
+      );
 
       await progress('Loading metadata');
       const targetCatalog = await this.metadata.getCatalog(target.id, tConn, true);
@@ -287,6 +308,8 @@ export class ValidationService {
           target: targetMeta.get(table),
           targetMeta,
           snapshotEntity: snapshot?.entities.find((e) => e.logicalName === table) ?? null,
+          runOptions,
+          principalMap,
           sConn,
           tConn,
           sourceEnvId: source.id,
@@ -357,6 +380,8 @@ export class ValidationService {
     target: TableMetadata | undefined;
     targetMeta: Map<string, TableMetadata>;
     snapshotEntity: RunPlanSnapshot['entities'][number] | null;
+    runOptions: PlanOptions | null;
+    principalMap: ReadonlyMap<string, string>;
     sConn: DataverseConnection;
     tConn: DataverseConnection;
     sourceEnvId: string;
@@ -452,6 +477,24 @@ export class ValidationService {
           targetField: a.logicalName,
           isLookup: LOOKUP_TYPES.has(a.type),
         }));
+
+    // Ownership and audit columns are validated when the run was asked to preserve them.
+    const auditEntity = p.snapshotEntity?.audit;
+    const o = p.runOptions;
+    const auditChecks: { sourceField: string; targetField: string; isLookup: boolean }[] = [];
+    const bothHave = (name: string) =>
+      source.attributes.some((a) => a.logicalName === name) &&
+      target.attributes.some((a) => a.logicalName === name);
+    if (o?.preserveOwnership && auditEntity?.ownerField && bothHave('ownerid'))
+      auditChecks.push({ sourceField: 'ownerid', targetField: 'ownerid', isLookup: true });
+    if (o?.preserveCreatedOn && auditEntity?.overriddenCreatedOnField && bothHave('createdon'))
+      auditChecks.push({ sourceField: 'createdon', targetField: 'createdon', isLookup: false });
+    if (o?.preserveCreatedBy && bothHave('createdby'))
+      auditChecks.push({ sourceField: 'createdby', targetField: 'createdby', isLookup: true });
+    if (o?.preserveModifiedBy && auditEntity?.touchField && bothHave('modifiedby'))
+      auditChecks.push({ sourceField: 'modifiedby', targetField: 'modifiedby', isLookup: true });
+    for (const check of auditChecks)
+      if (!mappings.some((m) => m.targetField === check.targetField)) mappings.push(check);
 
     let pairs: EntityComparisonInput['pairs'];
     const failedMaps = maps.filter((m) => m.outcome === 'FAILED');
@@ -552,7 +595,10 @@ export class ValidationService {
       target,
       mappings,
       pairs,
-      expectedLookup: (logicalName, id) => expected.get(`${logicalName}:${id.toLowerCase()}`) ?? null,
+      expectedLookup: (logicalName, id) =>
+        p.principalMap.get(`${logicalName}:${id.toLowerCase()}`) ??
+        expected.get(`${logicalName}:${id.toLowerCase()}`) ??
+        null,
     });
     diffs.push(...cmp.diffs);
     for (const f of failedMaps) {

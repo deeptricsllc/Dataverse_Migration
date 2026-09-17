@@ -71,7 +71,73 @@ export const DEMO_ENVIRONMENTS: DemoEnvironmentDef[] = [
   },
 ];
 
-export const DEMO_USER_SYSTEMUSER_ID = demoGuid('systemuser', 'demo-user');
+/**
+ * Demo users exist in every environment but with DIFFERENT record ids, exactly like real
+ * Dataverse environments. Migrating ownership or audit fields therefore requires principal
+ * mapping (matched here on Entra object id / login / email).
+ */
+export const DEMO_USERS = [
+  {
+    key: 'demo.user',
+    name: 'Demo User',
+    email: 'demo.user@deeptrics.demo',
+    entra: true,
+    envs: ['demo-dev', 'demo-qa', 'demo-uat', 'demo-prod'],
+  },
+  {
+    key: 'priya.patel',
+    name: 'Priya Patel',
+    email: 'priya.patel@deeptrics.demo',
+    entra: true,
+    envs: ['demo-dev', 'demo-qa', 'demo-uat', 'demo-prod'],
+  },
+  {
+    key: 'mateo.garcia',
+    name: 'Mateo Garcia',
+    email: 'mateo.garcia@deeptrics.demo',
+    entra: true,
+    envs: ['demo-dev', 'demo-qa', 'demo-uat', 'demo-prod'],
+  },
+  {
+    key: 'aisha.haddad',
+    name: 'Aisha Haddad',
+    email: 'aisha.haddad@deeptrics.demo',
+    entra: false,
+    envs: ['demo-dev', 'demo-qa', 'demo-uat', 'demo-prod'],
+  },
+  // Only exists in Development: nothing to map to in the target.
+  {
+    key: 'legacy.integration',
+    name: 'Legacy Integration Account',
+    email: null,
+    entra: false,
+    envs: ['demo-dev'],
+  },
+  // Only exists in QA/UAT: available as a manual mapping target.
+  {
+    key: 'qa.analyst',
+    name: 'QA Analyst',
+    email: 'qa.analyst@deeptrics.demo',
+    entra: true,
+    envs: ['demo-qa', 'demo-uat'],
+  },
+] as const;
+
+export type DemoUserKey = (typeof DEMO_USERS)[number]['key'];
+
+/** Record id of a demo user in one environment (differs per environment by design). */
+export const demoUserId = (env: DemoEnvKey, key: string) => demoGuid('systemuser', env, key);
+
+/** Reverse lookup used when projecting source data into another demo environment. */
+export function demoUserKeyById(env: DemoEnvKey, id: string): string | null {
+  return DEMO_USERS.find((u) => demoUserId(env, u.key) === id)?.key ?? null;
+}
+
+export const demoUsersFor = (env: DemoEnvKey) =>
+  DEMO_USERS.filter((u) => (u.envs as readonly string[]).includes(env));
+
+/** The user the demo signs in as, per environment. */
+export const DEMO_SIGNED_IN_USER = 'demo.user';
 export const DEMO_ORGANIZATION_ID = demoGuid('organization', 'deeptrics');
 
 /** Deterministic GUID from a seed (stable across restarts and environments). */
@@ -190,8 +256,7 @@ function table(def: TableDef): TableMetadata {
 }
 
 const auditColumns = () => [
-  attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
-  attr('modifiedon', 'DateTime', { display: 'Modified On', create: false, update: false }),
+  ...systemAuditColumns(),
   attr('ownerid', 'Owner', { display: 'Owner', targets: ['systemuser', 'team'], required: 'SystemRequired' }),
   attr('statecode', 'State', {
     display: 'Status',
@@ -209,6 +274,28 @@ const auditColumns = () => [
     ],
   }),
 ];
+
+/** Audit columns every Dataverse table carries. */
+function systemAuditColumns() {
+  return [
+    attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
+    attr('modifiedon', 'DateTime', { display: 'Modified On', create: false, update: false }),
+    attr('createdby', 'Lookup', {
+      display: 'Created By',
+      targets: ['systemuser'],
+      create: false,
+      update: false,
+    }),
+    attr('modifiedby', 'Lookup', {
+      display: 'Modified By',
+      targets: ['systemuser'],
+      create: false,
+      update: false,
+    }),
+    // Writable on create only: backdates createdon, like Dataverse.
+    attr('overriddencreatedon', 'DateTime', { display: 'Record Created On', create: true, update: false }),
+  ];
+}
 
 const INDUSTRIES = opts(
   'Accounting',
@@ -345,7 +432,7 @@ function buildProduct({ env }: Variant): TableMetadata {
         ],
         required: 'SystemRequired',
       }),
-      attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
+      ...systemAuditColumns(),
     ],
     keys: [key('dtx_productnumber_key', ['productnumber'], 'Product Number')],
   });
@@ -367,7 +454,7 @@ function buildConfig({ env }: Variant): TableMetadata {
         display: 'Category',
         options: opts('General', 'Integration', 'Security'),
       }),
-      attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
+      ...systemAuditColumns(),
     ],
     keys: [key('dtx_configkey_key', ['dtx_key'], 'Config Key')],
   });
@@ -384,7 +471,7 @@ function buildRegion(): TableMetadata {
       attr('dtx_name', 'String', { display: 'Name', required: 'ApplicationRequired', primaryName: true }),
       attr('dtx_code', 'String', { display: 'Code', maxLength: 10, required: 'ApplicationRequired' }),
       attr('dtx_headofficeid', 'Lookup', { display: 'Head Office', targets: ['dtx_office'] }),
-      attr('createdon', 'DateTime', { display: 'Created On', create: false, update: false }),
+      ...systemAuditColumns(),
     ],
     keys: [key('dtx_regioncode_key', ['dtx_code'], 'Region Code')],
   });
@@ -471,7 +558,12 @@ export function demoMetadata(env: DemoEnvKey): TableMetadata[] {
     buildConfig(variant),
     buildRegion(),
     buildOffice(),
-    platformTable('systemuser', 'User', 'systemusers', 'fullname'),
+    platformTable('systemuser', 'User', 'systemusers', 'fullname', [
+      attr('domainname', 'String', { display: 'User Name', maxLength: 200, custom: false }),
+      attr('internalemailaddress', 'String', { display: 'Email', maxLength: 200, custom: false }),
+      attr('azureactivedirectoryobjectid', 'Uniqueidentifier', { display: 'Entra Object Id', custom: false }),
+      attr('isdisabled', 'Boolean', { display: 'Status', custom: false }),
+    ]),
     platformTable('team', 'Team', 'teams', 'name'),
     platformTable('businessunit', 'Business Unit', 'businessunits', 'name'),
     platformTable('transactioncurrency', 'Currency', 'transactioncurrencies', 'currencyname', [
@@ -616,22 +708,36 @@ const CITIES = [
 export const CURRENCY_USD = demoGuid('transactioncurrency', 'USD');
 export const CURRENCY_EUR = demoGuid('transactioncurrency', 'EUR');
 
-function platformRows(): DemoDataset {
+function platformRows(env: DemoEnvKey): DemoDataset {
   return {
     transactioncurrency: [
       { transactioncurrencyid: CURRENCY_USD, currencyname: 'US Dollar', isocurrencycode: 'USD' },
       { transactioncurrencyid: CURRENCY_EUR, currencyname: 'Euro', isocurrencycode: 'EUR' },
     ],
-    systemuser: [{ systemuserid: DEMO_USER_SYSTEMUSER_ID, fullname: 'Demo User' }],
+    systemuser: demoUsersFor(env).map((u) => ({
+      systemuserid: demoUserId(env, u.key),
+      fullname: u.name,
+      domainname: u.email ?? `${u.key}@deeptrics.demo`,
+      internalemailaddress: u.email,
+      // Users federated with Entra ID carry an object id that is identical across environments.
+      azureactivedirectoryobjectid: u.entra ? demoGuid('entra', u.key) : null,
+      isdisabled: false,
+    })),
     businessunit: [{ businessunitid: demoGuid('businessunit', 'root'), name: 'DeepTrics' }],
     team: [],
   };
 }
 
-export function sourceDataset(): DemoDataset {
+export function sourceDataset(env: DemoEnvKey = 'demo-dev'): DemoDataset {
   const rand = prng(20260917);
   const pick = <T>(arr: T[]) => arr[Math.floor(rand() * arr.length)];
-  const data: DemoDataset = { ...platformRows() };
+  const data: DemoDataset = { ...platformRows(env) };
+  // Records are owned and were created by different users, so ownership/audit preservation
+  // has something real to map.
+  const owners = ['priya.patel', 'mateo.garcia', 'aisha.haddad', 'legacy.integration'];
+  const owner = (i: number) => lk('systemuser', demoUserId(env, owners[i % owners.length]));
+  const author = (i: number) => lk('systemuser', demoUserId(env, owners[(i + 1) % owners.length]));
+  const editor = (i: number) => lk('systemuser', demoUserId(env, owners[(i + 2) % owners.length]));
 
   const regionIds = REGIONS.map(([code]) => demoGuid('dtx_region', code));
   const officeIds = CITIES.map((c) => demoGuid('dtx_office', c));
@@ -649,6 +755,9 @@ export function sourceDataset(): DemoDataset {
     dtx_regionid: lk('dtx_region', regionIds[Math.floor(i / 3) % regionIds.length]),
     dtx_openedon: `20${10 + (i % 14)}-0${1 + (i % 9)}-15`,
     dtx_headcount: 20 + Math.floor(rand() * 400),
+    ownerid: owner(i),
+    createdby: author(i),
+    modifiedby: editor(i),
     statecode: 0,
     statuscode: 1,
     createdon: '2025-01-15T10:00:00Z',
@@ -714,7 +823,9 @@ export function sourceDataset(): DemoDataset {
       transactioncurrencyid: lk('transactioncurrency', i % 3 === 0 ? CURRENCY_EUR : CURRENCY_USD),
       dtx_regionid: lk('dtx_region', regionIds[i % regionIds.length]),
       dtx_tier: 1 + (i % 3),
-      ownerid: lk('systemuser', DEMO_USER_SYSTEMUSER_ID),
+      ownerid: owner(i),
+      createdby: author(i),
+      modifiedby: editor(i),
       statecode: 0,
       statuscode: 1,
       createdon: `2025-0${1 + (i % 9)}-1${i % 10}T12:00:00Z`,
@@ -740,7 +851,9 @@ export function sourceDataset(): DemoDataset {
       preferredcontactmethodcode: 1 + (i % 5),
       donotemail: i % 13 === 0,
       dtx_nationalid: i % 4 === 0 ? `NID-${100000 + i}` : null,
-      ownerid: lk('systemuser', DEMO_USER_SYSTEMUSER_ID),
+      ownerid: owner(i + 1),
+      createdby: author(i + 1),
+      modifiedby: editor(i + 1),
       statecode: 0,
       statuscode: 1,
       createdon: '2025-05-01T08:30:00Z',
@@ -767,7 +880,15 @@ export function sourceDataset(): DemoDataset {
 
 /** QA: some records already exist (same IDs, a few with different values) and key-matched products. */
 export function qaDataset(source: DemoDataset): DemoDataset {
-  const data: DemoDataset = { ...platformRows() };
+  const data: DemoDataset = { ...platformRows('demo-qa') };
+  // Pre-existing QA records are owned by QA users (different ids for the same people).
+  const toQaUser = (v: FieldValue): FieldValue => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+    const key = demoUserKeyById('demo-dev', (v as { id: string }).id);
+    return key && key !== 'legacy.integration'
+      ? lk('systemuser', demoUserId('demo-qa', key))
+      : lk('systemuser', demoUserId('demo-qa', 'demo.user'));
+  };
   data.dtx_region = source.dtx_region.slice(1, 3).map((r, i) => ({
     ...r,
     dtx_name: i === 0 ? 'EMEA Region' : r.dtx_name,
@@ -790,7 +911,9 @@ export function qaDataset(source: DemoDataset): DemoDataset {
     primarycontactid: null,
     transactioncurrencyid: a.transactioncurrencyid,
     dtx_regionid: null,
-    ownerid: a.ownerid,
+    ownerid: toQaUser(a.ownerid),
+    createdby: toQaUser(a.createdby),
+    modifiedby: toQaUser(a.modifiedby),
     statecode: 0,
     statuscode: 1,
     createdon: '2026-03-01T00:00:00Z',
@@ -798,6 +921,8 @@ export function qaDataset(source: DemoDataset): DemoDataset {
   data.contact = [];
   data.product = source.product.slice(0, 5).map((p, i) => ({
     ...p,
+    createdby: toQaUser(p.createdby),
+    modifiedby: toQaUser(p.modifiedby),
     productid: demoGuid('product', 'qa', String(i)),
     dtx_warrantymonths: Number(p.dtx_warrantymonths),
     price: i === 1 ? 999.99 : p.price,
@@ -813,7 +938,7 @@ export function qaDataset(source: DemoDataset): DemoDataset {
 
 export function uatDataset(): DemoDataset {
   return {
-    ...platformRows(),
+    ...platformRows('demo-uat'),
     dtx_region: [],
     dtx_office: [],
     account: [],

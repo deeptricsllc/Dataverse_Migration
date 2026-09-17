@@ -119,6 +119,14 @@ export class MigrationRunService {
             isLookup: m.isLookup,
             deferredTargets: m.deferredTargets,
           })),
+        audit: e.audit ?? {
+          ownerField: null,
+          createdOnField: null,
+          createdByField: null,
+          modifiedByField: null,
+          overriddenCreatedOnField: null,
+          touchField: null,
+        },
       })),
     };
 
@@ -298,6 +306,7 @@ export class MigrationRunService {
       processed: r.processed,
       created: r.created,
       updated: r.updated,
+      unchanged: r.unchanged,
       skipped: r.skipped,
       failed: r.failed,
       entities: entities.map((e) => ({
@@ -310,6 +319,7 @@ export class MigrationRunService {
         processed: e.processed,
         created: e.created,
         updated: e.updated,
+        unchanged: e.unchanged,
         skipped: e.skipped,
         failed: e.failed,
         deferredPending: e.deferredPending,
@@ -414,7 +424,7 @@ export class MigrationRunService {
     runId: string,
     filter: {
       entity?: string;
-      outcome?: 'CREATED' | 'UPDATED' | 'SKIPPED' | 'FAILED';
+      outcome?: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
       limit: number;
       offset: number;
     },

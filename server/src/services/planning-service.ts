@@ -12,7 +12,7 @@ import {
   type TableCandidateDto,
   type TableCategory,
 } from '../../../shared/domain';
-import { LOOKUP_TYPES, type TableMetadata } from '../../../shared/metadata';
+import { LOOKUP_TYPES, SYSTEM_MANAGED_COLUMNS, type TableMetadata } from '../../../shared/metadata';
 import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import {
@@ -43,6 +43,7 @@ import {
 } from './mapping';
 import { isMigratableTable, type MetadataService } from './metadata-service';
 import { countBySeverity, validatePlan } from './plan-validation';
+import type { PrincipalService } from './principal-service';
 import { diffTableDeep } from './schema-diff';
 
 type PlanRow = typeof migrationPlans.$inferSelect;
@@ -68,6 +69,7 @@ export class PlanningService {
     private readonly metadata: MetadataService,
     private readonly connections: ConnectionFactory,
     private readonly comparisons: ComparisonService,
+    private readonly principals: PrincipalService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
   ) {}
@@ -461,6 +463,7 @@ export class PlanningService {
             countApproximate: Boolean(sc?.approximate || tc?.approximate),
             schemaStatus: !s ? null : !t ? 'SOURCE_ONLY' : diffTableDeep(s, t).status,
             automation: automationByTable.get(name) ?? null,
+            audit: s && t ? auditCapability(s, t) : null,
           })
           .where(eq(migrationPlanEntities.id, entity.id))
           .returning();
@@ -523,6 +526,26 @@ export class PlanningService {
         }
       }
 
+      const opts = { ...DEFAULT_PLAN_OPTIONS, ...plan.options };
+      let principals: { total: number; unmatched: number; canImpersonate: boolean | null } | undefined;
+      if (opts.preserveOwnership || opts.preserveCreatedBy || opts.preserveModifiedBy) {
+        const summary = await this.principals.list(ctx, source.id, target.id);
+        principals = {
+          total: summary.counts.total,
+          unmatched: summary.counts.unmatched,
+          canImpersonate: null,
+        };
+        if (opts.preserveCreatedBy || opts.preserveModifiedBy) {
+          try {
+            principals.canImpersonate = (
+              await this.principals.checkImpersonation(ctx, source.id, target.id)
+            ).canImpersonate;
+          } catch (err) {
+            this.logger.warn({ planId: plan.id, err: (err as Error).message }, 'Impersonation check failed');
+          }
+        }
+      }
+
       const issues = validatePlan({
         entities: entityRows.map((e) => {
           const s = sourceMeta.get(e.logicalName);
@@ -547,11 +570,13 @@ export class PlanningService {
             matchStrategy: e.matchStrategy,
             alternateKey: e.alternateKey,
             automation: e.automation ?? null,
+            audit: e.audit ?? null,
           };
         }),
         dependencies: analysis,
-        options: { ...DEFAULT_PLAN_OPTIONS, ...plan.options },
+        options: opts,
         bypassAllowed: this.bypassAllowed(ctx),
+        principals,
       });
 
       const blockers = countBySeverity(issues, 'BLOCKER');
@@ -949,5 +974,37 @@ export function toMappingDto(m: MappingRow): FieldMappingDto {
     required: m.required,
     deferred: m.deferred,
     deferredTargets: m.deferredTargets,
+  };
+}
+
+/**
+ * Which ownership/audit columns a table can preserve, given both schemas.
+ *  - owner: written directly on create/update.
+ *  - createdOn: written through the target's overriddencreatedon column.
+ *  - createdBy/modifiedBy: only reachable by impersonating the mapped user.
+ *  - touchField: a mapped column re-written in pass 3 to re-stamp modifiedby.
+ */
+export function auditCapability(source: TableMetadata, target: TableMetadata) {
+  const sourceHas = (name: string) =>
+    source.attributes.some((a) => a.logicalName === name && a.isValidForRead);
+  const targetWritable = (name: string, onCreate = true) =>
+    target.attributes.some(
+      (a) => a.logicalName === name && (onCreate ? a.isValidForCreate : a.isValidForUpdate),
+    );
+  const touchSource = [target.primaryNameAttribute, ...target.attributes.map((a) => a.logicalName)].find(
+    (name): name is string =>
+      Boolean(name) &&
+      sourceHas(name!) &&
+      targetWritable(name!, false) &&
+      !LOOKUP_TYPES.has(target.attributes.find((a) => a.logicalName === name)?.type ?? 'Other') &&
+      !SYSTEM_MANAGED_COLUMNS.has(name!),
+  );
+  return {
+    ownerField: sourceHas('ownerid') && targetWritable('ownerid') ? 'ownerid' : null,
+    createdOnField: sourceHas('createdon') ? 'createdon' : null,
+    createdByField: sourceHas('createdby') ? 'createdby' : null,
+    modifiedByField: sourceHas('modifiedby') ? 'modifiedby' : null,
+    overriddenCreatedOnField: targetWritable('overriddencreatedon') ? 'overriddencreatedon' : null,
+    touchField: touchSource ? { source: touchSource, target: touchSource } : null,
   };
 }
