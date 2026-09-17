@@ -67,7 +67,7 @@ automatically and runs the job worker in-process. Demo mode is on by default out
 8. **Validate:** the report shows missing records (the failed ones), pre-existing differences and zero broken references. Every table, error and difference list has an **Export CSV** button.
 9. **Re-run** the same plan with the Sync strategy: everything that already matches is reported as _unchanged_ and nothing is written, so target audit stamps stay put.
 
-The demo users (Priya Patel, Mateo Garcia, Aisha Haddad and a Development-only service account) exist in each simulated environment with **different record ids**, which is what makes the user mapping observable.
+The demo users (Priya Patel, Mateo Garcia, Aisha Haddad and a Development-only service account) exist in each simulated environment with **different record ids**, which is what makes the user mapping observable. A Development user called _Jordan Lee_ matches two different target users of the same name: it is reported as **ambiguous** and is never mapped automatically.
 
 DeepTrics UAT is an empty target, useful for a clean full migration.
 

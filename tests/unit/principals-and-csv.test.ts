@@ -51,7 +51,10 @@ describe('principal matching', () => {
   });
 
   it('never guesses between ambiguous or missing matches', () => {
-    expect(matchPrincipal(user({ id: 's5', name: 'Same Name' }), targets)).toMatchObject({ targetId: null });
+    const ambiguous = matchPrincipal(user({ id: 's5', name: 'Same Name' }), targets);
+    expect(ambiguous).toMatchObject({ targetId: null });
+    // The candidates are kept so a human can choose; nothing is applied automatically.
+    expect(ambiguous.candidates?.map((c) => c.id)).toEqual(['t3', 't4']);
     expect(matchPrincipal(user({ id: 's6', name: 'Nobody Here' }), targets)).toMatchObject({
       targetId: null,
       confidence: 0,

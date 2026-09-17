@@ -92,6 +92,16 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByTestId('principal-Priya Patel')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('principal-Priya Patel')).toContainText('entra object id');
   await expect(page.getByTestId('principal-Legacy Integration Account')).toContainText('Unmatched');
+  // An identity that matches two target users is never mapped automatically.
+  const jordan = page.getByTestId('principal-Jordan Lee');
+  await expect(jordan).toContainText('Ambiguous');
+  await expect(jordan.getByTestId('ambiguous-candidates')).toContainText('2 candidates');
+  await jordan
+    .getByRole('button', { name: /^Use Jordan Lee/ })
+    .first()
+    .click();
+  await expect(jordan).not.toContainText('Ambiguous');
+
   await page.getByRole('button', { name: 'Run check' }).click();
   await expect(page.getByText(/may act on behalf of other users/)).toBeVisible();
   await page.goBack();

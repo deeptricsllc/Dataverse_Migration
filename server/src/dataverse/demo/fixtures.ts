@@ -28,7 +28,7 @@ export type DemoEnvKey = 'demo-dev' | 'demo-qa' | 'demo-uat' | 'demo-prod';
  * Bump when the demo metadata or data changes: environments seeded from an older version are
  * re-seeded on the next start so an existing installation picks the new fixtures up.
  */
-export const DEMO_DATA_VERSION = '2026-09-17.2';
+export const DEMO_DATA_VERSION = '2026-09-17.3';
 
 export interface DemoEnvironmentDef {
   key: DemoEnvKey;
@@ -125,6 +125,29 @@ export const DEMO_USERS = [
     name: 'QA Analyst',
     email: 'qa.analyst@deeptrics.demo',
     entra: true,
+    envs: ['demo-qa', 'demo-uat'],
+  },
+  // Ambiguous by design: this Development user has no Entra id and no email, and two different
+  // people share the display name in the targets. The platform must refuse to guess.
+  {
+    key: 'jordan.lee',
+    name: 'Jordan Lee',
+    email: null,
+    entra: false,
+    envs: ['demo-dev'],
+  },
+  {
+    key: 'jordan.lee.sales',
+    name: 'Jordan Lee',
+    email: 'j.lee.sales@deeptrics.demo',
+    entra: false,
+    envs: ['demo-qa', 'demo-uat'],
+  },
+  {
+    key: 'jordan.lee.service',
+    name: 'Jordan Lee',
+    email: 'j.lee.service@deeptrics.demo',
+    entra: false,
     envs: ['demo-qa', 'demo-uat'],
   },
 ] as const;

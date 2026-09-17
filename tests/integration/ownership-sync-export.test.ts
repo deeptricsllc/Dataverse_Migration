@@ -64,6 +64,23 @@ describe('ownership/audit preservation, sync strategy and exports', () => {
     expect(legacy.status).toBe('UNMATCHED');
     expect(mapping.counts.unmatched).toBe(1);
 
+    // Two target users share this display name, so the platform refuses to choose one.
+    const jordan = mapping.mappings.find((m) => m.source.name === 'Jordan Lee')!;
+    expect(jordan.status).toBe('AMBIGUOUS');
+    expect(jordan.target).toBeNull();
+    expect(jordan.candidates).toHaveLength(2);
+    expect(mapping.counts.ambiguous).toBe(1);
+
+    // A human can still resolve it explicitly.
+    const resolved = await api.put('/api/principal-mappings', {
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: uat.id,
+      logicalName: 'systemuser',
+      sourceId: jordan.source.id,
+      targetId: jordan.candidates[0].id,
+    });
+    expect(resolved.status).toBe('MANUAL');
+
     const check = await api.post('/api/principal-mappings/impersonation-check', {
       sourceEnvironmentId: dev.id,
       targetEnvironmentId: uat.id,
