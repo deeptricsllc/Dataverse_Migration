@@ -136,6 +136,15 @@ e2e/               Playwright happy path
 docs/              architecture, Microsoft setup
 ```
 
+## Deploying to Railway
+
+The repo ships a `Dockerfile` and `railway.json` (health check `/api/health`). In the Railway environment:
+
+1. Add a PostgreSQL service. On the app service set `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+2. Set `SESSION_SECRET` (48+ random characters), `APP_BASE_URL=https://<service domain>` and `COOKIE_SECURE=true`.
+3. Without Entra credentials set `DEMO_MODE=true`. For Microsoft sign-in add `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` and register `https://<service domain>/api/auth/callback`.
+4. Deploy (`railway up` or a GitHub-connected service). Migrations run on start; `PORT` is provided by Railway.
+
 ## Production considerations
 
 - Run behind HTTPS with `NODE_ENV=production`, a strong `SESSION_SECRET` (secret manager), `COOKIE_SECURE=true` and PostgreSQL.
