@@ -664,12 +664,17 @@ export class PlanningService {
         const displayName = s?.displayName ?? name;
         let entity = existingEntities.get(name);
         if (!entity) {
-          // Only an Active key index is enforced by Dataverse, so only those are chosen by default.
+          // Only an Active key index is enforced by Dataverse, so only those are chosen by
+          // default — and only keys whose columns a migration can actually write, which rules
+          // out a key over a server-generated IDENTITY column.
+          const writableInTarget = (key: { attributes: string[] }) =>
+            key.attributes.every((a) => t?.attributes.find((x) => x.logicalName === a)?.isValidForCreate);
           const sharedKey =
             s && t
               ? s.keys.find(
                   (k) =>
                     isKeyUsable(k) &&
+                    writableInTarget(k) &&
                     t.keys.some(
                       (tk) =>
                         tk.logicalName === k.logicalName &&

@@ -19,9 +19,8 @@ import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
 import {
-  DEMO_SQL_ENVIRONMENT,
+  DEMO_SQL_ENVIRONMENTS,
   DEMO_SQL_ENV_KEY,
-  DEMO_SQL_URL,
   demoSqlData,
   demoSqlTables,
 } from '../connectors/sql/demo-fixtures';
@@ -158,17 +157,17 @@ export class ConnectionFactory {
    * The simulated legacy SQL Server offered to demo organizations, so the SQL to Dataverse
    * journey can be walked end to end without a database server. Null when demo mode is off.
    */
-  demoSqlDefinition() {
-    if (!this.config.DEMO_MODE) return null;
-    return {
-      key: DEMO_SQL_ENV_KEY,
-      displayName: DEMO_SQL_ENVIRONMENT.displayName,
-      url: DEMO_SQL_URL,
-      version: DEMO_SQL_ENVIRONMENT.version,
+  demoSqlDefinitions() {
+    if (!this.config.DEMO_MODE) return [];
+    return DEMO_SQL_ENVIRONMENTS.map((env) => ({
+      key: env.key,
+      displayName: env.displayName,
+      url: `sqlserver://${env.host}:${env.port}/${env.database}`,
+      version: env.version,
       config: {
-        host: DEMO_SQL_ENVIRONMENT.host,
-        port: DEMO_SQL_ENVIRONMENT.port,
-        database: DEMO_SQL_ENVIRONMENT.database,
+        host: env.host,
+        port: env.port,
+        database: env.database,
         authType: 'SQL_LOGIN',
         username: 'iic_migration',
         encrypt: true,
@@ -176,7 +175,7 @@ export class ConnectionFactory {
         transport: 'DIRECT',
         schemas: [],
       } satisfies SqlConnectionConfig,
-    };
+    }));
   }
 
   discoveryProvider(isDemoOrg: boolean, userId: string): EnvironmentDiscoveryProvider {

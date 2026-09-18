@@ -160,8 +160,7 @@ export class EnvironmentService {
     }
     // Demo organizations also get the simulated legacy SQL Server, so a cross-provider
     // migration can be demonstrated without a database server.
-    const demoSql = ctx.isDemoOrg ? this.connections.demoSqlDefinition() : null;
-    if (demoSql) {
+    for (const demoSql of ctx.isDemoOrg ? this.connections.demoSqlDefinitions() : []) {
       const [sqlEnv] = await this.db
         .insert(environments)
         .values({

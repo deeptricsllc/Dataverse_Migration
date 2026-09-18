@@ -29,6 +29,25 @@ export const DEMO_SQL_ENVIRONMENT = {
 
 export const DEMO_SQL_URL = `sqlserver://${DEMO_SQL_ENVIRONMENT.host}:${DEMO_SQL_ENVIRONMENT.port}/${DEMO_SQL_ENVIRONMENT.database}`;
 
+export const DEMO_SQL_TARGET_ENV_KEY = 'demo-sql-target';
+
+/**
+ * A second simulated database with the same schema and no rows, so a migration INTO SQL
+ * (from Dataverse, or from the legacy database) can be demonstrated as well.
+ */
+export const DEMO_SQL_TARGET_ENVIRONMENT = {
+  key: DEMO_SQL_TARGET_ENV_KEY,
+  displayName: 'Reporting SQL Database (Demo)',
+  host: 'sql02.deeptrics.demo',
+  port: 1433,
+  database: 'IIC_Reporting',
+  version: 'Microsoft SQL Server 2022 (RTM) — simulated',
+} as const;
+
+export const DEMO_SQL_TARGET_URL = `sqlserver://${DEMO_SQL_TARGET_ENVIRONMENT.host}:${DEMO_SQL_TARGET_ENVIRONMENT.port}/${DEMO_SQL_TARGET_ENVIRONMENT.database}`;
+
+export const DEMO_SQL_ENVIRONMENTS = [DEMO_SQL_ENVIRONMENT, DEMO_SQL_TARGET_ENVIRONMENT] as const;
+
 // ---------------------------------------------------------------------------
 // Column builders
 // ---------------------------------------------------------------------------

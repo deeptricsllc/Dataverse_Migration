@@ -76,7 +76,23 @@ export function transformField(input: {
       : { ok: false, code: 'VALUE_CONVERSION', error: converted.error };
   }
   const converted = transformValue(input.source, input.target, staged);
-  return converted.ok
-    ? { ok: true, value: converted.value }
-    : { ok: false, code: 'VALUE_CONVERSION', error: converted.error };
+  if (!converted.ok) return { ok: false, code: 'VALUE_CONVERSION', error: converted.error };
+  return checkLength(converted.value, input.target);
+}
+
+/**
+ * A value can be too long for the target column even when the two column definitions are
+ * identical, because the data itself is longer than the declaration allows. Catching it here
+ * means the preflight reports it instead of the database rejecting it mid-migration.
+ */
+function checkLength(value: FieldValue, target: AttributeMeta): TransformOutcome {
+  const max = target.maxLength ?? null;
+  if (typeof value === 'string' && max !== null && max > 0 && value.length > max) {
+    return {
+      ok: false,
+      code: 'VALUE_CONVERSION',
+      error: `value is ${value.length} characters, target allows ${max}`,
+    };
+  }
+  return { ok: true, value };
 }
