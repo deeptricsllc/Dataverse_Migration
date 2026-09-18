@@ -22,6 +22,9 @@ import { ArrowRight, Lightbulb, ListChecks, Play, RefreshCw, RotateCcw, ShieldAl
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChoiceMappingModal } from '../components/ChoiceMappingModal';
+import { DataQualityCard } from '../components/DataQualityCard';
+import { RecordPreviewCard } from '../components/RecordPreviewCard';
+import { TransformationEditor } from '../components/TransformationEditor';
 import { ObjectMappingCard } from '../components/ObjectMappingCard';
 import { TableSelector } from '../components/TableSelector';
 import { WizardSteps } from '../components/WizardSteps';
@@ -413,6 +416,7 @@ function MappingStep({
   });
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [choiceMappingId, setChoiceMappingId] = useState<string | null>(null);
+  const [transformMappingId, setTransformMappingId] = useState<string | null>(null);
   const update = useMutation({
     mutationFn: (v: { mappingId: string; body: Record<string, unknown> }) =>
       patch<MigrationPlanDto>(`/api/plans/${plan.id}/mappings/${v.mappingId}`, v.body),
@@ -439,10 +443,27 @@ function MappingStep({
   );
 
   const choiceMapping = mappings.data?.mappings.find((m) => m.id === choiceMappingId);
+  const transformMapping = mappings.data?.mappings.find((m) => m.id === transformMappingId);
   const choiceColumn = mappings.data?.targetColumns.find((c) => c.logicalName === choiceMapping?.targetField);
 
   return (
     <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
+      {transformMapping && (
+        <TransformationEditor
+          plan={plan}
+          mapping={transformMapping}
+          sourceFields={(mappings.data?.mappings ?? []).map((m) => ({
+            logicalName: m.sourceField,
+            displayName: m.sourceDisplayName,
+          }))}
+          open
+          onClose={() => setTransformMappingId(null)}
+          onPlan={(p) => {
+            onPlan(p);
+            void qc.invalidateQueries({ queryKey: ['mappings', plan.id] });
+          }}
+        />
+      )}
       {choiceMapping && entityId && (
         <ChoiceMappingModal
           plan={plan}
@@ -673,6 +694,7 @@ function MappingStep({
                   <Th>Source field</Th>
                   <Th>Target field</Th>
                   <Th>Types</Th>
+                  <Th>Transformations</Th>
                   <Th>Compatibility</Th>
                   <Th>Status</Th>
                   <Th>Confidence / reason</Th>
@@ -723,6 +745,28 @@ function MappingStep({
                     </Td>
                     <Td className="text-xs text-slate-600">
                       {m.sourceType} → {m.targetType ?? '—'}
+                    </Td>
+                    <Td>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {m.transformations.length === 0 ? (
+                          <span className="text-[11px] text-slate-400">direct copy</span>
+                        ) : (
+                          m.transformations.map((r, i) => (
+                            <Pill key={`${r.kind}-${i}`} tone={m.lossy ? 'amber' : 'blue'}>
+                              {r.kind.toLowerCase().replace(/_/g, ' ')}
+                            </Pill>
+                          ))
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={!m.targetField}
+                          data-testid={`edit-transform-${m.sourceField}`}
+                          onClick={() => setTransformMappingId(m.id)}
+                        >
+                          Edit
+                        </Button>
+                      </div>
                     </Td>
                     <Td>
                       <CompatibilityBadge value={m.compatibility} />
@@ -778,6 +822,7 @@ function MappingStep({
             </Table>
           )}
         </Card>
+        {entity && <RecordPreviewCard plan={plan} entityId={entity.id} />}
       </div>
     </div>
   );
@@ -1086,6 +1131,8 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
         )}
         <IssueList issues={plan.issues} />
       </Card>
+
+      <DataQualityCard plan={plan} onPlan={onPlan} />
 
       {plan.targetEnvironment.environmentClass === 'PRODUCTION' && (
         <Callout tone="danger" title="Production target">

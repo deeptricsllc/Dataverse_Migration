@@ -250,6 +250,38 @@ export function RunDetailPage() {
         </div>
       </Card>
 
+      {r.transformationMetrics && r.transformationMetrics.valuesTransformed > 0 && (
+        <Card
+          title="Transformations applied"
+          subtitle="What the transformation engine did during this run."
+          className="mb-4"
+          data-testid="transformation-metrics"
+        >
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+            <Stat label="Records" value={fmtNumber(r.transformationMetrics.recordsTransformed)} />
+            <Stat label="Values" value={fmtNumber(r.transformationMetrics.valuesTransformed)} />
+            <Stat
+              label="Lossy"
+              tone={r.transformationMetrics.lossyValues ? 'amber' : 'default'}
+              value={fmtNumber(r.transformationMetrics.lossyValues)}
+              hint="information discarded"
+            />
+            <Stat label="Defaults" value={fmtNumber(r.transformationMetrics.defaultsApplied)} />
+            <Stat label="Null conversions" value={fmtNumber(r.transformationMetrics.nullConversions)} />
+            <Stat label="Value maps" value={fmtNumber(r.transformationMetrics.valueMappings)} />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1">
+            {Object.entries(r.transformationMetrics.byKind)
+              .sort((a, b) => b[1] - a[1])
+              .map(([kind, count]) => (
+                <Pill key={kind} tone="blue">
+                  {kind.toLowerCase().replace(/_/g, ' ')} · {fmtNumber(count)}
+                </Pill>
+              ))}
+          </div>
+        </Card>
+      )}
+
       <div className="mb-4">
         <Tabs
           value={tab}

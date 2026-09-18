@@ -418,7 +418,6 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     start: z.number().int().min(0).max(10_000).nullish(),
     length: z.number().int().min(0).max(1_000_000).nullish(),
     inputFormat: z.string().max(20).nullish(),
-    assumeUtc: z.boolean().nullish(),
     scale: z.number().int().min(0).max(10).nullish(),
     map: z
       .array(

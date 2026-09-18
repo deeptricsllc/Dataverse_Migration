@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChoiceMappingDto, TransformationRule } from '../../shared/domain';
+import { isLossyRule, type ChoiceMappingDto, type TransformationRule } from '../../shared/domain';
 import type { FieldValue } from '../../shared/metadata';
 import {
   applyRules,
@@ -401,5 +401,22 @@ describe('the whole field path', () => {
     const b = transformField(input);
     expect(a.value).toBe(b.value);
     expect(a.applied).toEqual(b.applied);
+  });
+});
+
+describe('lossy classification', () => {
+  it('treats rounding as lossy only when a scale is configured', () => {
+    // Without a scale TO_DECIMAL is a plain conversion; with one it discards digits.
+    expect(isLossyRule({ kind: 'TO_DECIMAL' })).toBe(false);
+    expect(isLossyRule({ kind: 'TO_DECIMAL', scale: 2 })).toBe(true);
+  });
+
+  it('classifies the rules that discard information', () => {
+    for (const kind of ['TRUNCATE', 'SUBSTRING', 'TO_DATE', 'TO_INTEGER'] as const) {
+      expect(isLossyRule({ kind }), kind).toBe(true);
+    }
+    for (const kind of ['TRIM', 'LOWERCASE', 'VALUE_MAP', 'CONCAT'] as const) {
+      expect(isLossyRule({ kind }), kind).toBe(false);
+    }
   });
 });

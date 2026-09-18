@@ -65,7 +65,29 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   await page.getByTestId('plan-table-dbo.Customer').click();
   await expect(page.getByText('Suggested, not decided')).toBeVisible();
   await page.getByTestId('confirm-object-mapping').click();
+
+  // 6b. Configure the cleanup: TRIM the padded names, normalize the emails
   await mapField(page, 'CustomerName', 'name');
+  await page.getByTestId('edit-transform-CustomerName').click();
+  await expect(page.getByRole('dialog', { name: /Transformations/ })).toBeVisible();
+  await page.getByTestId('template-trim-text').click();
+  await expect(page.getByTestId('rule-TRIM')).toBeVisible();
+  // The preview runs the server's engine over real values, so quotes make the padding visible.
+  await expect(page.getByTestId('preview-rows')).toContainText('"  ');
+  await page.getByTestId('save-transformations').click();
+  await expect(page.getByRole('dialog', { name: /Transformations/ })).toBeHidden();
+  await expect(page.getByTestId('mapping-CustomerName')).toContainText('trim');
+
+  await mapField(page, 'Email', 'emailaddress1');
+  await page.getByTestId('edit-transform-Email').click();
+  await page.getByTestId('template-normalize-email').click();
+  await expect(page.getByTestId('rule-LOWERCASE')).toBeVisible();
+  await page.getByTestId('save-transformations').click();
+
+  // 6c. The record-level before and after
+  await page.getByTestId('toggle-record-preview').click();
+  await expect(page.getByTestId('record-preview')).toContainText('Transformed');
+
   await mapField(page, 'CustomerNumber', 'accountnumber');
   await mapField(page, 'RegionId', 'dtx_regionid');
   // A wider source column than the target is reported as lossy before anything is written.

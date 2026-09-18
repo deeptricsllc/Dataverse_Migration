@@ -28,7 +28,12 @@ const CATEGORY_LABELS: Record<string, string> = {
   INVALID_EMAIL: 'Invalid emails',
   INVALID_PHONE: 'Invalid phone numbers',
   PRIMARY_KEY_MISSING: 'Missing primary keys',
-  NUMERIC_OUT_OF_RANGE: 'Values outside the target range',
+  VALUE_OUT_OF_RANGE: 'Values outside the target range',
+  DATE_OUT_OF_RANGE: 'Dates outside the target range',
+  BLANK_VALUE: 'Blank values',
+  STRING_TOO_SHORT: 'Strings too short',
+  VALUE_NOT_ALLOWED: 'Values the target does not allow',
+  PATTERN_MISMATCH: 'Values that do not match the required pattern',
 };
 
 /**

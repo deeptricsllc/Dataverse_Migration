@@ -43,6 +43,13 @@
       "when": 1789701397884,
       "tag": "0005_transformation_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789702898998,
+      "tag": "0006_transformation_metrics",
+      "breakpoints": true
     }
   ]
 }

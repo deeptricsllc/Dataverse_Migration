@@ -463,8 +463,6 @@ export interface TransformationRule {
   length?: number | null;
   /** TO_DATE / TO_DATETIME: the exact input format, so an ambiguous date is never guessed. */
   inputFormat?: string | null;
-  /** TO_DATETIME: treat a source value without a zone as UTC rather than local. */
-  assumeUtc?: boolean | null;
   /** TO_DECIMAL: digits kept after the decimal point. */
   scale?: number | null;
   /** VALUE_MAP / TO_BOOLEAN: many source values may map onto one target value. */
@@ -490,9 +488,15 @@ export const LOSSY_TRANSFORMATIONS: ReadonlySet<TransformationKind> = new Set<Tr
   'SUBSTRING',
   'TO_DATE',
   'TO_INTEGER',
+  'TO_DECIMAL',
 ]);
 
-export const isLossyRule = (r: TransformationRule) => LOSSY_TRANSFORMATIONS.has(r.kind);
+/**
+ * TO_DECIMAL only loses precision when a scale is configured; without one it is a plain
+ * conversion. Everything else in the set is lossy by its nature.
+ */
+export const isLossyRule = (r: TransformationRule) =>
+  r.kind === 'TO_DECIMAL' ? r.scale != null : LOSSY_TRANSFORMATIONS.has(r.kind);
 
 /** One step of what the engine actually did to a value, for previews and per-record reporting. */
 export interface AppliedTransformationDto {
@@ -649,6 +653,30 @@ export interface DataQualitySummaryDto {
   categories: { code: string; label: string; severity: 'BLOCKER' | 'WARNING'; count: number }[];
   tables: { table: string; displayName: string; blockers: number; warnings: number }[];
   profiledAt: string;
+}
+
+/**
+ * What the transformation engine did across a whole run. Aggregate counters rather than a row
+ * per transformed value: a million successful trims is one number, while the warnings, errors and
+ * lossy conversions are also recorded per record.
+ */
+export interface TransformationMetricsDto {
+  /** Records where at least one rule changed a value. */
+  recordsTransformed: number;
+  /** Individual rule applications that changed a value. */
+  valuesTransformed: number;
+  /** Values where a rule deliberately discarded information. */
+  lossyValues: number;
+  /** Values a DEFAULT_IF_* rule supplied. */
+  defaultsApplied: number;
+  /** Values turned into null, or null turned into a value. */
+  nullConversions: number;
+  /** Values resolved through a value/choice map. */
+  valueMappings: number;
+  /** Records blocked because a transformation could not produce a value. */
+  failures: number;
+  /** Counts per rule kind, so a run says which rules actually did something. */
+  byKind: Record<string, number>;
 }
 
 /** One field of a record-level before/after preview. */
@@ -1000,6 +1028,8 @@ export interface MigrationRunEntityDto extends RunCounters {
 }
 
 export interface MigrationRunDto extends RunCounters {
+  /** What the transformation engine did during this run. Null for runs that predate it. */
+  transformationMetrics?: TransformationMetricsDto | null;
   id: string;
   planId: string;
   planName: string;

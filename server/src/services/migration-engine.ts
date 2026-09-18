@@ -3,8 +3,10 @@ import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
   auditFlags,
+  type AppliedTransformationDto,
   type PlanOptions,
   type RecordOperation,
+  type TransformationMetricsDto,
 } from '../../../shared/domain';
 import {
   isLookupValue,
@@ -50,6 +52,8 @@ interface RecordError {
 
 interface RecordResult {
   sourceId: string;
+  /** What the transformation engine did to this record, for the run's aggregate metrics. */
+  transformations?: { applied: AppliedTransformationDto[]; lossyFields: string[] } | null;
   outcome: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
   targetId: string | null;
   matchMethod: string | null;
@@ -246,6 +250,16 @@ export class MigrationEngine {
         // Record ids only mean the same thing in both systems when both are the same kind of
         // system. Between providers a source id is never assumed to exist in the target.
         sameProvider: source.connectionType === target.connectionType,
+        metrics: {
+          recordsTransformed: 0,
+          valuesTransformed: 0,
+          lossyValues: 0,
+          defaultsApplied: 0,
+          nullConversions: 0,
+          valueMappings: 0,
+          failures: 0,
+          byKind: {},
+        },
         heartbeat,
         lookupCache: new Map(principalMap),
         principalMap,
@@ -294,7 +308,14 @@ export class MigrationEngine {
       const status = withErrors ? 'COMPLETED_WITH_ERRORS' : 'COMPLETED';
       await this.db
         .update(migrationRuns)
-        .set({ status, phase: 'DONE', currentEntity: null, completedAt: new Date(), updatedAt: new Date() })
+        .set({
+          status,
+          phase: 'DONE',
+          currentEntity: null,
+          completedAt: new Date(),
+          updatedAt: new Date(),
+          transformationMetrics: ctx.metrics,
+        })
         .where(eq(migrationRuns.id, runId));
       await this.db
         .update(migrationPlans)
@@ -461,6 +482,7 @@ export class MigrationEngine {
         });
         if (pending.length === 0) continue;
         const results = await this.processBatch(ctx, entity, s, t, pending);
+        this.countTransformations(ctx, results);
         await this.persistResults(run, entity.logicalName, results);
         await this.refreshCounters(run.id, runEntity.id);
         await ctx.heartbeat();
@@ -561,6 +583,10 @@ export class MigrationEngine {
   ): Promise<RecordResult> {
     const base: RecordResult = {
       sourceId: prepared.sourceId,
+      transformations: {
+        applied: prepared.appliedTransformations.flatMap((t) => t.applied),
+        lossyFields: prepared.lossyFields,
+      },
       outcome: 'FAILED',
       targetId: null,
       matchMethod: null,
@@ -934,6 +960,29 @@ export class MigrationEngine {
   // Persistence
   // ---------------------------------------------------------------------------
 
+  /**
+   * Folds a batch's transformations into the run's aggregate metrics. Counting here rather than
+   * storing a row per transformed value keeps a large run's audit proportionate: the totals are
+   * aggregate, while warnings, failures and lossy conversions are also kept per record.
+   */
+  private countTransformations(ctx: ExecContext, results: RecordResult[]) {
+    const m = ctx.metrics;
+    for (const result of results) {
+      const applied = result.transformations?.applied ?? [];
+      if (result.outcome === 'FAILED') m.failures++;
+      if (applied.length === 0) continue;
+      m.recordsTransformed++;
+      m.valuesTransformed += applied.length;
+      m.lossyValues += applied.filter((a) => a.lossy).length;
+      for (const step of applied) {
+        m.byKind[step.kind] = (m.byKind[step.kind] ?? 0) + 1;
+        if (step.kind === 'DEFAULT_IF_NULL' || step.kind === 'DEFAULT_IF_BLANK') m.defaultsApplied++;
+        if (step.kind === 'EMPTY_TO_NULL' || step.kind === 'NULL_TO_EMPTY') m.nullConversions++;
+        if (step.kind === 'VALUE_MAP' || step.kind === 'TO_BOOLEAN') m.valueMappings++;
+      }
+    }
+  }
+
   private async persistResults(run: RunRow, logicalName: string, results: RecordResult[]) {
     for (const r of results) {
       await this.db
@@ -1100,6 +1149,8 @@ interface ExecContext {
   targetTableFor: ReadonlyMap<string, string>;
   /** True when both connections are the same kind of system, so record ids are comparable. */
   sameProvider: boolean;
+  /** Aggregate record of what the transformation engine did, written when the run finishes. */
+  metrics: TransformationMetricsDto;
   heartbeat: () => Promise<void>;
   /** sourceLogicalName:sourceId -> targetId (null = known missing). */
   lookupCache: Map<string, string | null>;

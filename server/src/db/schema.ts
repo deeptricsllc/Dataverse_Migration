@@ -34,6 +34,7 @@ import type {
   IdentityImpactDto,
   ObjectMappingStatus,
   SqlConnectionConfig,
+  TransformationMetricsDto,
   TransformationRule,
   TypeCompatibility,
   PreflightAction,
@@ -483,6 +484,8 @@ export const migrationRuns = pgTable(
     phase: text('phase'),
     options: jsonb('options').$type<PlanOptions>().notNull(),
     planSnapshot: jsonb('plan_snapshot').$type<RunPlanSnapshot>().notNull(),
+    /** Aggregate record of what the transformation engine did during this run. */
+    transformationMetrics: jsonb('transformation_metrics').$type<TransformationMetricsDto | null>(),
     currentEntity: text('current_entity'),
     total: integer('total').notNull().default(0),
     processed: integer('processed').notNull().default(0),

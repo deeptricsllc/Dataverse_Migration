@@ -281,7 +281,9 @@ export class TransformationService {
       if (m.status !== 'AUTO_MAPPED' && m.status !== 'MANUAL') continue;
       const entity = byEntity.get(m.planEntityId);
       if (!entity) continue;
-      for (const rule of m.transformations ?? []) {
+      // A lossy rule nested inside a conditional still discards data, so the acknowledgement
+      // has to see it too: otherwise wrapping TRUNCATE in an IF_THEN would skip the gate.
+      for (const rule of flattenRules(m.transformations ?? [])) {
         if (!isLossyRule(rule)) continue;
         out.push({
           table: entity.logicalName,
@@ -363,6 +365,11 @@ export class TransformationService {
   }
 }
 
+/** Every rule in a pipeline, including the ones a conditional would run. */
+function flattenRules(rules: TransformationRule[]): TransformationRule[] {
+  return rules.flatMap((rule) => [rule, ...flattenRules(rule.then ?? [])]);
+}
+
 function describeLossy(rule: TransformationRule): string {
   switch (rule.kind) {
     case 'TRUNCATE':
@@ -373,6 +380,8 @@ function describeLossy(rule: TransformationRule): string {
       return 'The time of day is dropped, keeping only the date';
     case 'TO_INTEGER':
       return 'Decimal digits are dropped';
+    case 'TO_DECIMAL':
+      return `Values are rounded to ${rule.scale ?? 0} decimal place(s)`;
     default:
       return 'Information is discarded';
   }

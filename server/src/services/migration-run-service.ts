@@ -370,6 +370,7 @@ export class MigrationRunService {
       phase: r.phase,
       sourceEnvironment: envRef(row.src),
       targetEnvironment: envRef(row.tgt),
+      transformationMetrics: row.run.transformationMetrics ?? null,
       options: { ...DEFAULT_PLAN_OPTIONS, ...r.options },
       currentEntity: r.currentEntity,
       total: r.total,
