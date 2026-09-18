@@ -67,12 +67,19 @@ const TRANSIENT_SQL_ERRORS = new Set([
 
 const WRITE_STATEMENTS = /^\s*(insert|update|delete|merge|drop|alter|create|truncate|exec)/i;
 
-/** Quotes an identifier the way QUOTENAME does, refusing anything that is not an identifier. */
+/**
+ * Brackets an identifier for use in a statement.
+ *
+ * Identifiers are validated rather than escaped: anything outside word characters, spaces and the
+ * few symbols SQL Server allows unquoted is refused outright. Escaping would also be safe, but
+ * refusing means a name we do not fully understand never reaches the parser at all. Names come
+ * from the catalog this connector itself read, so a refusal indicates a genuinely unusual schema.
+ */
 export function quoteIdent(name: string): string {
   if (!/^[\w @#$.]+$/.test(name) || name.length > 128) {
     throw new DataverseError('VALIDATION', `Unsupported SQL identifier: ${name}`, 400);
   }
-  return `[${name.replace(/]/g, ']]')}]`;
+  return `[${name}]`;
 }
 
 /** `dbo.Customer` -> `[dbo].[Customer]`. */
