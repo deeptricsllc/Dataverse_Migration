@@ -22,7 +22,8 @@ import {
   type TableMetadata,
 } from '../../../shared/metadata';
 import type { RunPlanSnapshot } from './run-snapshot';
-import { displayValue, transformValue, valuesEqual } from './values';
+import { transformField } from './transforms';
+import { displayValue, valuesEqual } from './values';
 
 export type PlannerEntity = RunPlanSnapshot['entities'][number];
 
@@ -154,12 +155,20 @@ export function prepareRecord(input: PrepareInput): PreparedRecord {
       }
       continue;
     }
-    const converted = transformValue(sAttr, tAttr, raw);
+    // Configured transformation, then choice mapping or type conversion. Cross-provider
+    // conversions (truncation, overflow, invalid dates) are reported, never silently applied.
+    const converted = transformField({
+      value: raw ?? null,
+      source: sAttr,
+      target: tAttr,
+      transform: m.transform,
+      choiceMap: m.choiceMap,
+    });
     if (!converted.ok) {
-      out.blocked = { code: 'VALUE_CONVERSION', reason: `${m.sourceField}: ${converted.error}` };
+      out.blocked = { code: converted.code, reason: `${m.sourceField}: ${converted.error}` };
       out.issues.push({
         severity: 'ERROR',
-        code: 'VALUE_CONVERSION',
+        code: converted.code,
         field: m.sourceField,
         message: converted.error,
         retryable: false,

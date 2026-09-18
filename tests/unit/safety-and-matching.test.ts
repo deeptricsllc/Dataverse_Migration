@@ -131,6 +131,7 @@ describe('no-op guarantee: identical records produce no write', () => {
   const entity: PlannerEntity = {
     logicalName: 'dtx_region',
     displayName: 'Region',
+    targetLogicalName: 'dtx_region',
     orderIndex: 1,
     matchStrategy: 'PRIMARY_ID',
     alternateKey: null,

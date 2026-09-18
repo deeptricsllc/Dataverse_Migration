@@ -7,7 +7,10 @@ import { AppError, forbidden } from '../lib/errors';
 import type { Services } from '../services/container';
 
 const uuid = z.string().uuid();
-const tableName = z.string().regex(/^[a-z0-9_]{1,128}$/);
+/** Dataverse logical name (`account`) or schema-qualified SQL table (`dbo.Customer`). */
+const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
+/** A SQL column or Dataverse attribute name. */
+const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 const idParams = z.object({ id: uuid });
 const page = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
@@ -138,7 +141,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { id } = idParams.parse(req.params);
     const { refresh } = z.object({ refresh: z.enum(['true', 'false']).optional() }).parse(req.query);
     const env = await s.environments.getAccessible(req.ctx, id);
-    const conn = s.connections.forEnvironment(env, req.ctx.userId, { requestId: req.id });
+    const conn = await s.connections.connectorFor(env, req.ctx.userId, { requestId: req.id });
     return s.metadata.getCatalog(env.id, conn, refresh === 'true').catch((err) => {
       throw toApiError(err, 'Table discovery');
     });
@@ -148,7 +151,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
     const { refresh } = z.object({ refresh: z.enum(['true', 'false']).optional() }).parse(req.query);
     const env = await s.environments.getAccessible(req.ctx, id);
-    const conn = s.connections.forEnvironment(env, req.ctx.userId, { requestId: req.id });
+    const conn = await s.connections.connectorFor(env, req.ctx.userId, { requestId: req.id });
     const meta = await s.metadata.getTable(env.id, conn, table, refresh === 'true').catch((err) => {
       throw toApiError(err, 'Metadata discovery');
     });
@@ -260,6 +263,62 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       .parse(req.body);
     return s.planning.updateEntity(req.ctx, id, entityId, body);
   });
+  /** Pairs a source table with the target table it migrates into. */
+  app.patch('/api/plans/:id/entities/:entityId/object-mapping', async (req) => {
+    const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
+    const body = z
+      .object({
+        targetLogicalName: tableName.nullable(),
+        status: z.enum(['CONFIRMED', 'MANUAL', 'UNMAPPED', 'IGNORED']),
+      })
+      .parse(req.body);
+    return s.planning.updateObjectMapping(req.ctx, id, entityId, body);
+  });
+
+  app.get('/api/plans/:id/entities/:entityId/target-candidates', async (req) => {
+    const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
+    return s.planning.targetCandidates(req.ctx, id, entityId);
+  });
+
+  /** The distinct source values of a column, so a choice mapping can be built from real data. */
+  app.get('/api/plans/:id/entities/:entityId/values/:field', async (req) => {
+    const { id, entityId, field } = z
+      .object({ id: uuid, entityId: uuid, field: fieldName })
+      .parse(req.params);
+    return s.planning.sourceValues(req.ctx, id, entityId, field);
+  });
+
+  app.patch('/api/plans/:id/mappings/:mappingId/choice-map', async (req) => {
+    const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
+    const body = z
+      .object({
+        entries: z
+          .array(
+            z.object({
+              sourceValue: z.string().max(400),
+              targetValue: z.number().int().nullable(),
+              targetLabel: z.string().max(200).nullable(),
+              status: z.enum(['AUTO_SUGGESTED', 'CONFIRMED', 'UNMAPPED', 'IGNORED']),
+            }),
+          )
+          .max(500),
+        defaultTargetValue: z.number().int().nullable(),
+      })
+      .parse(req.body);
+    return s.planning.updateChoiceMap(req.ctx, id, mappingId, body);
+  });
+
+  app.patch('/api/plans/:id/mappings/:mappingId/transform', async (req) => {
+    const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
+    const body = z
+      .object({
+        kind: z.enum(['DIRECT', 'TRIM', 'UPPER', 'LOWER', 'CONSTANT', 'DEFAULT_IF_NULL', 'CHOICE_MAP']),
+        value: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]).optional(),
+      })
+      .parse(req.body);
+    return s.planning.updateTransform(req.ctx, id, mappingId, body);
+  });
+
   app.get('/api/plans/:id/entities/:entityId/mappings', async (req) => {
     const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
     return s.planning.mappings(req.ctx, id, entityId);
@@ -290,6 +349,52 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       .parse(req.body);
     return s.runs.start(req.ctx, idParams.parse(req.params).id, body);
   });
+
+  // ---------------------------------------------------------------------------
+  // Connections (SQL Server / Azure SQL). Dataverse environments come from discovery.
+  // ---------------------------------------------------------------------------
+
+  const sqlConnectionBody = z.object({
+    displayName: z.string().min(1).max(200),
+    connectionType: z.enum(['SQL_SERVER', 'AZURE_SQL']),
+    host: z.string().min(1).max(255),
+    port: z.coerce.number().int().min(1).max(65535).default(1433),
+    database: z.string().min(1).max(128),
+    authType: z
+      .enum(['SQL_LOGIN', 'ENTRA_PASSWORD', 'ENTRA_INTEGRATED', 'MANAGED_IDENTITY', 'WINDOWS'])
+      .default('SQL_LOGIN'),
+    username: z.string().max(128).nullable().default(null),
+    // Write-only: a password is accepted, never returned.
+    password: z.string().max(400).nullable().optional(),
+    encrypt: z.boolean().default(true),
+    trustServerCertificate: z.boolean().default(false),
+    schemas: z.array(z.string().max(128)).max(50).default([]),
+    transport: z.enum(['DIRECT', 'AGENT']).default('DIRECT'),
+  });
+
+  app.post('/api/connections', async (req, reply) => {
+    const body = sqlConnectionBody.parse(req.body);
+    reply.code(201);
+    return s.connectionAdmin.create(req.ctx, body);
+  });
+
+  app.patch('/api/connections/:id', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.connectionAdmin.update(req.ctx, id, sqlConnectionBody.parse(req.body));
+  });
+
+  /** Tests settings that have not been saved yet, so nothing is stored until they work. */
+  app.post('/api/connections/test', async (req) =>
+    s.connectionAdmin.testUnsaved(req.ctx, sqlConnectionBody.parse(req.body)),
+  );
+
+  app.post('/api/connections/:id/test', async (req) =>
+    s.connectionAdmin.test(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.delete('/api/connections/:id', async (req) =>
+    s.connectionAdmin.remove(req.ctx, idParams.parse(req.params).id),
+  );
 
   // ---------------------------------------------------------------------------
   // Preflight (dry run) — reads only, never writes to Dataverse

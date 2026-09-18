@@ -20,7 +20,15 @@ import {
   normalizeTableSummary,
 } from './normalize';
 import { DEFAULT_RETRY_POLICY, Semaphore, withRetry, type RetryPolicy } from './retry';
-import type { DataverseConnection, RecordCount, WhoAmI, WriteOptions, WriteRecord } from './types';
+import type {
+  ConnectionTestResult,
+  DataverseConnection,
+  RecordCount,
+  WhoAmI,
+  WriteOptions,
+  WriteRecord,
+} from './types';
+import { DATAVERSE_CAPABILITIES } from './types';
 
 type Raw = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -85,6 +93,7 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export class WebApiConnection implements DataverseConnection {
   readonly provider = 'dataverse' as const;
+  readonly capabilities = DATAVERSE_CAPABILITIES;
   readonly url: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -189,6 +198,32 @@ export class WebApiConnection implements DataverseConnection {
   // ---------------------------------------------------------------------------
   // Metadata
   // ---------------------------------------------------------------------------
+
+  /** Read-only connection check: identity, metadata access and a table count. Never writes. */
+  async testConnection(): Promise<ConnectionTestResult> {
+    const who = await this.whoAmI();
+    const tables = await this.listTables();
+    return {
+      ok: true,
+      summary: `Connected to ${this.url}`,
+      checks: [
+        { key: 'network', label: 'Environment reachable', status: 'PASS', message: this.url },
+        { key: 'auth', label: 'Authentication', status: 'PASS', message: `Dataverse user ${who.userId}` },
+        {
+          key: 'read',
+          label: 'Read permission',
+          status: 'PASS',
+          message: `${tables.length} tables readable`,
+        },
+        {
+          key: 'write',
+          label: 'Write permission',
+          status: 'NOT_TESTED',
+          message: 'Never probed; a connection test never writes data',
+        },
+      ],
+    };
+  }
 
   async whoAmI(): Promise<WhoAmI> {
     const { data } = await this.request<Raw>('GET', 'WhoAmI');

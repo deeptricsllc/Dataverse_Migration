@@ -14,7 +14,15 @@ import type { AppDb } from '../../db/client';
 import { demoRecords } from '../../db/schema';
 import { DataverseError } from '../errors';
 import { sleep, withRetry, type RetryPolicy } from '../retry';
-import type { DataverseConnection, RecordCount, WhoAmI, WriteOptions, WriteRecord } from '../types';
+import type {
+  ConnectionTestResult,
+  DataverseConnection,
+  RecordCount,
+  WhoAmI,
+  WriteOptions,
+  WriteRecord,
+} from '../types';
+import { DATAVERSE_CAPABILITIES } from '../types';
 import {
   DEMO_ORGANIZATION_ID,
   DEMO_SIGNED_IN_USER,
@@ -39,6 +47,7 @@ const writeCounters = new Map<string, number>();
 export class DemoConnection implements DataverseConnection {
   readonly provider = 'demo' as const;
   readonly url: string;
+  readonly capabilities = DATAVERSE_CAPABILITIES;
   private readonly tables: Map<string, TableMetadata>;
 
   constructor(
@@ -68,6 +77,31 @@ export class DemoConnection implements DataverseConnection {
         '0x80060888',
       );
     return t;
+  }
+
+  async testConnection(): Promise<ConnectionTestResult> {
+    const who = await this.whoAmI();
+    const tables = await this.listTables();
+    return {
+      ok: true,
+      summary: `Simulated Dataverse environment ${this.env.displayName}`,
+      checks: [
+        { key: 'network', label: 'Environment reachable', status: 'PASS', message: this.url },
+        { key: 'auth', label: 'Authentication', status: 'PASS', message: `Connected as ${who.userId}` },
+        {
+          key: 'read',
+          label: 'Read permission',
+          status: 'PASS',
+          message: `${tables.length} tables readable`,
+        },
+        {
+          key: 'write',
+          label: 'Write permission',
+          status: 'NOT_TESTED',
+          message: 'Never probed; a connection test never writes data',
+        },
+      ],
+    };
   }
 
   async whoAmI(): Promise<WhoAmI> {

@@ -29,6 +29,13 @@
       "when": 1789672837364,
       "tag": "0003_policies_preflight",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789690954749,
+      "tag": "0004_connections_sql",
+      "breakpoints": true
     }
   ]
 }

@@ -113,7 +113,7 @@ export class PrincipalService {
       for (const list of Object.values(out)) list.sort((a, b) => a.name.localeCompare(b.name));
       return out;
     }
-    const conn = this.connections.forEnvironment(env, userId, { requestId: opts.requestId });
+    const conn = await this.connections.connectorFor(env, userId, { requestId: opts.requestId });
     const out = { systemuser: [], team: [], businessunit: [] } as Record<PrincipalTable, PrincipalDto[]>;
     for (const table of PRINCIPAL_TABLES) {
       try {
@@ -470,7 +470,7 @@ export class PrincipalService {
         message: 'No mapped target user to test with. Map at least one user first.',
       };
     }
-    const conn = this.connections.forEnvironment(target, ctx.userId, { requestId: ctx.requestId });
+    const conn = await this.connections.connectorFor(target, ctx.userId, { requestId: ctx.requestId });
     try {
       const result = await conn.checkImpersonation(candidate);
       return { checkedAt: new Date().toISOString(), canImpersonate: result.allowed, message: result.message };

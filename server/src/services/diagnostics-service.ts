@@ -112,7 +112,7 @@ export class DiagnosticsService {
         continue;
       }
       await timed(key, `${role} connection`, async () => {
-        const conn = this.connections.forEnvironment(env, ctx.userId, { requestId: ctx.requestId });
+        const conn = await this.connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
         const who = await conn.whoAmI();
         return { status: 'PASS', message: `${env.displayName}: connected as Dataverse user ${who.userId}` };
       });
@@ -129,7 +129,7 @@ export class DiagnosticsService {
       }
     } else {
       await timed('metadata', 'Metadata access', async () => {
-        const conn = this.connections.forEnvironment(probe, ctx.userId, { requestId: ctx.requestId });
+        const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
         const catalog = await this.metadata.getCatalog(probe.id, conn, true);
         const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
         if (!sample) return { status: 'WARN', message: 'The table catalog came back empty' };
@@ -141,7 +141,7 @@ export class DiagnosticsService {
       });
 
       await timed('records', 'Record read permission', async () => {
-        const conn = this.connections.forEnvironment(probe, ctx.userId, { requestId: ctx.requestId });
+        const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
         const catalog = await this.metadata.getCatalog(probe.id, conn);
         const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
         if (!sample) return { status: 'NOT_TESTED', message: 'No table available to read' };
@@ -153,7 +153,7 @@ export class DiagnosticsService {
       });
 
       await timed('users', 'User discovery', async () => {
-        const conn = this.connections.forEnvironment(probe, ctx.userId, { requestId: ctx.requestId });
+        const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
         const users = await conn.listPrincipals('systemuser');
         return users.length
           ? { status: 'PASS', message: `${users.length} user(s) readable in ${probe.displayName}` }

@@ -189,6 +189,8 @@ export class MigrationRunService {
       entities: entityRows.map((e) => ({
         logicalName: e.logicalName,
         displayName: e.displayName,
+        // Older plans predate table mapping: their target is the source name.
+        targetLogicalName: e.targetLogicalName ?? e.logicalName,
         orderIndex: e.orderIndex,
         matchStrategy: e.matchStrategy,
         alternateKey: e.alternateKey,
@@ -205,6 +207,8 @@ export class MigrationRunService {
             targetField: m.targetField!,
             isLookup: m.isLookup,
             deferredTargets: m.deferredTargets,
+            transform: m.transform,
+            choiceMap: m.choiceMap,
           })),
         audit: e.audit ?? {
           ownerField: null,

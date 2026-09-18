@@ -3,6 +3,9 @@ import {
   auditNeedsImpersonation,
   auditNeedsPrincipals,
   type AutomationInfo,
+  type ChoiceMappingDto,
+  type ObjectMappingStatus,
+  type TypeCompatibility,
   DependencyAnalysisDto,
   DiffStatus,
   MatchStrategy,
@@ -16,11 +19,17 @@ import { isRequiredLevel } from './mapping';
 
 export interface PlanValidationEntity {
   logicalName: string;
+  /** Target table this source table migrates into (same name for same-provider plans). */
+  targetLogicalName?: string | null;
+  objectMappingStatus?: ObjectMappingStatus;
   source: TableMetadata | undefined;
   target: TableMetadata | undefined;
   schemaStatus: DiffStatus | null;
   tableDiff: TableDiff | null;
-  mappings: Pick<MappingProposal, 'sourceField' | 'targetField' | 'status' | 'reason' | 'isLookup'>[];
+  mappings: (Pick<MappingProposal, 'sourceField' | 'targetField' | 'status' | 'reason' | 'isLookup'> & {
+    compatibility?: TypeCompatibility;
+    choiceMap?: ChoiceMappingDto | null;
+  })[];
   sourceCount: number | null;
   targetCount: number | null;
   matchStrategy: MatchStrategy;
@@ -39,6 +48,8 @@ export interface PlanValidationEntity {
 
 export interface PlanValidationInput {
   entities: PlanValidationEntity[];
+  /** True when the source and target are different kinds of system (SQL into Dataverse, …). */
+  crossProvider?: boolean;
   dependencies: DependencyAnalysisDto;
   options: PlanOptions;
   bypassAllowed: boolean;
@@ -73,23 +84,115 @@ export function validatePlan(input: PlanValidationInput): PlanIssue[] {
       });
       continue;
     }
+    const status = e.objectMappingStatus ?? 'EXACT';
     if (!e.target) {
       add({
         severity: 'BLOCKER',
-        code: 'TABLE_MISSING_IN_TARGET',
+        // Within one provider a missing table means it has not been deployed; across providers
+        // it means nobody has said where this data belongs yet.
+        code: input.crossProvider ? 'OBJECT_MAPPING_MISSING' : 'TABLE_MISSING_IN_TARGET',
         table: t,
-        message: `${e.source.displayName} (${t}) does not exist in the target environment.`,
-        resolution: 'Deploy the table to the target (solution import) or remove it from the plan.',
+        message: input.crossProvider
+          ? `${e.source.displayName} (${t}) is not mapped to a target table.`
+          : `${e.source.displayName} (${t}) does not exist in the target environment.`,
+        resolution: input.crossProvider
+          ? 'Choose the target table this data belongs in, or remove the table from the plan.'
+          : 'Deploy the table to the target (solution import) or remove it from the plan.',
       });
       continue;
     }
-    if (e.source.primaryIdAttribute !== e.target.primaryIdAttribute) {
+    if (status === 'AUTO_SUGGESTED') {
+      // A name that looks similar is not evidence that the data belongs there.
       add({
         severity: 'BLOCKER',
-        code: 'PRIMARY_KEY_MISMATCH',
+        code: 'OBJECT_MAPPING_UNCONFIRMED',
         table: t,
-        message: `Primary key differs (${e.source.primaryIdAttribute} vs ${e.target.primaryIdAttribute}).`,
+        message: `${e.source.displayName} is only suggested to map to ${e.target.displayName}. A suggested table mapping is never migrated without confirmation.`,
+        resolution: `Confirm or change the target table for ${t}.`,
       });
+    }
+
+    if (e.source.primaryIdAttribute !== e.target.primaryIdAttribute) {
+      if (input.crossProvider) {
+        // Different systems have different keys by definition; the identity map bridges them,
+        // as long as records can be matched by something other than the id.
+        add({
+          severity: e.matchStrategy === 'PRIMARY_ID' ? 'BLOCKER' : 'INFO',
+          code: 'CROSS_PROVIDER_IDENTITY',
+          table: t,
+          message:
+            e.matchStrategy === 'PRIMARY_ID'
+              ? `${t} is matched by record id, but ${e.source.primaryIdAttribute} and ${e.target.primaryIdAttribute} are keys of different systems and cannot be compared.`
+              : `Source key ${e.source.primaryIdAttribute} is mapped to target ${e.target.primaryIdAttribute} through the record identity map.`,
+          resolution:
+            e.matchStrategy === 'PRIMARY_ID'
+              ? 'Match this table on an alternate key or a business key instead of the record id.'
+              : undefined,
+        });
+      } else {
+        add({
+          severity: 'BLOCKER',
+          code: 'PRIMARY_KEY_MISMATCH',
+          table: t,
+          message: `Primary key differs (${e.source.primaryIdAttribute} vs ${e.target.primaryIdAttribute}).`,
+        });
+      }
+    }
+
+    // A target key the database generates cannot be supplied by the migration.
+    const targetPk = e.target.attributes.find((a) => a.logicalName === e.target!.primaryIdAttribute);
+    if (targetPk?.sql?.isIdentity) {
+      add({
+        severity: 'INFO',
+        code: 'TARGET_IDENTITY_KEY',
+        table: t,
+        message: `${e.target.displayName}.${targetPk.logicalName} is an IDENTITY column: the database assigns the key, and the migration records it in the identity map.`,
+      });
+    }
+
+    // Choice mappings must be complete before anything is written.
+    for (const m of e.mappings) {
+      if (!MAPPED.has(m.status) || !m.choiceMap) continue;
+      const unmapped = m.choiceMap.entries.filter(
+        (entry) => entry.targetValue === null && entry.status !== 'IGNORED',
+      );
+      if (m.choiceMap.entries.length === 0) {
+        add({
+          severity: 'BLOCKER',
+          code: 'CHOICE_MAPPING_MISSING',
+          table: t,
+          field: m.sourceField,
+          message: `${m.sourceField} maps to a choice column, but no value mapping has been configured.`,
+          resolution: 'Open the choice mapping for this column and pair each source value with a choice.',
+        });
+      } else if (unmapped.length && m.choiceMap.defaultTargetValue === null) {
+        add({
+          severity: 'BLOCKER',
+          code: 'CHOICE_MAPPING_INCOMPLETE',
+          table: t,
+          field: m.sourceField,
+          message: `${unmapped.length} source value(s) of ${m.sourceField} have no target choice: ${unmapped
+            .slice(0, 5)
+            .map((u) => u.sourceValue)
+            .join(', ')}${unmapped.length > 5 ? '…' : ''}.`,
+          resolution: 'Map the remaining values, exclude them, or set a default choice.',
+        });
+      }
+    }
+
+    // Conversions that can lose data are surfaced before a migration, not after.
+    for (const m of e.mappings) {
+      if (!MAPPED.has(m.status)) continue;
+      if (m.compatibility === 'LOSSY') {
+        add({
+          severity: 'WARNING',
+          code: 'LOSSY_CONVERSION',
+          table: t,
+          field: m.sourceField,
+          message: `${m.sourceField} → ${m.targetField}: ${m.reason}`,
+          resolution: 'Run a preflight to see whether any record is actually affected.',
+        });
+      }
     }
 
     // Required target columns that nothing maps into.

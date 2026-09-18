@@ -181,8 +181,12 @@ export class MigrationEngine {
         run.organizationId,
         run.targetEnvironmentId,
       );
-      const sConn = this.connections.forEnvironment(source, run.executedByUserId, { migrationRunId: runId });
-      const tConn = this.connections.forEnvironment(target, run.executedByUserId, { migrationRunId: runId });
+      const sConn = await this.connections.connectorFor(source, run.executedByUserId, {
+        migrationRunId: runId,
+      });
+      const tConn = await this.connections.connectorFor(target, run.executedByUserId, {
+        migrationRunId: runId,
+      });
       const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...run.options };
       const writeOptions: WriteOptions = {
         bypassCustomBusinessLogic: options.bypassCustomBusinessLogic,
@@ -195,12 +199,24 @@ export class MigrationEngine {
       const names = entities.map((e) => e.logicalName);
       const sourceMeta = await this.metadata.getTables(source.id, sConn, names, { refresh: true });
       const targetCatalog = await this.metadata.getCatalog(target.id, tConn, true);
-      const referenced = new Set<string>(names);
+
+      // Source table -> target table. A lookup pointing at a source table is resolved against
+      // whichever target table that source table migrates into, which is what makes a SQL
+      // foreign key land on the right Dataverse lookup.
+      const targetTableFor = new Map<string, string>(
+        entities.map((e) => [e.logicalName, e.targetLogicalName]),
+      );
+      const referenced = new Set<string>();
       for (const e of entities) {
+        const mapped = targetTableFor.get(e.logicalName);
+        if (mapped) referenced.add(mapped);
         const s = sourceMeta.get(e.logicalName);
         for (const m of e.mappings.filter((x) => x.isLookup)) {
-          for (const t of s?.attributes.find((a) => a.logicalName === m.sourceField)?.targets ?? [])
-            referenced.add(t);
+          for (const t of s?.attributes.find((a) => a.logicalName === m.sourceField)?.targets ?? []) {
+            // A lookup may point at a platform table (systemuser) that is not migrated: then the
+            // referenced name is the same in both systems.
+            referenced.add(targetTableFor.get(t) ?? t);
+          }
         }
       }
       const targetMeta = await this.metadata.getTables(
@@ -226,6 +242,10 @@ export class MigrationEngine {
         writeOptions,
         sourceMeta,
         targetMeta,
+        targetTableFor,
+        // Record ids only mean the same thing in both systems when both are the same kind of
+        // system. Between providers a source id is never assumed to exist in the target.
+        sameProvider: source.connectionType === target.connectionType,
         heartbeat,
         lookupCache: new Map(principalMap),
         principalMap,
@@ -375,7 +395,7 @@ export class MigrationEngine {
         and(eq(migrationRunEntities.runId, run.id), eq(migrationRunEntities.logicalName, entity.logicalName)),
       );
     const s = ctx.sourceMeta.get(entity.logicalName);
-    const t = ctx.targetMeta.get(entity.logicalName);
+    const t = ctx.targetMeta.get(entity.targetLogicalName);
     const elog = log.child({ entity: entity.logicalName });
 
     await this.db
@@ -394,7 +414,9 @@ export class MigrationEngine {
           operation: 'READ',
           severity: 'ERROR',
           code: 'TABLE_UNAVAILABLE',
-          message: `Table ${entity.logicalName} is not available in the ${!s ? 'source' : 'target'} environment`,
+          message: !s
+            ? `Table ${entity.logicalName} is not available in the source connection`
+            : `Target table ${entity.targetLogicalName} is not available in the target connection`,
           retryable: false,
         },
       ]);
@@ -709,7 +731,7 @@ export class MigrationEngine {
         ),
       )
       .orderBy(desc(migrationRecordMaps.updatedAt));
-    const tTable = ctx.targetMeta.get(logicalName);
+    const tTable = ctx.targetMeta.get(ctx.targetTableFor.get(logicalName) ?? logicalName);
     const earlier = new Map<string, string>();
     for (const m of maps) {
       const k = this.cacheKey(logicalName, m.sourceId);
@@ -734,7 +756,9 @@ export class MigrationEngine {
         if (found.has(tid.toLowerCase())) ctx.lookupCache.set(this.cacheKey(logicalName, sid), tid);
     }
     const unresolved = ids.filter((id) => !ctx.lookupCache.get(this.cacheKey(logicalName, id)));
-    if (unresolved.length) {
+    // Falling back to "the same id already exists in the target" is only meaningful within one
+    // provider; a SQL integer key is not a Dataverse GUID.
+    if (unresolved.length && ctx.sameProvider) {
       const found = new Set(
         (await ctx.tConn.retrieveByIds(tTable, unresolved, [])).map((f) => f.id.toLowerCase()),
       );
@@ -754,7 +778,7 @@ export class MigrationEngine {
 
   private async resolveDeferred(ctx: ExecContext, entity: SnapshotEntity) {
     const { run } = ctx;
-    const t = ctx.targetMeta.get(entity.logicalName);
+    const t = ctx.targetMeta.get(entity.targetLogicalName);
     if (!t) return;
     const pending = await this.db
       .select()
@@ -842,7 +866,7 @@ export class MigrationEngine {
    */
   private async stampModifiedBy(ctx: ExecContext, entity: SnapshotEntity) {
     const { run } = ctx;
-    const t = ctx.targetMeta.get(entity.logicalName);
+    const t = ctx.targetMeta.get(entity.targetLogicalName);
     if (!t) return;
     const pending = await this.db
       .select()
@@ -1063,6 +1087,10 @@ interface ExecContext {
   writeOptions: WriteOptions;
   sourceMeta: Map<string, TableMetadata>;
   targetMeta: Map<string, TableMetadata>;
+  /** Source table name -> target table name, from the plan's object mapping. */
+  targetTableFor: ReadonlyMap<string, string>;
+  /** True when both connections are the same kind of system, so record ids are comparable. */
+  sameProvider: boolean;
   heartbeat: () => Promise<void>;
   /** sourceLogicalName:sourceId -> targetId (null = known missing). */
   lookupCache: Map<string, string | null>;

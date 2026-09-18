@@ -29,12 +29,99 @@ export interface SessionResponseDto {
   realTenantReadOnly: boolean;
 }
 
-export type EnvironmentProvider = 'dataverse' | 'demo';
+export type EnvironmentProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'demosql';
 export type ConnectionStatus = 'UNKNOWN' | 'CONNECTED' | 'FAILED';
+
+/** The kind of system a connection points at. Chosen by the user when adding a connection. */
+export type ConnectionType = 'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL';
+
+/** Connections of the same family share a connector implementation and a metadata dialect. */
+export type ProviderFamily = 'DATAVERSE' | 'SQL';
+
+export const connectionFamily = (t: ConnectionType): ProviderFamily =>
+  t === 'DATAVERSE' ? 'DATAVERSE' : 'SQL';
+
+export const CONNECTION_TYPE_LABELS: Record<ConnectionType, string> = {
+  DATAVERSE: 'Microsoft Dataverse',
+  SQL_SERVER: 'SQL Server',
+  AZURE_SQL: 'Azure SQL',
+};
+
+/**
+ * How the server reaches the database. DIRECT requires network reachability from wherever the
+ * application runs; AGENT routes through a customer-hosted agent making outbound connections
+ * (designed in docs/ON_PREM_AGENT_ARCHITECTURE.md, not implemented yet).
+ */
+export type ConnectionTransportKind = 'DIRECT' | 'AGENT';
+
+/**
+ * SQL authentication modes. Only SQL_LOGIN is implemented; the others exist so the
+ * configuration shape does not have to change when they are added.
+ */
+export type SqlAuthType =
+  'SQL_LOGIN' | 'ENTRA_PASSWORD' | 'ENTRA_INTEGRATED' | 'MANAGED_IDENTITY' | 'WINDOWS';
+
+export const SQL_AUTH_IMPLEMENTED: ReadonlySet<SqlAuthType> = new Set<SqlAuthType>(['SQL_LOGIN']);
+
+/** Everything needed to reach a SQL database EXCEPT the password, which is never sent to a client. */
+/** One check from a connection test, safe to display. */
+export interface ConnectionCheckDto {
+  key: string;
+  label: string;
+  status: 'PASS' | 'FAIL' | 'WARN' | 'NOT_TESTED';
+  message: string;
+  resolution?: string | null;
+}
+
+export interface ConnectionTestResultDto {
+  ok: boolean;
+  /** One line about the connection, e.g. the server version. Never contains a credential. */
+  summary: string;
+  checks: ConnectionCheckDto[];
+}
+
+export interface SqlConnectionConfig {
+  host: string;
+  port: number;
+  database: string;
+  authType: SqlAuthType;
+  username: string | null;
+  /** TLS. Azure SQL always encrypts; on-premises servers may present a self-signed certificate. */
+  encrypt: boolean;
+  trustServerCertificate: boolean;
+  transport: ConnectionTransportKind;
+  /** Restricts discovery to these SQL schemas; empty means every schema the login can read. */
+  schemas: string[];
+  /** Set once a password has been stored, so the UI can say so without ever reading it back. */
+  hasSecret?: boolean;
+}
+
+/**
+ * What a connector can actually do. The UI reads these instead of checking the provider, so
+ * Dataverse-only settings (ownership, impersonation, plug-in bypass) never appear for SQL.
+ */
+export interface ConnectorCapabilities {
+  supportsRead: boolean;
+  supportsWrite: boolean;
+  supportsTransactions: boolean;
+  supportsBatchWrite: boolean;
+  supportsAlternateKeys: boolean;
+  supportsOwnership: boolean;
+  supportsAuditImpersonation: boolean;
+  supportsChoices: boolean;
+  supportsServerSideLogicDetection: boolean;
+  supportsClientGeneratedIds: boolean;
+  supportsPrincipals: boolean;
+}
 
 export interface EnvironmentDto {
   id: string;
   provider: EnvironmentProvider;
+  /** DATAVERSE for every environment created before connections became multi-provider. */
+  connectionType: ConnectionType;
+  /** SQL connection settings, without the password. Null for Dataverse connections. */
+  sql: SqlConnectionConfig | null;
+  capabilities: ConnectorCapabilities;
   displayName: string;
   url: string;
   organizationId: string | null;
@@ -161,6 +248,7 @@ export interface EnvRef {
   url: string;
   /** Safety classification, so the UI can warn before writing to a production environment. */
   environmentClass: EnvironmentClass;
+  connectionType: ConnectionType;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +337,50 @@ export const auditNeedsPrincipals = (policy: AuditPolicy) => policy !== 'NONE';
 export const auditNeedsImpersonation = (policy: AuditPolicy) => policy === 'PRESERVE_ATTRIBUTION';
 export type IssueSeverity = 'BLOCKER' | 'WARNING' | 'INFO';
 export type MappingStatus = 'AUTO_MAPPED' | 'MANUAL' | 'UNMAPPED' | 'INCOMPATIBLE' | 'IGNORED';
+
+/**
+ * How a source table was paired with a target table. Cross-provider names rarely match, so a
+ * suggestion is never executed until a person confirms it.
+ */
+export type ObjectMappingStatus =
+  'EXACT' | 'AUTO_SUGGESTED' | 'CONFIRMED' | 'MANUAL' | 'UNMAPPED' | 'INCOMPATIBLE' | 'IGNORED';
+
+/** A suggestion is usable only once it is EXACT (same name) or a human has confirmed it. */
+export const objectMappingReady = (s: ObjectMappingStatus) =>
+  s === 'EXACT' || s === 'CONFIRMED' || s === 'MANUAL';
+
+export type TypeCompatibility = 'COMPATIBLE' | 'CONVERSION_REQUIRED' | 'LOSSY' | 'INCOMPATIBLE';
+
+/** One source value paired with the target choice it becomes. */
+export interface ChoiceMapEntryDto {
+  sourceValue: string;
+  targetValue: number | null;
+  targetLabel: string | null;
+  status: 'AUTO_SUGGESTED' | 'CONFIRMED' | 'UNMAPPED' | 'IGNORED';
+  /** How many source records carry this value (from the last profile/preflight). */
+  occurrences?: number | null;
+}
+
+export interface ChoiceMappingDto {
+  entries: ChoiceMapEntryDto[];
+  /** Applied when a source value has no entry. Null means "report it as an issue instead". */
+  defaultTargetValue: number | null;
+}
+
+export type TransformKind =
+  'DIRECT' | 'TRIM' | 'UPPER' | 'LOWER' | 'CONSTANT' | 'DEFAULT_IF_NULL' | 'CHOICE_MAP';
+
+/**
+ * A field transformation, stored as configuration so more kinds can be added without a
+ * schema change. Deliberately not a scripting language.
+ */
+export interface FieldTransformDto {
+  kind: TransformKind;
+  /** CONSTANT / DEFAULT_IF_NULL value. */
+  value?: string | number | boolean | null;
+}
+
+export const DEFAULT_TRANSFORM: FieldTransformDto = { kind: 'DIRECT' };
 export type TableCategory = 'CONFIGURATION' | 'REFERENCE' | 'TRANSACTIONAL';
 
 export type PlanStatus = 'DRAFT' | 'PLANNED' | 'EXECUTED' | 'ARCHIVED';
@@ -318,12 +450,25 @@ export interface FieldMappingDto {
   required: boolean;
   deferred: boolean;
   deferredTargets: string[];
+  /** Cross-provider type verdict shown in the mapping UI. */
+  compatibility: TypeCompatibility;
+  /** How the source value is turned into the target value. DIRECT for an unchanged copy. */
+  transform: FieldTransformDto;
+  /** Value-level mapping for choice columns (SQL text into a Dataverse choice, for example). */
+  choiceMap: ChoiceMappingDto | null;
 }
 
 export interface PlanEntityDto {
   id: string;
+  /** Source table. Kept as `logicalName` because same-name migrations predate table mapping. */
   logicalName: string;
   displayName: string;
+  /** Target table this source table is migrated into. Equal to logicalName for same-name pairs. */
+  targetLogicalName: string;
+  targetDisplayName: string;
+  objectMappingStatus: ObjectMappingStatus;
+  /** Suggested targets when the mapping is not confirmed yet, best first. */
+  targetCandidates?: { logicalName: string; displayName: string; confidence: number; reason: string }[];
   orderIndex: number;
   selectedExplicitly: boolean;
   category: TableCategory | null;

@@ -248,8 +248,8 @@ export class ValidationService {
       if (!vr.createdByUserId) throw new Error('Validation has no initiating user');
       const source = await this.environmentsSvc.getInOrganization(vr.organizationId, vr.sourceEnvironmentId);
       const target = await this.environmentsSvc.getInOrganization(vr.organizationId, vr.targetEnvironmentId);
-      const sConn = this.connections.forEnvironment(source, vr.createdByUserId, { validationRunId });
-      const tConn = this.connections.forEnvironment(target, vr.createdByUserId, { validationRunId });
+      const sConn = await this.connections.connectorFor(source, vr.createdByUserId, { validationRunId });
+      const tConn = await this.connections.connectorFor(target, vr.createdByUserId, { validationRunId });
       const [runRow] = vr.migrationRunId
         ? await this.db
             .select({ s: migrationRuns.planSnapshot, o: migrationRuns.options })

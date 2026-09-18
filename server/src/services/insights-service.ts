@@ -29,7 +29,7 @@ export class InsightsService {
 
   async profile(ctx: RequestContext, environmentId: string, table: string): Promise<ProfileDto> {
     const env = await this.environmentsSvc.getAccessible(ctx, environmentId);
-    const conn = this.connections.forEnvironment(env, ctx.userId, { requestId: ctx.requestId });
+    const conn = await this.connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
     try {
       const meta = await this.metadata.getTable(env.id, conn, table);
       if (!meta) throw notFound('Table');

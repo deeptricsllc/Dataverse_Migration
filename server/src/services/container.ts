@@ -13,6 +13,7 @@ import { MetadataService } from './metadata-service';
 import { MigrationEngine } from './migration-engine';
 import { MigrationRunService } from './migration-run-service';
 import { PlanningService } from './planning-service';
+import { ConnectionService } from './connection-service';
 import { DiagnosticsService } from './diagnostics-service';
 import { PreflightService } from './preflight-service';
 import { RemediationService } from './remediation-service';
@@ -65,6 +66,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     identity,
     logger,
   );
+  const connectionAdmin = new ConnectionService(db, connections, audit, logger);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
@@ -109,6 +111,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     preflight,
     diagnostics,
     remediation,
+    connectionAdmin,
     insights,
     createWorker,
   };

@@ -101,7 +101,14 @@ describe('impersonation headers', () => {
 
 describe('alternate key lookups', () => {
   const product = table('product', [attr('productnumber', 'String'), attr('name', 'String')], {
-    keys: [{ logicalName: 'key_productnumber', displayName: 'key', attributes: ['productnumber'] }],
+    keys: [
+      {
+        logicalName: 'key_productnumber',
+        schemaName: 'key_productnumber',
+        displayName: 'key',
+        attributes: ['productnumber'],
+      },
+    ],
   });
 
   it('uses the key predicate for ordinary values', async () => {
@@ -132,12 +139,22 @@ describe('alternate key lookups', () => {
   });
 
   it('only treats an Active key index as enforceable', () => {
-    expect(isKeyUsable({ logicalName: 'k', displayName: 'k', attributes: ['a'] })).toBe(true);
-    expect(isKeyUsable({ logicalName: 'k', displayName: 'k', attributes: ['a'], status: 'Active' })).toBe(
+    expect(isKeyUsable({ logicalName: 'k', schemaName: 'k', displayName: 'k', attributes: ['a'] })).toBe(
       true,
     );
+    expect(
+      isKeyUsable({
+        logicalName: 'k',
+        schemaName: 'k',
+        displayName: 'k',
+        attributes: ['a'],
+        status: 'Active',
+      }),
+    ).toBe(true);
     for (const status of ['Pending', 'InProgress', 'Failed']) {
-      expect(isKeyUsable({ logicalName: 'k', displayName: 'k', attributes: ['a'], status })).toBe(false);
+      expect(
+        isKeyUsable({ logicalName: 'k', schemaName: 'k', displayName: 'k', attributes: ['a'], status }),
+      ).toBe(false);
     }
   });
 });

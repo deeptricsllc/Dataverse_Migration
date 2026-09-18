@@ -1,8 +1,10 @@
 /**
- * Normalized Dataverse metadata model.
+ * Normalized metadata model, shared by every provider.
  *
- * Every Dataverse integration (real Web API or demo) produces these shapes so that
- * diffing, dependency analysis, mapping and the UI never touch raw Dataverse payloads.
+ * Dataverse (real Web API or demo) and SQL Server / Azure SQL all produce these shapes, so
+ * diffing, dependency analysis, mapping and the UI never touch a provider's raw payloads.
+ * Provider-specific details that have no neutral equivalent are kept in optional fields
+ * (see `sql` on AttributeMeta) rather than leaking into the shared model.
  */
 
 export const ATTRIBUTE_TYPES = [
@@ -69,6 +71,27 @@ export interface AttributeMeta {
   isGlobalOptionSet?: boolean;
   /** Lookup targets (logical names). */
   targets?: string[];
+  /** SQL-specific column facts, preserved for diagnostics and for writing SQL targets. */
+  sql?: SqlColumnMeta;
+}
+
+/** What a SQL column is, beyond the normalized type. */
+export interface SqlColumnMeta {
+  /** Raw SQL type name, e.g. `nvarchar`, `decimal`, `uniqueidentifier`. */
+  dataType: string;
+  /** Character length; -1 for MAX. */
+  maxLength: number | null;
+  precision: number | null;
+  scale: number | null;
+  isNullable: boolean;
+  /** IDENTITY column: the server generates the value, so a migration must not supply one. */
+  isIdentity: boolean;
+  /** Computed or generated column: read-only. */
+  isComputed: boolean;
+  /** Rowversion/timestamp column: read-only and meaningless across databases. */
+  isRowVersion: boolean;
+  defaultDefinition: string | null;
+  collation?: string | null;
 }
 
 export interface RelationshipMeta {
@@ -104,6 +127,10 @@ export interface AlternateKeyMeta {
 export const isKeyUsable = (key: AlternateKeyMeta) => (key.status ?? 'Active') === 'Active';
 
 export interface TableSummary {
+  /**
+   * Provider-unique identifier for the table. Dataverse uses the entity logical name
+   * (`account`); SQL uses the schema-qualified name (`dbo.Customer`).
+   */
   logicalName: string;
   schemaName: string;
   displayName: string;
@@ -115,6 +142,10 @@ export interface TableSummary {
   ownershipType: string;
   isIntersect: boolean;
   isActivity: boolean;
+  /** SQL only: the containing schema (`dbo`, `config`, …). */
+  sqlSchema?: string | null;
+  /** SQL only: a view is readable but never a migration target. */
+  isView?: boolean;
 }
 
 export interface TableMetadata extends TableSummary {

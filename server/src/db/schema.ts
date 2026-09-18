@@ -26,8 +26,15 @@ import type {
   AutomationInfo,
 } from '../../../shared/domain';
 import type {
+  ChoiceMappingDto,
+  ConnectionType,
+  EnvironmentProvider,
   FieldChangeDto,
+  FieldTransformDto,
   IdentityImpactDto,
+  ObjectMappingStatus,
+  SqlConnectionConfig,
+  TypeCompatibility,
   PreflightAction,
   PreflightTotals,
   PrincipalDto,
@@ -123,7 +130,14 @@ export const environments = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    provider: text('provider').$type<'dataverse' | 'demo'>().notNull(),
+    provider: text('provider').$type<EnvironmentProvider>().notNull(),
+    /**
+     * What kind of system this connection points at. Environments created before the platform
+     * supported SQL are DATAVERSE, which is why the column defaults to it.
+     */
+    connectionType: text('connection_type').$type<ConnectionType>().notNull().default('DATAVERSE'),
+    /** SQL host/database/auth settings. Never contains the password (see connectionSecrets). */
+    sqlConfig: jsonb('sql_config').$type<SqlConnectionConfig | null>(),
     displayName: text('display_name').notNull(),
     /** Normalized instance URL without trailing slash, e.g. https://org.crm.dynamics.com */
     url: text('url').notNull(),
@@ -147,6 +161,21 @@ export const environments = pgTable(
   },
   (t) => [uniqueIndex('environments_org_url_uq').on(t.organizationId, t.url)],
 );
+
+/**
+ * Encrypted connection credentials, kept in a separate table so that ordinary environment
+ * queries (which feed DTOs and exports) cannot return a secret by accident. The ciphertext is
+ * AES-256-GCM via SecretBox and is only ever decrypted inside the connector factory.
+ */
+export const connectionSecrets = pgTable('connection_secrets', {
+  environmentId: uuid('environment_id')
+    .primaryKey()
+    .references(() => environments.id, { onDelete: 'cascade' }),
+  /** SecretBox ciphertext. Never logged, never returned by the API, never put in a snapshot. */
+  ciphertext: text('ciphertext').notNull(),
+  updatedByUserId: uuid('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: updatedAt(),
+});
 
 /** Which users have discovered (and therefore can access) an environment. */
 export const environmentAccess = pgTable(
@@ -339,8 +368,16 @@ export const migrationPlanEntities = pgTable(
     planId: uuid('plan_id')
       .notNull()
       .references(() => migrationPlans.id, { onDelete: 'cascade' }),
+    /** Source table. Named `logical_name` because same-name migrations predate table mapping. */
     logicalName: text('logical_name').notNull(),
     displayName: text('display_name').notNull(),
+    /** Target table. Equal to logicalName for same-name (Dataverse to Dataverse) pairs. */
+    targetLogicalName: text('target_logical_name'),
+    targetDisplayName: text('target_display_name'),
+    objectMappingStatus: text('object_mapping_status')
+      .$type<ObjectMappingStatus>()
+      .notNull()
+      .default('EXACT'),
     orderIndex: integer('order_index').notNull().default(0),
     selectedExplicitly: boolean('selected_explicitly').notNull().default(true),
     sourceCount: integer('source_count'),
@@ -393,6 +430,15 @@ export const fieldMappings = pgTable(
       .default(sql`'[]'::jsonb`),
     required: boolean('required').notNull().default(false),
     deferred: boolean('deferred').notNull().default(false),
+    /** Cross-provider type verdict, recomputed whenever the mapping changes. */
+    compatibility: text('compatibility').$type<TypeCompatibility>().notNull().default('COMPATIBLE'),
+    /** How the source value becomes the target value. DIRECT is an unchanged copy. */
+    transform: jsonb('transform')
+      .$type<FieldTransformDto>()
+      .notNull()
+      .default(sql`'{"kind":"DIRECT"}'::jsonb`),
+    /** Value-level choice mapping (e.g. SQL 'ACTIVE' into a Dataverse option). */
+    choiceMap: jsonb('choice_map').$type<ChoiceMappingDto | null>(),
     /** Lookup target tables whose references are set in pass 2 (circular dependencies). */
     deferredTargets: jsonb('deferred_targets')
       .$type<string[]>()

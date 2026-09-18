@@ -130,8 +130,8 @@ export class PreflightService {
       if (!pf.createdByUserId) throw new Error('Preflight has no initiating user');
       const source = await this.environmentsSvc.getInOrganization(pf.organizationId, pf.sourceEnvironmentId);
       const target = await this.environmentsSvc.getInOrganization(pf.organizationId, pf.targetEnvironmentId);
-      const sConn = this.connections.forEnvironment(source, pf.createdByUserId, { preflightRunId });
-      const tConn = this.connections.forEnvironment(target, pf.createdByUserId, { preflightRunId });
+      const sConn = await this.connections.connectorFor(source, pf.createdByUserId, { preflightRunId });
+      const tConn = await this.connections.connectorFor(target, pf.createdByUserId, { preflightRunId });
       const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...pf.options };
 
       // The plan snapshot the migration would use, built exactly as execution builds it.
@@ -139,12 +139,17 @@ export class PreflightService {
       const names = snapshot.entities.map((e) => e.logicalName);
       await progress('Loading metadata');
       const sourceMeta = await this.metadata.getTables(source.id, sConn, names);
-      const referenced = new Set<string>(names);
+      // Source table -> target table, so a lookup is resolved against whichever target table the
+      // referenced source table migrates into (identical names for same-provider plans).
+      const targetTableFor = new Map<string, string>(
+        snapshot.entities.map((e) => [e.logicalName, e.targetLogicalName]),
+      );
+      const referenced = new Set<string>([...targetTableFor.values()]);
       for (const e of snapshot.entities) {
         const s = sourceMeta.get(e.logicalName);
         for (const m of e.mappings.filter((x) => x.isLookup)) {
           for (const t of s?.attributes.find((a) => a.logicalName === m.sourceField)?.targets ?? []) {
-            referenced.add(t);
+            referenced.add(targetTableFor.get(t) ?? t);
           }
         }
       }
@@ -169,8 +174,10 @@ export class PreflightService {
           entity,
           options,
           source: sourceMeta.get(entity.logicalName),
-          target: targetMeta.get(entity.logicalName),
+          target: targetMeta.get(entity.targetLogicalName),
           targetMeta,
+          targetTableFor,
+          sameProvider: source.connectionType === target.connectionType,
           sConn,
           tConn,
           principalMap,
@@ -224,6 +231,8 @@ export class PreflightService {
     sConn: ReturnType<ConnectionFactory['forEnvironment']>;
     tConn: ReturnType<ConnectionFactory['forEnvironment']>;
     principalMap: ReadonlyMap<string, string>;
+    targetTableFor: ReadonlyMap<string, string>;
+    sameProvider: boolean;
     plannedTables: ReadonlySet<string>;
     identity: Map<string, { logicalName: PrincipalTable; records: Set<string>; fields: Set<string> }>;
     heartbeat: () => Promise<void>;
@@ -355,6 +364,8 @@ export class PreflightService {
       tConn: ReturnType<ConnectionFactory['forEnvironment']>;
       targetMeta: Map<string, TableMetadata>;
       principalMap: ReadonlyMap<string, string>;
+      targetTableFor: ReadonlyMap<string, string>;
+      sameProvider: boolean;
       /** Tables this plan migrates, so their records count as "will exist" during the dry run. */
       plannedTables: ReadonlySet<string>;
     },
@@ -384,9 +395,10 @@ export class PreflightService {
           sql`organization_id = ${p.pf.organizationId} and source_environment_id = ${p.pf.sourceEnvironmentId} and target_environment_id = ${p.pf.targetEnvironmentId} and logical_name = ${logicalName} and outcome <> 'FAILED' and target_id is not null and source_id in ${sql.raw(`(${idList.map((i) => `'${i.replace(/'/g, "''")}'`).join(',') || `''`})`)}`,
         );
       for (const r of rows) resolved.set(`${logicalName}:${r.sourceId}`, r.targetId);
-      const table = p.targetMeta.get(logicalName);
+      const table = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
       const unresolved = idList.filter((id) => !resolved.get(`${logicalName}:${id}`));
-      if (table && unresolved.length) {
+      // A source id is only meaningful in the target when both are the same kind of system.
+      if (table && unresolved.length && p.sameProvider) {
         const found = await p.tConn.retrieveByIds(table, unresolved, []);
         const ids2 = new Set(found.map((f) => f.id.toLowerCase()));
         for (const id of unresolved) if (ids2.has(id)) resolved.set(`${logicalName}:${id}`, id);

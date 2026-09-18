@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { EnvironmentDto, WorkspaceDto } from '../../../shared/domain';
+import { capabilitiesFor } from '../connectors/capabilities';
 import type { AppDb } from '../db/client';
 import { environmentAccess, environments, userPreferences } from '../db/schema';
 import { DataverseError, toDataverseError } from '../dataverse/errors';
@@ -11,10 +12,14 @@ import type { RequestContext } from './context';
 
 export type EnvironmentRow = typeof environments.$inferSelect;
 
-export function toEnvironmentDto(e: EnvironmentRow): EnvironmentDto {
+export function toEnvironmentDto(e: EnvironmentRow, hasSecret = false): EnvironmentDto {
   return {
     id: e.id,
     provider: e.provider,
+    connectionType: e.connectionType,
+    // The password is never part of a DTO: only whether one has been stored.
+    sql: e.sqlConfig ? { ...e.sqlConfig, hasSecret } : null,
+    capabilities: capabilitiesFor(e.connectionType),
     displayName: e.displayName,
     url: e.url,
     organizationId: e.dataverseOrganizationId,
@@ -153,10 +158,48 @@ export class EnvironmentService {
           set: { lastSeenAt: now },
         });
     }
-    // Revoke access rows for environments no longer returned for this user.
+    // Demo organizations also get the simulated legacy SQL Server, so a cross-provider
+    // migration can be demonstrated without a database server.
+    const demoSql = ctx.isDemoOrg ? this.connections.demoSqlDefinition() : null;
+    if (demoSql) {
+      const [sqlEnv] = await this.db
+        .insert(environments)
+        .values({
+          organizationId: ctx.organizationId,
+          provider: 'demosql',
+          connectionType: 'SQL_SERVER',
+          sqlConfig: demoSql.config,
+          displayName: demoSql.displayName,
+          url: demoSql.url,
+          uniqueName: demoSql.key,
+          version: demoSql.version,
+          state: 'Enabled',
+          dataverseAvailable: false,
+          connectionStatus: 'CONNECTED',
+          connectionMessage: 'Simulated SQL Server (demo)',
+          lastDiscoveredAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [environments.organizationId, environments.url],
+          set: { displayName: demoSql.displayName, sqlConfig: demoSql.config, lastDiscoveredAt: now },
+        })
+        .returning();
+      await this.db
+        .insert(environmentAccess)
+        .values({ userId: ctx.userId, environmentId: sqlEnv.id, lastSeenAt: now })
+        .onConflictDoUpdate({
+          target: [environmentAccess.userId, environmentAccess.environmentId],
+          set: { lastSeenAt: now },
+        });
+    }
+
+    // Revoke access rows for environments no longer returned for this user. Only Dataverse
+    // environments come from discovery; a SQL connection is configured by hand and stays.
     const current = await this.list(ctx);
     const discoveredUrls = new Set(discovered.map((d) => d.url));
-    const stale = current.filter((e) => !discoveredUrls.has(e.url)).map((e) => e.id);
+    const stale = current
+      .filter((e) => e.connectionType === 'DATAVERSE' && !discoveredUrls.has(e.url))
+      .map((e) => e.id);
     if (stale.length) {
       await this.db
         .delete(environmentAccess)
@@ -177,7 +220,7 @@ export class EnvironmentService {
 
   async testConnection(ctx: RequestContext, environmentId: string): Promise<EnvironmentDto> {
     const env = await this.getAccessible(ctx, environmentId);
-    const conn = this.connections.forEnvironment(env, ctx.userId, { requestId: ctx.requestId });
+    const conn = await this.connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
     let status: 'CONNECTED' | 'FAILED' = 'CONNECTED';
     let message: string;
     try {

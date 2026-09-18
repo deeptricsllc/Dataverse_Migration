@@ -86,8 +86,12 @@ export class ComparisonService {
         run.organizationId,
         run.targetEnvironmentId,
       );
-      const sConn = this.connections.forEnvironment(source, run.createdByUserId, { comparisonRunId: runId });
-      const tConn = this.connections.forEnvironment(target, run.createdByUserId, { comparisonRunId: runId });
+      const sConn = await this.connections.connectorFor(source, run.createdByUserId, {
+        comparisonRunId: runId,
+      });
+      const tConn = await this.connections.connectorFor(target, run.createdByUserId, {
+        comparisonRunId: runId,
+      });
 
       await progress('Discovering table catalogs');
       const [sourceCatalog, targetCatalog] = await Promise.all([
