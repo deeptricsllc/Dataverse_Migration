@@ -55,6 +55,7 @@ export class EnvironmentService {
   ) {}
 
   async list(ctx: RequestContext): Promise<EnvironmentDto[]> {
+    await this.ensureDemoSqlConnections(ctx);
     const rows = await this.db
       .select({ env: environments })
       .from(environments)
@@ -65,6 +66,73 @@ export class EnvironmentService {
       .where(eq(environments.organizationId, ctx.organizationId))
       .orderBy(environments.displayName);
     return rows.map((r) => toEnvironmentDto(r.env));
+  }
+
+  /**
+   * Makes sure a demo organization has the simulated SQL connections.
+   *
+   * They are created during discovery, but a deployment that discovered its environments before
+   * SQL support existed would never see them, so this also runs on a plain read. It does nothing
+   * once they exist, and nothing at all outside demo organizations.
+   */
+  private async ensureDemoSqlConnections(ctx: RequestContext) {
+    if (!ctx.isDemoOrg) return;
+    const definitions = this.connections.demoSqlDefinitions();
+    if (definitions.length === 0) return;
+    // An organization that has discovered nothing yet is about to run discovery, which creates
+    // these itself. Creating them here first would make the list non-empty and suppress it.
+    const [any] = await this.db
+      .select({ id: environments.id })
+      .from(environments)
+      .where(eq(environments.organizationId, ctx.organizationId))
+      .limit(1);
+    if (!any) return;
+    const existing = await this.db
+      .select({ url: environments.url })
+      .from(environments)
+      .where(
+        and(
+          eq(environments.organizationId, ctx.organizationId),
+          inArray(
+            environments.url,
+            definitions.map((d) => d.url),
+          ),
+        ),
+      );
+    const known = new Set(existing.map((e) => e.url));
+    const now = new Date();
+    for (const demoSql of definitions) {
+      if (known.has(demoSql.url)) continue;
+      const [row] = await this.db
+        .insert(environments)
+        .values({
+          organizationId: ctx.organizationId,
+          provider: 'demosql',
+          connectionType: 'SQL_SERVER',
+          sqlConfig: demoSql.config,
+          displayName: demoSql.displayName,
+          url: demoSql.url,
+          uniqueName: demoSql.key,
+          version: demoSql.version,
+          state: 'Enabled',
+          dataverseAvailable: false,
+          connectionStatus: 'CONNECTED',
+          connectionMessage: 'Simulated SQL Server (demo)',
+          lastDiscoveredAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [environments.organizationId, environments.url],
+          set: { sqlConfig: demoSql.config, lastDiscoveredAt: now },
+        })
+        .returning();
+      await this.db
+        .insert(environmentAccess)
+        .values({ userId: ctx.userId, environmentId: row.id, lastSeenAt: now })
+        .onConflictDoUpdate({
+          target: [environmentAccess.userId, environmentAccess.environmentId],
+          set: { lastSeenAt: now },
+        });
+    }
   }
 
   /** Loads an environment the current user may access (organization + discovery scoped). */
@@ -158,7 +226,7 @@ export class EnvironmentService {
           set: { lastSeenAt: now },
         });
     }
-    // Demo organizations also get the simulated legacy SQL Server, so a cross-provider
+    // Demo organizations also get the simulated SQL Server connections, so a cross-provider
     // migration can be demonstrated without a database server.
     for (const demoSql of ctx.isDemoOrg ? this.connections.demoSqlDefinitions() : []) {
       const [sqlEnv] = await this.db
