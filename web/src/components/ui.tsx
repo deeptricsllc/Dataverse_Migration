@@ -71,7 +71,9 @@ export function Card({
   className,
   bodyClassName,
   subtitle,
+  'data-testid': testId,
 }: {
+  'data-testid'?: string;
   title?: ReactNode;
   subtitle?: ReactNode;
   actions?: ReactNode;
@@ -80,7 +82,10 @@ export function Card({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cx('rounded-lg border border-slate-200 bg-white shadow-sm', className)}>
+    <section
+      data-testid={testId}
+      className={cx('rounded-lg border border-slate-200 bg-white shadow-sm', className)}
+    >
       {(title || actions) && (
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
           <div>

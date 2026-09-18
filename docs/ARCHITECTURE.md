@@ -2,6 +2,10 @@
 
 **Discover → Compare → Plan → Migrate → Validate → Reconcile/Report → (Rollback)**
 
+The platform is provider-neutral. Dataverse, SQL Server and Azure SQL are connectors behind one
+contract; every service above them is written once. Adding a provider means implementing
+`MigrationConnector` and declaring its capabilities, not editing the engine.
+
 ```
 ┌──────────────── Browser (React SPA, web/) ────────────────┐
 │ Dashboard · Environments · Compare · Migration wizard ·    │
@@ -29,10 +33,12 @@
 │  ValidationService (schema, counts, existence, fields, refs)│
 │  InsightsService (profiling, dashboard) · AuditService      │
 ├──────────────────────┬──────────────────────────────────────┤
-│ Job queue + Worker   │ Dataverse layer (server/src/dataverse)│
-│ (jobs table, SKIP    │  DataverseConnection interface        │
-│  LOCKED, heartbeats, │   ├─ WebApiConnection (real, v9.2)    │
-│  stale recovery)     │   └─ DemoConnection (DEMO MODE)       │
+│ Job queue + Worker   │ Connectors (server/src/connectors)    │
+│ (jobs table, SKIP    │  MigrationConnector + capabilities    │
+│  LOCKED, heartbeats, │   ├─ WebApiConnection (Dataverse 9.2) │
+│  stale recovery)     │   ├─ SqlConnector (SQL / Azure SQL)   │
+│                      │   ├─ DemoConnection (simulated DV)    │
+│                      │   └─ DemoSqlConnection (simulated SQL)│
 │                      │  GlobalDiscoveryProvider · retry/     │
 │                      │  throttling · error classification    │
 └──────────┬───────────┴──────────────────────────────────────┘
@@ -54,6 +60,68 @@
 | One decision module for dry run and execution             | `record-planner.ts` (what to write) and `record-matcher.ts` (which target record) are pure and shared, so a preflight cannot predict something different from what the engine does.                            |
 | Policies instead of booleans                              | `AuditPolicy` and `UserResolutionPolicy` make the consequences explicit and reviewable. The engine reads derived capability flags, never the policy name.                                                      |
 | `REAL_TENANT_READ_ONLY` enforced in the Dataverse client  | A UI or service mistake cannot reach a real tenant with a write: the block sits at the last layer before the HTTP request, and a second guard refuses to queue a run.                                          |
+
+## The connector contract
+
+`server/src/connectors/types.ts` defines `MigrationConnector`: discovery (`listTables`, `getTable`,
+`countRecords`), reading (`queryRecords`, `retrieveByIds`, `findByAlternateKey`, `findByFields`),
+writing (`createRecord`, `updateRecord`), a read-only `testConnection`, and the Dataverse-specific
+operations that other providers decline. What a provider can actually do is a `ConnectorCapabilities`
+record rather than an unimplemented method, so callers ask instead of guessing:
+
+| Capability           | Dataverse | SQL Server / Azure SQL             |
+| -------------------- | --------- | ---------------------------------- |
+| Read / write         | yes       | yes                                |
+| Transactions         | no        | yes                                |
+| Batch write          | no        | yes                                |
+| Alternate keys       | yes       | yes (unique constraints / indexes) |
+| Record ownership     | yes       | no                                 |
+| Audit impersonation  | yes       | no                                 |
+| Native choices       | yes       | no (mapped from values)            |
+| Client-generated ids | yes       | no (IDENTITY is server-assigned)   |
+| Principals           | yes       | no                                 |
+
+The UI reads these to decide which settings to show, so Dataverse-only options (ownership, created-by
+impersonation, plug-in bypass) never appear for a SQL target.
+
+### SQL metadata, normalized
+
+`connectors/sql/catalog.ts` holds the catalog queries (constants, never interpolated) and the pure
+functions that turn their rows into the shared model. The decisions that matter:
+
+- Identity, computed and rowversion columns are read-only, so no migration writes them.
+- A single-column primary key becomes the record id; a composite key is published as an alternate
+  key instead, because there is no single id to match on.
+- A **foreign key becomes a lookup**: the referencing column is typed `Lookup` with the referenced
+  table as its target. This is what lets SQL relationships flow through the dependency graph,
+  two-pass ordering and the record identity map unchanged.
+- A unique constraint or unique index becomes an alternate key — unless it is disabled or filtered,
+  which the shared `isKeyUsable` helper then refuses.
+
+## Cross-provider mapping
+
+| Layer          | What it decides                                                                                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Table mapping  | Which target table a source table's rows belong in. Identical names pair automatically (`EXACT`); anything else is `AUTO_SUGGESTED` and blocks the plan until a person confirms it. |
+| Column mapping | Which target column a source column feeds, with a verdict: `COMPATIBLE`, `CONVERSION_REQUIRED`, `LOSSY` or `INCOMPATIBLE`.                                                          |
+| Choice mapping | Which target choice each source value becomes. Values are read from the data; an unmapped value blocks the plan rather than defaulting.                                             |
+| Transformation | Direct copy, trim, upper, lower, constant, default-if-null. Persisted configuration, not a scripting language.                                                                      |
+
+`record-planner.ts` applies all of it in one place, so the preflight and the engine cannot disagree
+about what a value becomes.
+
+### Record identity across systems
+
+A SQL integer key means nothing in Dataverse and a Dataverse GUID means nothing in SQL, so:
+
+- Record ids are preserved **only** within one provider, and only where the target accepts a
+  client-supplied key. Otherwise the target assigns the key.
+- `migration_record_maps` records the (source connection, source table, source id) →
+  (target connection, target id) pair, and that map is what resolves every reference.
+- A SQL foreign key is therefore resolved exactly like a Dataverse lookup: find the referenced
+  source record in the identity map, and write the target's key.
+- A target record may be claimed by at most one source record per run. Two source rows resolving to
+  the same target is a conflict, not a last-writer-wins overwrite.
 
 ## Migration engine
 
@@ -157,7 +225,15 @@ With `REAL_TENANT_READ_ONLY=true`:
 - The UI shows a permanent **REAL TENANT - READ ONLY** banner, visually distinct from DEMO MODE.
 - Simulated demo environments are unaffected: they hold no tenant data.
 
-See [REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md).
+See [REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md). The same switch refuses writes to a
+real SQL database.
+
+## Designed, not built
+
+- [ON_PREM_AGENT_ARCHITECTURE.md](ON_PREM_AGENT_ARCHITECTURE.md) — reaching an on-premises SQL Server
+  from a hosted deployment, without exposing the database to the internet.
+- [INCREMENTAL_SYNC_ARCHITECTURE.md](INCREMENTAL_SYNC_ARCHITECTURE.md) — change tracking and CDC, so a
+  repeated sync of a very large table does not re-read everything.
 
 ## Exports
 
@@ -184,6 +260,8 @@ field by field (the report says so when this cap applies).
 
 ## Security
 
+- Database credentials: AES-256-GCM (SecretBox, HKDF-derived key) in a separate `connection_secrets` table, so an ordinary environment query cannot return one. Never returned by the API, never logged, never copied into a run snapshot. Driver errors are redacted before they reach a message.
+- SQL statements: every value is a bound parameter; identifiers come from the catalog the platform read and are quoted. An `UPDATE` is always keyed on the primary key, and the platform never issues `DELETE`, `DROP`, `ALTER` or `TRUNCATE`.
 - Sessions: random 256-bit token in an HttpOnly, SameSite=Lax cookie (`Secure` in production). The DB stores only a SHA-256 hash.
 - CSRF: per-session token required in `x-csrf-token` for every state-changing request, plus an Origin allow-list.
 - OAuth: PKCE, single-use `state`, `nonce` validation, optional tenant allow-list, open-redirect-safe `returnTo`.

@@ -1,6 +1,7 @@
-# Dataverse Migration & Validation Platform
+# Data Migration & Validation Platform
 
-**DeepTrics** — discover, compare, plan, migrate and validate Microsoft Dataverse environments.
+**DeepTrics** — discover, compare, plan, migrate and validate data between Microsoft Dataverse,
+SQL Server and Azure SQL.
 
 > Know what will happen before migration. Migrate safely. Know exactly what happened afterward.
 
@@ -12,7 +13,9 @@ Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 | Area              | Capability                                                                                                                                                                                                                                                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sign-in           | **Continue with Microsoft** (Entra ID, auth code + PKCE, server-side encrypted token cache) and a clearly marked **DEMO MODE** account                                                                                                                                                                                                      |
-| Environments      | Discovery through the Dataverse Global Discovery Service (delegated), search/filter, refresh, connection test (WhoAmI), source/target selection remembered per user                                                                                                                                                                         |
+| Connections       | Dataverse environments discovered through the Global Discovery Service, plus SQL Server and Azure SQL connections configured by hand (credentials encrypted at rest, never returned by the API). Read-only connection tests, capability reporting, source/target selection remembered per user                                              |
+| SQL discovery     | Tables, views, columns, types, nullability, defaults, identity/computed/rowversion columns, primary keys, unique constraints and indexes, foreign keys and row counts, read from the system catalog and normalized into the same model as Dataverse metadata                                                                                |
+| Cross-provider    | Table mapping (a suggestion is never migrated without confirmation), column mapping with a type-compatibility verdict, value-level **choice mapping**, field transformations, and SQL foreign keys resolved into Dataverse lookups through the record identity map                                                                          |
 | Compare           | Table catalog diff plus column/relationship/alternate-key comparison with MATCH / SOURCE_ONLY / TARGET_ONLY / DIFFERENT / INCOMPATIBLE, drill-down, data profiling (counts, null statistics, sample records)                                                                                                                                |
 | Users             | User/team/business-unit mapping between environments (matched on Entra object id, login, email or name) with manual override, CSV export and an impersonation privilege check                                                                                                                                                               |
 | Plan              | Table selection with explicit dependency hints, dependency graph (topological order, cycle detection, two-pass strategy), deterministic field mapping with manual override and suggestions that need confirmation, match strategy (primary ID or alternate key), conflict strategy, BLOCKER / WARNING / INFO issues, plug-in/flow detection |
@@ -28,15 +31,30 @@ Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 | History           | Runs, validation runs, record inventory, rollback impact preview (execution intentionally _not yet supported_), audit trail, dashboard                                                                                                                                                                                                      |
 | Platform          | Multi-tenant data model, CSRF/origin/session security, structured logs with request/run IDs, PostgreSQL or embedded PGlite                                                                                                                                                                                                                  |
 
+### Supported migration paths
+
+Source and target are chosen independently, so any pair works:
+
+| Source ↓ / Target → | Dataverse | SQL Server | Azure SQL |
+| ------------------- | --------- | ---------- | --------- |
+| **Dataverse**       | ✓         | ✓          | ✓         |
+| **SQL Server**      | ✓         | ✓          | ✓         |
+| **Azure SQL**       | ✓         | ✓          | ✓         |
+
+Every path runs on the same engine, planner, matcher, preflight and validation — a connector only
+decides how to read and write, never what the migration does. See
+[docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md) and
+[docs/AZURE_SQL_SETUP.md](docs/AZURE_SQL_SETUP.md).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/MICROSOFT_SETUP.md](docs/MICROSOFT_SETUP.md) and
 [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) (how to test against a real
 Microsoft tenant without writing to it).
 
-> **Not yet certified against a real Microsoft tenant.** Every Dataverse integration in this
-> repository is written against the current Microsoft documentation and is covered by tests using
-> simulated environments, but it has not been exercised against a real tenant. Follow
-> [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) before trusting it with
-> customer data.
+> **Not yet certified against a real Microsoft tenant or a real SQL Server.** Every integration in
+> this repository is written against the vendor's current documentation and is covered by tests
+> using simulated systems, but none of it has been exercised against a real tenant or database.
+> Follow [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) and section 8 of
+> [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md) before trusting it with customer data.
 
 ## Quick start (demo, no external dependencies)
 
@@ -154,7 +172,7 @@ server/src/
 web/src/           React SPA (pages, components, API client)
 tests/             unit + integration tests
 e2e/               Playwright happy path
-docs/              architecture, Microsoft setup
+docs/              architecture, Microsoft/SQL setup, certification, future designs
 ```
 
 ## Deploying to Railway

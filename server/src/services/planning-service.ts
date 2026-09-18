@@ -977,6 +977,8 @@ export class PlanningService {
           type: a.type,
           required: a.requiredLevel === 'ApplicationRequired' || a.requiredLevel === 'SystemRequired',
           targets: a.targets ?? [],
+          // Choices are needed by the value-mapping editor, which pairs source values with them.
+          options: a.options ?? [],
         })),
     };
   }

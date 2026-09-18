@@ -20,7 +20,7 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByText('DEMO MODE').first()).toBeVisible();
 
   // 2. Environments (auto-discovered on first visit)
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Environments' }).click();
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Connections' }).click();
   const devCard = page.getByTestId('env-card-DeepTrics Development');
   const qaCard = page.getByTestId('env-card-DeepTrics QA');
   await expect(devCard).toBeVisible();

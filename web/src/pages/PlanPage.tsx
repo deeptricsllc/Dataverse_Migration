@@ -1,3 +1,4 @@
+import { CONNECTION_TYPE_LABELS } from '@shared/domain';
 import type {
   AuditPolicy,
   ConflictStrategy,
@@ -11,6 +12,7 @@ import type {
   PlanIssue,
   PlanOptions,
   PreflightRunDto,
+  TypeCompatibility,
   PrincipalMappingSummaryDto,
   TableCandidateDto,
   UserResolutionPolicy,
@@ -19,6 +21,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Lightbulb, ListChecks, Play, RefreshCw, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ChoiceMappingModal } from '../components/ChoiceMappingModal';
+import { ObjectMappingCard } from '../components/ObjectMappingCard';
 import { TableSelector } from '../components/TableSelector';
 import { WizardSteps } from '../components/WizardSteps';
 import {
@@ -372,6 +376,7 @@ interface MappingsResponse {
     type: string;
     required: boolean;
     targets: string[];
+    options?: { value: number; label: string }[];
   }[];
 }
 interface Suggestion {
@@ -407,6 +412,7 @@ function MappingStep({
     mutationFn: () => get<Suggestion[]>(`/api/plans/${plan.id}/entities/${entityId}/suggestions`),
   });
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [choiceMappingId, setChoiceMappingId] = useState<string | null>(null);
   const update = useMutation({
     mutationFn: (v: { mappingId: string; body: Record<string, unknown> }) =>
       patch<MigrationPlanDto>(`/api/plans/${plan.id}/mappings/${v.mappingId}`, v.body),
@@ -432,8 +438,25 @@ function MappingStep({
     (s) => !dismissed.has(s.sourceField + s.targetField),
   );
 
+  const choiceMapping = mappings.data?.mappings.find((m) => m.id === choiceMappingId);
+  const choiceColumn = mappings.data?.targetColumns.find((c) => c.logicalName === choiceMapping?.targetField);
+
   return (
     <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
+      {choiceMapping && entityId && (
+        <ChoiceMappingModal
+          plan={plan}
+          entityId={entityId}
+          mapping={choiceMapping}
+          targetOptions={choiceColumn?.options ?? []}
+          open
+          onClose={() => setChoiceMappingId(null)}
+          onPlan={(p) => {
+            onPlan(p);
+            void qc.invalidateQueries({ queryKey: ['mappings', plan.id] });
+          }}
+        />
+      )}
       <Card title="Tables" bodyClassName="p-2">
         <ul className="space-y-0.5">
           {plan.entities.map((e) => {
@@ -442,6 +465,7 @@ function MappingStep({
               <li key={e.id}>
                 <button
                   type="button"
+                  data-testid={`plan-table-${e.logicalName}`}
                   onClick={() => {
                     setEntityId(e.id);
                     suggestions.reset();
@@ -460,6 +484,7 @@ function MappingStep({
         </ul>
       </Card>
       <div className="space-y-5">
+        {entity && <ObjectMappingCard plan={plan} entity={entity} onPlan={onPlan} />}
         {entity && (
           <Card
             title={`${entity.displayName} — record matching`}
@@ -648,6 +673,7 @@ function MappingStep({
                   <Th>Source field</Th>
                   <Th>Target field</Th>
                   <Th>Types</Th>
+                  <Th>Compatibility</Th>
                   <Th>Status</Th>
                   <Th>Confidence / reason</Th>
                   <Th className="text-right">Actions</Th>
@@ -697,6 +723,20 @@ function MappingStep({
                     </Td>
                     <Td className="text-xs text-slate-600">
                       {m.sourceType} → {m.targetType ?? '—'}
+                    </Td>
+                    <Td>
+                      <CompatibilityBadge value={m.compatibility} />
+                      {m.choiceMap && (
+                        <button
+                          type="button"
+                          className="mt-1 block text-[11px] font-medium text-brand-700 underline"
+                          data-testid={`choice-map-${m.sourceField}`}
+                          onClick={() => setChoiceMappingId(m.id)}
+                        >
+                          {m.choiceMap.entries.filter((e) => e.targetValue !== null).length}/
+                          {m.choiceMap.entries.length} values mapped
+                        </button>
+                      )}
                     </Td>
                     <Td>
                       <StatusBadge status={m.status} />
@@ -805,6 +845,7 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
   });
   const o = plan.options;
   const totalSource = plan.entities.reduce((n, e) => n + (e.sourceCount ?? 0), 0);
+  const targetIsDataverse = plan.targetEnvironment.connectionType === 'DATAVERSE';
 
   return (
     <div className="space-y-5">
@@ -814,10 +855,16 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
             <div>
               <dt className="text-xs uppercase tracking-wide text-[var(--color-source)]">Source</dt>
               <dd className="font-medium">{plan.sourceEnvironment.displayName}</dd>
+              <dd className="text-xs text-slate-500">
+                {CONNECTION_TYPE_LABELS[plan.sourceEnvironment.connectionType]}
+              </dd>
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-[var(--color-target)]">Target</dt>
               <dd className="font-medium">{plan.targetEnvironment.displayName}</dd>
+              <dd className="text-xs text-slate-500">
+                {CONNECTION_TYPE_LABELS[plan.targetEnvironment.connectionType]}
+              </dd>
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-slate-500">Tables</dt>
@@ -848,6 +895,12 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
                     <Td className="tabular-nums text-slate-500">{e.orderIndex}</Td>
                     <Td>
                       <div className="font-medium text-slate-900">{e.displayName}</div>
+                      {e.logicalName !== e.targetLogicalName && (
+                        <div className="text-[11px] text-slate-500">
+                          <Mono className="text-[11px]">{e.logicalName}</Mono> →{' '}
+                          <Mono className="text-[11px]">{e.targetLogicalName}</Mono>
+                        </div>
+                      )}
                       {e.category && <Pill tone="teal">{e.category.toLowerCase()}</Pill>}{' '}
                       {e.cycleGroup && <Pill tone="violet">cycle {e.cycleGroup}</Pill>}
                     </Td>
@@ -955,16 +1008,28 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
               />
               Stop the run on the first record failure
             </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={o.suppressFlowTriggers}
-                onChange={(e) => options.mutate({ suppressFlowTriggers: e.target.checked })}
-              />
-              Suppress Power Automate flow triggers
-            </label>
-            <PolicyControls plan={plan} options={options} />
-            <div className="rounded-md border border-slate-200 p-2">
+            {targetIsDataverse && (
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={o.suppressFlowTriggers}
+                  onChange={(e) => options.mutate({ suppressFlowTriggers: e.target.checked })}
+                />
+                Suppress Power Automate flow triggers
+              </label>
+            )}
+            {/* Ownership, audit attribution and plug-in bypass are Dataverse concepts; a SQL
+                target has none of them, so the options are not offered there. */}
+            {targetIsDataverse && <PolicyControls plan={plan} options={options} />}
+            {!targetIsDataverse && (
+              <p className="rounded-md border border-slate-200 p-2 text-xs text-slate-500">
+                {plan.targetEnvironment.displayName} is a{' '}
+                {CONNECTION_TYPE_LABELS[plan.targetEnvironment.connectionType]} target: it has no record
+                ownership, no impersonated attribution and no plug-ins, so those options do not apply. Rows
+                are written with the connection's own login.
+              </p>
+            )}
+            <div className={cx('rounded-md border border-slate-200 p-2', !targetIsDataverse && 'hidden')}>
               <label
                 className={cx(
                   'flex items-center gap-2',
@@ -1384,4 +1449,16 @@ function PolicyControls({
       )}
     </>
   );
+}
+
+/** How a source column's type fares against the target column it is mapped to. */
+function CompatibilityBadge({ value }: { value: TypeCompatibility }) {
+  const map: Record<TypeCompatibility, { tone: 'teal' | 'blue' | 'amber' | 'red'; label: string }> = {
+    COMPATIBLE: { tone: 'teal', label: 'compatible' },
+    CONVERSION_REQUIRED: { tone: 'blue', label: 'converted' },
+    LOSSY: { tone: 'amber', label: 'lossy' },
+    INCOMPATIBLE: { tone: 'red', label: 'incompatible' },
+  };
+  const { tone, label } = map[value];
+  return <Pill tone={tone}>{label}</Pill>;
 }

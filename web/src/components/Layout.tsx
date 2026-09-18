@@ -1,3 +1,4 @@
+import { CONNECTION_TYPE_LABELS, type ConnectionType } from '@shared/domain';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -23,7 +24,7 @@ import { cx } from './ui';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/environments', label: 'Environments', icon: Database },
+  { to: '/environments', label: 'Connections', icon: Database },
   { to: '/compare', label: 'Compare', icon: GitCompareArrows },
   { to: '/users', label: 'User mapping', icon: Users },
   { to: '/migration', label: 'Migration', icon: Truck },
@@ -116,7 +117,7 @@ function EnvCard({
   env,
 }: {
   role: 'SOURCE' | 'TARGET';
-  env: { displayName: string; url: string } | null;
+  env: { displayName: string; url: string; connectionType?: ConnectionType } | null;
 }) {
   const isSource = role === 'SOURCE';
   return (
@@ -137,7 +138,12 @@ function EnvCard({
       </div>
       {env ? (
         <>
-          <div className="truncate text-sm font-semibold text-slate-900">{env.displayName}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-slate-900">{env.displayName}</span>
+            <span className="whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+              {CONNECTION_TYPE_LABELS[env.connectionType ?? 'DATAVERSE']}
+            </span>
+          </div>
           <div className="truncate font-mono text-[11px] text-slate-500">{env.url}</div>
         </>
       ) : (
