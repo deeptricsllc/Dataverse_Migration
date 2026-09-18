@@ -206,6 +206,11 @@ export function demoSqlTables(): TableMetadata[] {
         // 200 characters here against a 100 character target column in QA: truncation risk.
         col('Website', 'nvarchar', { maxLength: 200 }),
         col('Industry', 'nvarchar', { maxLength: 40 }),
+        // Legacy flags and codes, stored as text the way an old system does.
+        col('IsActive', 'char', { maxLength: 1 }),
+        col('StatusCode', 'nvarchar', { maxLength: 10 }),
+        // A date kept as text in the local format, which is only readable with the format stated.
+        col('LegacyCreatedDate', 'nvarchar', { maxLength: 20 }),
         col('CreditLimit', 'money', { precision: 19, scale: 4 }),
         col('EmployeeCount', 'int'),
         col('OnCreditHold', 'bit', { nullable: false, defaultDefinition: '((0))' }),
@@ -325,13 +330,31 @@ export function demoSqlData(): Record<string, Row[]> {
     RegionName: name,
   }));
 
+  // The dirt is deliberate and every kind of it is represented: padded names, mixed-case and
+  // blank emails, an address that is not an email at all, Y/N flags, three spellings of the same
+  // status, and dates kept as text in a local format.
   const customer: Row[] = Array.from({ length: 24 }, (_, i) => {
     const n = i + 1;
+    const rawName = `${['Northwind', 'Contoso', 'Fabrikam', 'Adventure Works', 'Tailspin', 'Woodgrove'][i % 6]} ${['Industries', 'Group', 'Holdings', 'Partners'][i % 4]} ${n}`;
+    const email =
+      i % 7 === 0
+        ? null
+        : i % 5 === 0
+          ? '' // a blank string, which is not the same thing as null
+          : i === 11
+            ? 'not-an-email' // fails the target's email format
+            : i % 3 === 0
+              ? `  CONTACT${n}@EXAMPLE.COM  ` // mixed case with padding
+              : `contact${n}@example.com`;
     return {
       CustomerId: n,
       CustomerNumber: `CUST-${String(n).padStart(4, '0')}`,
-      CustomerName: `${['Northwind', 'Contoso', 'Fabrikam', 'Adventure Works', 'Tailspin', 'Woodgrove'][i % 6]} ${['Industries', 'Group', 'Holdings', 'Partners'][i % 4]} ${n}`,
-      Email: i % 7 === 0 ? null : `contact${n}@example.com`,
+      // Every third name arrives padded, the way a fixed-width export leaves it.
+      CustomerName: i % 3 === 0 ? `  ${rawName}  ` : rawName,
+      Email: email,
+      IsActive: i % 4 === 0 ? 'N' : 'Y',
+      StatusCode: ['A', 'ACTIVE', 'Active', 'D'][i % 4],
+      LegacyCreatedDate: `${String((i % 12) + 1).padStart(2, '0')}/${String((i % 28) + 1).padStart(2, '0')}/20${19 + (i % 5)}`,
       Phone: `+1 555 01${String(n).padStart(2, '0')}`,
       Website:
         i === 3
@@ -357,6 +380,18 @@ export function demoSqlData(): Record<string, Row[]> {
     CustomerName: 'Contoso Group 2 (duplicate record)',
     CustomerGuid: guid(25),
   });
+  // A record whose name is only whitespace: the target requires a name, so it cannot be migrated
+  // until somebody decides what it should be.
+  customer.push({
+    ...customer[0],
+    CustomerId: 26,
+    CustomerNumber: 'CUST-0026',
+    CustomerName: '   ',
+    Email: null,
+    IsActive: 'Y',
+    StatusCode: 'UNKNOWN',
+    CustomerGuid: guid(26),
+  });
 
   const contact: Row[] = Array.from({ length: 40 }, (_, i) => {
     const n = i + 1;
@@ -365,7 +400,8 @@ export function demoSqlData(): Record<string, Row[]> {
       CustomerId: (i % 24) + 1,
       FirstName: ['Ana', 'Ben', 'Chen', 'Dara', 'Eli', 'Fay'][i % 6],
       LastName: `Legacy${String(n).padStart(2, '0')}`,
-      Email: `person${n}@example.com`,
+      // Contacts carry the same kinds of mess as customers.
+      Email: i % 6 === 0 ? `  PERSON${n}@EXAMPLE.COM ` : `person${n}@example.com`,
       JobTitle: ['Buyer', 'Director', 'Analyst', 'Owner'][i % 4],
       BirthDate: `19${70 + (i % 25)}-0${(i % 9) + 1}-1${i % 9}`,
       DoNotEmail: i % 11 === 0,

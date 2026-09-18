@@ -312,8 +312,15 @@ describe('convertValue', () => {
     );
   });
 
-  it('trims padding before deciding whether text fits', () => {
-    expect(ok(convertValue('  hello  ', src, text('t', 5)))).toBe('hello');
+  it('de-pads a fixed-width char column, where trailing spaces are storage padding', () => {
+    const fixed = text('s', 10, 'char');
+    expect(ok(convertValue('hello     ', fixed, text('t', 5)))).toBe('hello');
+  });
+
+  it('never trims an ordinary text value: cleaning is the transformation pipeline’s job', () => {
+    // Trimming here would make " ACME " indistinguishable from "ACME" in the preview while the
+    // user has configured no rule at all.
+    expect(ok(convertValue('  hello  ', src, text('t', 50)))).toBe('  hello  ');
   });
 
   it('reports truncation instead of silently cutting the value', () => {

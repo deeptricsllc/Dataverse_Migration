@@ -388,9 +388,14 @@ export function convertValue(value: FieldValue, source: AttributeMeta, target: A
       if (isLookupValue(value)) {
         return { ok: false, error: `cannot write a lookup reference into text column ${target.logicalName}` };
       }
-      // Trailing whitespace in fixed-width `char` columns is padding, not data; trimming it first
-      // means a padded value that genuinely fits is not reported as a truncation.
-      const text = Array.isArray(value) ? value.join(',') : String(value).trim();
+      // Only fixed-width `char`/`nchar` columns are de-padded: there, trailing spaces are storage
+      // padding rather than data. Every other value is passed through exactly as it is, because
+      // cleaning is the transformation pipeline's job and must be visible in the preview — a
+      // converter that quietly trimmed would make " ACME " and "ACME" indistinguishable to the
+      // user while still differing from what they configured.
+      const raw = Array.isArray(value) ? value.join(',') : String(value);
+      const fixedWidth = source.sql?.dataType === 'char' || source.sql?.dataType === 'nchar';
+      const text = fixedWidth ? raw.replace(/\s+$/, '') : raw;
       const capacity = textCapacity(target);
       if (capacity != null && text.length > capacity) {
         return { ok: false, error: `value is ${text.length} characters, target allows ${capacity}` };

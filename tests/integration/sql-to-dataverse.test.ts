@@ -275,7 +275,7 @@ describe('SQL Server → Dataverse', () => {
     preflight = await api.get<PreflightRunDto>(`/api/preflight/${started.id}`);
     expect(preflight.status).toBe('COMPLETED');
 
-    expect(preflight.totals.sourceRecords).toBe(4 + 25 + 40);
+    expect(preflight.totals.sourceRecords).toBe(4 + 26 + 40);
     expect(preflight.totals.create).toBeGreaterThan(60);
     // Two source customers share a customer number: neither is written on a guess.
     expect(preflight.totals.conflict + preflight.totals.blocked).toBeGreaterThan(0);

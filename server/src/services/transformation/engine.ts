@@ -565,7 +565,9 @@ export function checkTargetConstraints(
   }
   const required =
     target.requiredLevel === 'ApplicationRequired' || target.requiredLevel === 'SystemRequired';
-  if (required && NIL(value)) {
+  // A blank string is not a value: a required column rejects it in both providers, so treating
+  // it as present would only move the failure from the preflight into the migration.
+  if (required && BLANK(value)) {
     return {
       severity: 'ERROR',
       code: 'REQUIRED_VALUE_MISSING',
