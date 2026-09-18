@@ -37,12 +37,14 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   await clickEither(page, /^Analyze now$|^Re-analyze \(refresh metadata\)$/);
   await expect(page.getByRole('button', { name: /Tables compared/ })).toBeVisible({ timeout: 120_000 });
 
-  // 4. Select the SQL tables to migrate
-  await page.getByRole('button', { name: 'Continue: Select tables' }).click();
+  // 4. Select the SQL tables to migrate. Navigating directly keeps this independent of whether
+  // the deployment already holds a comparison or a plan for this pair.
+  await expect(page.getByRole('button', { name: 'Continue: Select tables' })).toBeVisible();
+  await page.goto('/migration/new');
   await expect(page.getByRole('heading', { name: 'Select tables to migrate' })).toBeVisible();
   await selectTable(page, 'config.Region');
   await selectTable(page, 'dbo.Customer');
-  await page.getByRole('button', { name: /Generate migration plan/ }).click();
+  await clickEither(page, /Generate migration plan|Update migration plan|Continue: Review dependencies/);
 
   // 5. Dependencies: the foreign key from Customer to Region orders the two tables
   await expect(page.getByTestId('migration-order')).toBeVisible({ timeout: 60_000 });
@@ -143,9 +145,11 @@ async function setWorkspace(page: Page, source: string, target: string) {
 }
 
 async function selectTable(page: Page, logicalName: string) {
-  const row = page.getByTestId(`table-row-${logicalName}`);
-  await row.getByRole('checkbox').check();
-  await expect(row.getByRole('checkbox')).toBeChecked();
+  // Against a deployment, an earlier run may already have selected this table.
+  const box = page.getByTestId(`table-row-${logicalName}`).getByRole('checkbox');
+  await expect(box).toBeVisible();
+  if (!(await box.isChecked())) await box.click();
+  await expect(box).toBeChecked();
 }
 
 async function mapField(page: Page, sourceField: string, targetField: string) {
