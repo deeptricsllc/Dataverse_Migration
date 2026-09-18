@@ -281,10 +281,16 @@ export class ValidationService {
       await progress('Loading metadata');
       const targetCatalog = await this.metadata.getCatalog(target.id, tConn, true);
       const sourceMeta = await this.metadata.getTables(source.id, sConn, vr.tables, { refresh: true });
-      const referenced = new Set(vr.tables);
+      // Source table -> target table, from the plan snapshot. Same name within one provider;
+      // a mapped name across providers.
+      const targetTableFor = new Map<string, string>(
+        (snapshot?.entities ?? []).map((e) => [e.logicalName, e.targetLogicalName]),
+      );
+      const referenced = new Set(vr.tables.map((t) => targetTableFor.get(t) ?? t));
       for (const t of sourceMeta.values())
         for (const a of t.attributes)
-          if (LOOKUP_TYPES.has(a.type)) (a.targets ?? []).forEach((x) => referenced.add(x));
+          if (LOOKUP_TYPES.has(a.type))
+            (a.targets ?? []).forEach((x) => referenced.add(targetTableFor.get(x) ?? x));
       const targetMeta = await this.metadata.getTables(
         target.id,
         tConn,
@@ -301,8 +307,9 @@ export class ValidationService {
           vr,
           table,
           source: sourceMeta.get(table),
-          target: targetMeta.get(table),
+          target: targetMeta.get(targetTableFor.get(table) ?? table),
           targetMeta,
+          targetTableFor,
           snapshotEntity: snapshot?.entities.find((e) => e.logicalName === table) ?? null,
           runOptions,
           principalMap,
@@ -375,6 +382,8 @@ export class ValidationService {
     source: TableMetadata | undefined;
     target: TableMetadata | undefined;
     targetMeta: Map<string, TableMetadata>;
+    /** Source table -> target table, so lookups are compared against the right target table. */
+    targetTableFor: ReadonlyMap<string, string>;
     snapshotEntity: RunPlanSnapshot['entities'][number] | null;
     runOptions: PlanOptions | null;
     principalMap: ReadonlyMap<string, string>;
@@ -581,7 +590,7 @@ export class ValidationService {
             expected.set(`${logicalName}:${r.sourceId}`, r.targetId!);
       }
       const unresolved = idList.filter((id) => !expected.has(`${logicalName}:${id}`));
-      const tTable = p.targetMeta.get(logicalName);
+      const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
       if (unresolved.length && tTable) {
         const found = await p.tConn.retrieveByIds(tTable, unresolved, []);
         for (const f of found) expected.set(`${logicalName}:${f.id.toLowerCase()}`, f.id.toLowerCase());
@@ -681,7 +690,7 @@ export class ValidationService {
     }
     let broken = 0;
     for (const [logicalName, byId] of refIds) {
-      const tTable = p.targetMeta.get(logicalName);
+      const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
       const ids = [...byId.keys()];
       const found = new Set<string>();
       if (tTable)

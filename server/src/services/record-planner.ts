@@ -64,6 +64,13 @@ export interface PrepareInput {
   /** Resolved business-data lookups: `${logicalName}:${sourceId}` -> target id (null = unresolved). */
   lookups: ReadonlyMap<string, string | null>;
   /**
+   * Source table -> target table, so a resolved reference names the table it points at in the
+   * target system. A SQL foreign key to `config.Region` becomes a Dataverse lookup to
+   * `dtx_region`; without this the target would refuse a reference to a table it has never heard
+   * of.
+   */
+  targetTableFor?: ReadonlyMap<string, string>;
+  /**
    * Dry-run only: lookups whose target record does not exist yet but which this plan would create
    * in an earlier pass. They are reported as pending instead of blocking, because the execution
    * order guarantees they will exist by the time the record is written.
@@ -121,7 +128,10 @@ export function prepareRecord(input: PrepareInput): PreparedRecord {
       const key = lookupKey(raw.logicalName, raw.id);
       const resolved = input.lookups.get(key);
       if (resolved) {
-        out.values[tAttr.logicalName] = { id: resolved, logicalName: raw.logicalName };
+        out.values[tAttr.logicalName] = {
+          id: resolved,
+          logicalName: input.targetTableFor?.get(raw.logicalName) ?? raw.logicalName,
+        };
       } else if (input.pendingLookups?.has(key)) {
         // The referenced record is migrated earlier in the same run; nothing is blocked by it.
         out.issues.push({

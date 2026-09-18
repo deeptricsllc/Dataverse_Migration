@@ -33,6 +33,7 @@ import {
   type DemoEnvironmentDef,
 } from './fixtures';
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEMO_RETRY: RetryPolicy = { maxAttempts: 5, baseDelayMs: 100, maxDelayMs: 1000 };
 /** Every Nth write attempt per environment is throttled (HTTP 429) to exercise backoff. */
 const THROTTLE_EVERY = 97;
@@ -405,6 +406,14 @@ export class DemoConnection implements DataverseConnection {
       async () => {
         this.assertBypassAllowed(options);
         await this.validateValues(t, record.values, true);
+        if (record.id !== undefined && !GUID.test(record.id)) {
+          throw new DataverseError(
+            'VALIDATION',
+            `Cannot convert the literal '${record.id}' to the expected type 'Edm.Guid' for '${t.primaryIdAttribute}'.`,
+            400,
+            '0x80048d19',
+          );
+        }
         const id = (record.id ?? crypto.randomUUID()).toLowerCase();
         for (const a of t.attributes) {
           if (

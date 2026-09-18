@@ -6,6 +6,7 @@ import {
   type AttributeType,
   type TableMetadata,
 } from '../../../shared/metadata';
+import { fieldVerdict, fieldVerdictReason } from './field-verdict';
 import { typeCompatibility } from './type-compat';
 
 export interface MappingProposal {
@@ -140,13 +141,24 @@ export function proposeMapping(s: AttributeMeta, t: AttributeMeta | undefined): 
   };
 }
 
-/** Validates a user-chosen mapping. Returns an error message or null. */
+/**
+ * Validates a user-chosen mapping. Returns an error message or null.
+ *
+ * Across providers the rules are different from within one: a text column legitimately becomes a
+ * choice (through a choice mapping) and an integer key legitimately becomes a lookup (through the
+ * record identity map), so those are conversions to configure rather than errors to refuse. Lookup
+ * target names are also not comparable between systems, so they are not compared.
+ */
 export function validateManualMapping(
   source: AttributeMeta,
   target: AttributeMeta | undefined,
 ): string | null {
   if (!target) return 'Target column does not exist';
   if (!target.isValidForCreate && !target.isValidForUpdate) return 'Target column is read-only';
+  const crossProvider = Boolean(source.sql) !== Boolean(target.sql);
+  if (crossProvider) {
+    return fieldVerdict(source, target) === 'INCOMPATIBLE' ? fieldVerdictReason(source, target) : null;
+  }
   const compat = typeCompatibility(source, target);
   if (!compat.compatible) return compat.note;
   return null;

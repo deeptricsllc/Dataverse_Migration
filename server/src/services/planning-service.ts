@@ -507,7 +507,7 @@ export class PlanningService {
         total: choiceMap.entries.length,
       },
     });
-    return this.get(ctx, planId);
+    return this.revalidate(ctx, planId);
   }
 
   /** Stores a field transformation (trim, case, constant, default). */
@@ -525,7 +525,7 @@ export class PlanningService {
       .set({ transform, updatedByUserId: ctx.userId, updatedAt: new Date() })
       .where(eq(fieldMappings.id, mapping.id));
     await this.auditUpdate(ctx, plan, { field: mapping.sourceField, transform: transform.kind });
-    return this.get(ctx, planId);
+    return this.revalidate(ctx, planId);
   }
 
   private async loadMapping(planId: string, mappingId: string) {
@@ -944,7 +944,10 @@ export class PlanningService {
     const tConn = await this.connections.connectorFor(target, ctx.userId, { requestId: ctx.requestId });
     try {
       const s = await this.metadata.getTable(source.id, sConn, entity.logicalName);
-      const t = await this.metadata.getTable(target.id, tConn, entity.logicalName);
+      // The target table is whichever table this source table is mapped into, which is the same
+      // name for a same-provider plan and a different one across providers.
+      const targetName = entity.targetLogicalName ?? entity.logicalName;
+      const t = await this.metadata.getTable(target.id, tConn, targetName);
       return { plan, entity, s, t };
     } catch (err) {
       throw integrationError(err, 'Loading table metadata');
@@ -1018,10 +1021,21 @@ export class PlanningService {
         confidence: 100,
         reason: `Manually mapped by ${ctx.displayName}`,
         required: tAttr!.requiredLevel === 'ApplicationRequired' || tAttr!.requiredLevel === 'SystemRequired',
+        compatibility: fieldVerdict(sAttr, tAttr),
+        // Mapping onto a choice column starts an (empty) value mapping, which plan validation
+        // then reports as incomplete until a person fills it in.
+        choiceMap: needsChoiceMapping(sAttr, tAttr)
+          ? (mapping.m.choiceMap ?? { entries: [], defaultTargetValue: null })
+          : null,
         updatedByUserId: ctx.userId,
       };
     } else if (input.action === 'IGNORE') {
-      set = { status: 'IGNORED', reason: `Ignored by ${ctx.displayName}`, updatedByUserId: ctx.userId };
+      set = {
+        status: 'IGNORED',
+        reason: `Ignored by ${ctx.displayName}`,
+        choiceMap: null,
+        updatedByUserId: ctx.userId,
+      };
     } else if (input.action === 'UNMAP') {
       set = {
         status: 'UNMAPPED',
@@ -1029,6 +1043,8 @@ export class PlanningService {
         targetType: null,
         confidence: 0,
         reason: `Unmapped by ${ctx.displayName}`,
+        compatibility: 'INCOMPATIBLE',
+        choiceMap: null,
         updatedByUserId: ctx.userId,
       };
     } else {
@@ -1036,6 +1052,7 @@ export class PlanningService {
         sAttr,
         t?.attributes.find((a) => a.logicalName === sAttr.logicalName),
       );
+      const resetTarget = t?.attributes.find((a) => a.logicalName === sAttr.logicalName);
       set = {
         targetField: p.targetField,
         targetType: p.targetType,
@@ -1043,6 +1060,8 @@ export class PlanningService {
         confidence: p.confidence,
         reason: p.reason,
         required: p.required,
+        compatibility: fieldVerdict(sAttr, resetTarget),
+        choiceMap: null,
         updatedByUserId: null,
       };
     }

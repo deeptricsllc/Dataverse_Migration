@@ -43,6 +43,12 @@ export function describeMatchStrategy(entity: {
 export class RecordMatcher {
   /** Source business-key values already seen in this run/preflight, to catch duplicates. */
   private readonly seenKeys = new Map<string, string>();
+  /**
+   * Target records already claimed in this run/preflight, keyed by `${table}:${targetId}`.
+   * A target record may be claimed by at most one source record: if two source rows resolve to
+   * the same target, the second is a conflict rather than an overwrite of the first.
+   */
+  private readonly claimedTargets = new Map<string, string>();
 
   constructor(
     private readonly db: AppDb,
@@ -104,8 +110,45 @@ export class RecordMatcher {
     return { byTargetId, identity };
   }
 
+  /**
+   * Records that `sourceId` matched `targetId`, or reports a conflict when another source record
+   * already claimed that target in this run.
+   */
+  private claim(entity: PlannerEntity, sourceId: string, result: MatchResult): MatchResult {
+    if (!result.target) return result;
+    const key = `${entity.logicalName}:${result.target.id.toLowerCase()}`;
+    const owner = this.claimedTargets.get(key);
+    if (owner && owner !== sourceId.toLowerCase()) {
+      return {
+        target: null,
+        method: null,
+        conflict: {
+          code: 'DUPLICATE_SOURCE_KEY',
+          reason: `Source record ${owner} already migrates into this target record; two source records cannot both own it`,
+        },
+      };
+    }
+    this.claimedTargets.set(key, sourceId.toLowerCase());
+    return result;
+  }
+
   /** Resolves the match for one record. `prefetched` comes from {@link prefetch}. */
   async match(
+    entity: PlannerEntity,
+    target: TableMetadata,
+    record: { id: string },
+    prepared: PreparedRecord,
+    prefetched: { byTargetId: Map<string, DvRecord>; identity: Map<string, string> },
+    columns: string[],
+  ): Promise<MatchResult> {
+    return this.claim(
+      entity,
+      record.id,
+      await this.resolve(entity, target, record, prepared, prefetched, columns),
+    );
+  }
+
+  private async resolve(
     entity: PlannerEntity,
     target: TableMetadata,
     record: { id: string },

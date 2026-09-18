@@ -524,6 +524,7 @@ export class MigrationEngine {
         record,
         principalMap: ctx.principalMap,
         lookups: ctx.lookupCache,
+        targetTableFor: ctx.targetTableFor,
       });
       let decision: PlannedAction;
       try {
@@ -641,17 +642,21 @@ export class MigrationEngine {
         }
       default:
         try {
-          // Preserve the source identifier so references and re-runs stay stable.
+          // Within one provider the source identifier is preserved, so references and re-runs
+          // stay stable. Across providers a key means nothing in the other system (a SQL
+          // integer is not a Dataverse GUID), so the target assigns the key and the identity
+          // map records the pair.
+          const preserveId = ctx.sameProvider && ctx.tConn.capabilities.supportsClientGeneratedIds;
           const createdId = await ctx.tConn.createRecord(
             t,
-            { id: prepared.sourceId, values: decision.values },
+            { id: preserveId ? prepared.sourceId : undefined, values: decision.values },
             writeOptions,
           );
           return {
             ...base,
             outcome: 'CREATED',
             targetId: createdId,
-            matchMethod: 'PRESERVED_ID',
+            matchMethod: preserveId ? 'PRESERVED_ID' : 'GENERATED_ID',
             deferred,
             audit: prepared.auditWork,
           };
@@ -807,8 +812,12 @@ export class MigrationEngine {
         for (const [attr, lookup] of Object.entries(deferredLookups)) {
           const resolved = await this.resolveLookup(ctx, lookup);
           const tAttr: AttributeMeta | undefined = tAttrs.get(attr);
-          if (resolved) values[attr] = { id: resolved, logicalName: lookup.logicalName };
-          else {
+          if (resolved) {
+            values[attr] = {
+              id: resolved,
+              logicalName: ctx.targetTableFor.get(lookup.logicalName) ?? lookup.logicalName,
+            };
+          } else {
             errors.push({
               operation: 'DEFERRED_UPDATE',
               severity:

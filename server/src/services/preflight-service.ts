@@ -303,6 +303,7 @@ export class PreflightService {
           record,
           principalMap: p.principalMap,
           lookups,
+          targetTableFor: p.targetTableFor,
           pendingLookups: pending,
         });
         for (const issue of prepared.issues.filter((i) => i.code.startsWith('PRINCIPAL'))) {
