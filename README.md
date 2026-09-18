@@ -5,6 +5,8 @@ SQL Server and Azure SQL.
 
 > Know what will happen before migration. Migrate safely. Know exactly what happened afterward.
 
+**Discover → Profile → Map → Clean & Transform → Preflight → Migrate → Validate → Reconcile**
+
 Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 (Discover → Compare → Plan → Migrate → Validate → Reconcile → Report/Rollback).
 
@@ -14,6 +16,9 @@ Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sign-in           | **Continue with Microsoft** (Entra ID, auth code + PKCE, server-side encrypted token cache) and a clearly marked **DEMO MODE** account                                                                                                                                                                                                      |
 | Connections       | Dataverse environments discovered through the Global Discovery Service, plus SQL Server and Azure SQL connections configured by hand (credentials encrypted at rest, never returned by the API). Read-only connection tests, capability reporting, source/target selection remembered per user                                              |
+| Profiling         | Per-column nulls, blanks, whitespace, distinct and duplicate counts, length and numeric statistics, date ranges, invalid values and the distinct values that feed choice mapping. Every statistic says whether it is **exact** or **sampled**                                                                                               |
+| Data quality      | Rules derived from the target columns a source column is mapped into (required, maximum length, numeric range, email format), counted per record while profiling, so "38 records exceed 160 characters" is an exact number rather than an inference                                                                                         |
+| Clean & transform | An ordered, declarative transformation pipeline per field — trim, case, replace, prefix/suffix, substring, truncate, empty/null handling, defaults, type conversions, value maps, concatenation and simple conditionals — with a live preview that runs the same engine the migration runs                                                  |
 | SQL discovery     | Tables, views, columns, types, nullability, defaults, identity/computed/rowversion columns, primary keys, unique constraints and indexes, foreign keys and row counts, read from the system catalog and normalized into the same model as Dataverse metadata                                                                                |
 | Cross-provider    | Table mapping (a suggestion is never migrated without confirmation), column mapping with a type-compatibility verdict, value-level **choice mapping**, field transformations, and SQL foreign keys resolved into Dataverse lookups through the record identity map                                                                          |
 | Compare           | Table catalog diff plus column/relationship/alternate-key comparison with MATCH / SOURCE_ONLY / TARGET_ONLY / DIFFERENT / INCOMPATIBLE, drill-down, data profiling (counts, null statistics, sample records)                                                                                                                                |
@@ -45,6 +50,10 @@ Every path runs on the same engine, planner, matcher, preflight and validation �
 decides how to read and write, never what the migration does. See
 [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md) and
 [docs/AZURE_SQL_SETUP.md](docs/AZURE_SQL_SETUP.md).
+
+Transformation, profiling and data quality have their own guides:
+[docs/TRANSFORMATION_ENGINE.md](docs/TRANSFORMATION_ENGINE.md),
+[docs/DATA_PROFILING.md](docs/DATA_PROFILING.md) and [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/MICROSOFT_SETUP.md](docs/MICROSOFT_SETUP.md) and
 [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) (how to test against a real

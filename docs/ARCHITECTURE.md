@@ -98,6 +98,52 @@ functions that turn their rows into the shared model. The decisions that matter:
 - A unique constraint or unique index becomes an alternate key — unless it is disabled or filtered,
   which the shared `isKeyUsable` helper then refuses.
 
+## The transformation engine
+
+`server/src/services/transformation/engine.ts` is the one place a source value becomes a target
+value. Preview, preflight, migration execution and validation all call `transformField`, which is
+the point of it: if the preview says `" ACTIVE "` becomes `100000000`, preflight classifies against
+`100000000`, the migration writes `100000000`, and validation compares `100000000`. A second
+implementation would let those four disagree — the class of bug that makes a migration tool
+untrustworthy.
+
+```
+source value
+   → transformation pipeline (ordered, declarative rules)
+   → value / choice map
+   → conversion into the target column's type
+   → the target's own constraints (length, required)
+   → target-ready value
+```
+
+Lookup and identity resolution sit outside the engine, in `record-planner.ts`, because they need
+the identity map and the run's context; the engine itself is pure and deterministic.
+
+Rules are data from a closed list (`TRANSFORMATION_KINDS`), validated server-side with zod. There is
+no expression language, no scripting, no SQL and no `eval`, so transformation configuration cannot
+become an injection mechanism. `REPLACE` is a literal replacement rather than a regular expression,
+and a conditional may nest one level.
+
+What a value becomes is recorded as it happens: the applied rules per field, whether any of them
+discarded information, and aggregate counters on the run. See
+[TRANSFORMATION_ENGINE.md](TRANSFORMATION_ENGINE.md).
+
+### Profiling and data quality
+
+`ProfilingService` streams a table through the connector abstraction and never buffers it, reporting
+per-column statistics and marking every number **EXACT** or **SAMPLED** — an approximate row count
+can never yield an exact profile, and a full profile that exceeds the limit degrades to a sample and
+says so. `DataQualityService` derives rules from the target columns a source column actually maps
+into and counts violations per record while streaming. See [DATA_PROFILING.md](DATA_PROFILING.md)
+and [DATA_QUALITY.md](DATA_QUALITY.md).
+
+### Lossy transformations
+
+Truncation, substring, date-only conversion, integer conversion and rounding to a scale discard
+information. Each one is listed by name and has to be accepted before a run starts; the acceptance
+is stored on the plan, copied into the run and written to the audit trail. Configuring another lossy
+rule afterwards leaves it unaccepted, so the question is asked again.
+
 ## Cross-provider mapping
 
 | Layer          | What it decides                                                                                                                                                                     |
@@ -107,8 +153,8 @@ functions that turn their rows into the shared model. The decisions that matter:
 | Choice mapping | Which target choice each source value becomes. Values are read from the data; an unmapped value blocks the plan rather than defaulting.                                             |
 | Transformation | Direct copy, trim, upper, lower, constant, default-if-null. Persisted configuration, not a scripting language.                                                                      |
 
-`record-planner.ts` applies all of it in one place, so the preflight and the engine cannot disagree
-about what a value becomes.
+`record-planner.ts` applies all of it in one place, calling the transformation engine, so the
+preflight and the engine cannot disagree about what a value becomes.
 
 ### Record identity across systems
 
