@@ -1,0 +1,1 @@
+ALTER TABLE "field_mappings" ADD COLUMN "transformations" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -34,6 +34,7 @@ import type {
   IdentityImpactDto,
   ObjectMappingStatus,
   SqlConnectionConfig,
+  TransformationRule,
   TypeCompatibility,
   PreflightAction,
   PreflightTotals,
@@ -432,7 +433,15 @@ export const fieldMappings = pgTable(
     deferred: boolean('deferred').notNull().default(false),
     /** Cross-provider type verdict, recomputed whenever the mapping changes. */
     compatibility: text('compatibility').$type<TypeCompatibility>().notNull().default('COMPATIBLE'),
-    /** How the source value becomes the target value. DIRECT is an unchanged copy. */
+    /**
+     * The ordered transformation pipeline for this mapping. Empty means a direct copy.
+     * Declarative data only: the engine executes a closed list of rule kinds, never code.
+     */
+    transformations: jsonb('transformations')
+      .$type<TransformationRule[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Single-step transformation kept for mappings created before pipelines existed. */
     transform: jsonb('transform')
       .$type<FieldTransformDto>()
       .notNull()

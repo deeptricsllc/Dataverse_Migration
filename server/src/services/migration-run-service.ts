@@ -207,6 +207,7 @@ export class MigrationRunService {
             targetField: m.targetField!,
             isLookup: m.isLookup,
             deferredTargets: m.deferredTargets,
+            transformations: m.transformations,
             transform: m.transform,
             choiceMap: m.choiceMap,
           })),

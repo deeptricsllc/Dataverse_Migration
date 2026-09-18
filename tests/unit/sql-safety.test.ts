@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SecretBox } from '../../server/src/lib/crypto';
 import { quoteIdent, SqlConnector } from '../../server/src/connectors/sql/sql-connector';
 import { normalizeTableName, proposeObjectMapping } from '../../server/src/services/object-mapping';
-import { applyChoiceMap, applyTransform, transformField } from '../../server/src/services/transforms';
+import { applyChoiceMap, applyTransform, transformFieldValue } from '../../server/src/services/transforms';
 import type { SqlConnectionConfig } from '../../shared/domain';
 import { attr, table } from './fixtures';
 
@@ -202,8 +202,8 @@ describe('transformations and choice mapping', () => {
     expect(applyChoiceMap('ACTIVE', choiceMap)).toEqual({ ok: true, value: 1 });
     // Case-insensitive, because a legacy database rarely agrees with itself about case.
     expect(applyChoiceMap('active', choiceMap)).toEqual({ ok: true, value: 1 });
-    expect(applyChoiceMap('LEGACY', choiceMap)).toMatchObject({ ok: false, code: 'CHOICE_UNMAPPED' });
-    expect(applyChoiceMap('NEVER SEEN', choiceMap)).toMatchObject({ ok: false, code: 'CHOICE_UNMAPPED' });
+    expect(applyChoiceMap('LEGACY', choiceMap)).toMatchObject({ ok: false, code: 'VALUE_MAP_MISSING' });
+    expect(applyChoiceMap('NEVER SEEN', choiceMap)).toMatchObject({ ok: false, code: 'VALUE_MAP_MISSING' });
     expect(applyChoiceMap(null, choiceMap)).toEqual({ ok: true, value: null });
   });
 
@@ -218,8 +218,8 @@ describe('transformations and choice mapping', () => {
   it('refuses a value that is too long for the target column', () => {
     const source = attr('Notes', 'String', { maxLength: 400 });
     const target = attr('description', 'String', { maxLength: 100 });
-    const result = transformField({ value: 'x'.repeat(150), source, target });
-    expect(result).toMatchObject({ ok: false, code: 'VALUE_CONVERSION' });
+    const result = transformFieldValue({ value: 'x'.repeat(150), source, target });
+    expect(result).toMatchObject({ ok: false, code: 'STRING_TOO_LONG' });
     if (result.ok) throw new Error('unreachable');
     expect(result.error).toContain('150 characters, target allows 100');
   });

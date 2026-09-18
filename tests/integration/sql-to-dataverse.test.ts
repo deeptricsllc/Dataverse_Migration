@@ -358,7 +358,7 @@ describe('SQL Server → Dataverse', () => {
     const blocked = await api.get<{ items: { reasonCode: string }[] }>(
       `/api/preflight/${second.id}/records?action=BLOCKED`,
     );
-    expect(blocked.items.map((b) => b.reasonCode)).toContain('VALUE_CONVERSION');
+    expect(blocked.items.map((b) => b.reasonCode)).toContain('STRING_TOO_LONG');
     expect(second.totals.create).toBe(0);
     expect(second.totals.update).toBe(0);
     expect(second.totals.unchanged).toBeGreaterThan(60);

@@ -21,8 +21,9 @@ import {
   type LookupValue,
   type TableMetadata,
 } from '../../../shared/metadata';
+import type { AppliedTransformationDto } from '../../../shared/domain';
 import type { RunPlanSnapshot } from './run-snapshot';
-import { transformField } from './transforms';
+import { transformField } from './transformation/engine';
 import { displayValue, valuesEqual } from './values';
 
 export type PlannerEntity = RunPlanSnapshot['entities'][number];
@@ -44,6 +45,14 @@ export interface PreparedRecord {
   deferred: Record<string, LookupValue>;
   /** Ownership/audit fields where the configured fallback identity was substituted. */
   principalFallbacks: string[];
+  /** What the transformation engine actually did, per mapped field, for reports and previews. */
+  appliedTransformations: {
+    field: string;
+    targetField: string;
+    applied: AppliedTransformationDto[];
+  }[];
+  /** Fields where a transformation deliberately discarded information. */
+  lossyFields: string[];
   /** Target user to impersonate on create (preserving "created by"). */
   impersonateUserId: string | null;
   /** Pass 3 work to re-stamp "modified by". */
@@ -94,6 +103,8 @@ export function prepareRecord(input: PrepareInput): PreparedRecord {
     values: {},
     deferred: {},
     principalFallbacks: [],
+    appliedTransformations: [],
+    lossyFields: [],
     impersonateUserId: null,
     auditWork: null,
     issues: [],
@@ -165,22 +176,44 @@ export function prepareRecord(input: PrepareInput): PreparedRecord {
       }
       continue;
     }
-    // Configured transformation, then choice mapping or type conversion. Cross-provider
-    // conversions (truncation, overflow, invalid dates) are reported, never silently applied.
+    // The canonical path: configured pipeline, then the choice map, then conversion into the
+    // target's type, then the target's own constraints. Preview, preflight, migration and
+    // validation all run this same function, so they cannot disagree about the result.
     const converted = transformField({
       value: raw ?? null,
       source: sAttr,
       target: tAttr,
-      transform: m.transform,
+      rules: m.transformations,
+      legacyTransform: m.transform,
       choiceMap: m.choiceMap,
+      context: { record, sourceAttributes: sAttrs },
     });
+    for (const issue of converted.issues) {
+      if (issue.severity !== 'WARNING') continue;
+      out.issues.push({
+        severity: 'WARNING',
+        code: issue.code,
+        field: m.sourceField,
+        message: issue.message,
+        retryable: false,
+      });
+    }
+    if (converted.applied.length) {
+      out.appliedTransformations.push({
+        field: m.sourceField,
+        targetField: tAttr.logicalName,
+        applied: converted.applied,
+      });
+    }
+    if (converted.lossy) out.lossyFields.push(m.sourceField);
     if (!converted.ok) {
-      out.blocked = { code: converted.code, reason: `${m.sourceField}: ${converted.error}` };
+      const error = converted.error!;
+      out.blocked = { code: error.code, reason: `${m.sourceField}: ${error.message}` };
       out.issues.push({
         severity: 'ERROR',
-        code: converted.code,
+        code: error.code,
         field: m.sourceField,
-        message: converted.error,
+        message: error.message,
         retryable: false,
       });
       return out;

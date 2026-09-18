@@ -371,8 +371,8 @@ export type TransformKind =
   'DIRECT' | 'TRIM' | 'UPPER' | 'LOWER' | 'CONSTANT' | 'DEFAULT_IF_NULL' | 'CHOICE_MAP';
 
 /**
- * A field transformation, stored as configuration so more kinds can be added without a
- * schema change. Deliberately not a scripting language.
+ * A single field transformation, kept for the plans that predate ordered pipelines.
+ * New configuration uses {@link TransformationRule}.
  */
 export interface FieldTransformDto {
   kind: TransformKind;
@@ -381,6 +381,285 @@ export interface FieldTransformDto {
 }
 
 export const DEFAULT_TRANSFORM: FieldTransformDto = { kind: 'DIRECT' };
+
+// ---------------------------------------------------------------------------
+// Transformation pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Every transformation the engine can perform. Deliberately a closed list: transformation
+ * configuration is declarative data, never code, so a rule can never become an injection
+ * mechanism. There is no expression language, no scripting and no SQL.
+ */
+export const TRANSFORMATION_KINDS = [
+  // --- string ---
+  'TRIM',
+  'LEFT_TRIM',
+  'RIGHT_TRIM',
+  'UPPERCASE',
+  'LOWERCASE',
+  'REPLACE',
+  'PREFIX',
+  'SUFFIX',
+  'SUBSTRING',
+  'TRUNCATE',
+  // --- null / blank ---
+  'EMPTY_TO_NULL',
+  'NULL_TO_EMPTY',
+  'DEFAULT_IF_NULL',
+  'DEFAULT_IF_BLANK',
+  'BLOCK_IF_NULL',
+  'CONSTANT',
+  // --- type ---
+  'TO_STRING',
+  'TO_INTEGER',
+  'TO_DECIMAL',
+  'TO_BOOLEAN',
+  'TO_DATE',
+  'TO_DATETIME',
+  'TO_GUID',
+  // --- value mapping ---
+  'VALUE_MAP',
+  // --- composition ---
+  'CONCAT',
+  // --- conditional ---
+  'IF_THEN',
+] as const;
+export type TransformationKind = (typeof TRANSFORMATION_KINDS)[number];
+
+/** Comparison operators available to a conditional rule. No expression language. */
+export const CONDITION_OPERATORS = [
+  'EQUALS',
+  'NOT_EQUALS',
+  'IS_NULL',
+  'IS_NOT_NULL',
+  'IS_BLANK',
+  'CONTAINS',
+  'STARTS_WITH',
+  'GREATER_THAN',
+  'LESS_THAN',
+] as const;
+export type ConditionOperator = (typeof CONDITION_OPERATORS)[number];
+
+export interface TransformationCondition {
+  /** Source column to test. Empty means the value currently flowing through the pipeline. */
+  field?: string | null;
+  operator: ConditionOperator;
+  value?: string | number | boolean | null;
+}
+
+/** What an unknown source value does when a VALUE_MAP has no entry for it. */
+export type UnmappedValuePolicy = 'BLOCK' | 'IGNORE' | 'DEFAULT';
+
+export interface TransformationRule {
+  kind: TransformationKind;
+  /** REPLACE. */
+  find?: string | null;
+  replaceWith?: string | null;
+  /** PREFIX / SUFFIX / CONSTANT / DEFAULT_IF_NULL / DEFAULT_IF_BLANK / IF_THEN SET_VALUE. */
+  value?: string | number | boolean | null;
+  /** SUBSTRING / TRUNCATE. */
+  start?: number | null;
+  length?: number | null;
+  /** TO_DATE / TO_DATETIME: the exact input format, so an ambiguous date is never guessed. */
+  inputFormat?: string | null;
+  /** TO_DATETIME: treat a source value without a zone as UTC rather than local. */
+  assumeUtc?: boolean | null;
+  /** TO_DECIMAL: digits kept after the decimal point. */
+  scale?: number | null;
+  /** VALUE_MAP / TO_BOOLEAN: many source values may map onto one target value. */
+  map?: { from: string; to: string | number | boolean | null }[];
+  onUnmapped?: UnmappedValuePolicy;
+  /** VALUE_MAP with onUnmapped = DEFAULT. */
+  defaultValue?: string | number | boolean | null;
+  /** CONCAT: source columns and literals, in order. */
+  parts?: { field?: string | null; literal?: string | null }[];
+  separator?: string | null;
+  /** CONCAT: leave out parts that are null or blank instead of producing empty separators. */
+  skipEmptyParts?: boolean | null;
+  /** IF_THEN. */
+  condition?: TransformationCondition | null;
+  action?: 'SET_VALUE' | 'SET_NULL' | 'APPLY' | null;
+  /** IF_THEN with action APPLY: the rules to run when the condition holds. */
+  then?: TransformationRule[];
+}
+
+/** Transformations that deliberately discard information. Acknowledged before a migration runs. */
+export const LOSSY_TRANSFORMATIONS: ReadonlySet<TransformationKind> = new Set<TransformationKind>([
+  'TRUNCATE',
+  'SUBSTRING',
+  'TO_DATE',
+  'TO_INTEGER',
+]);
+
+export const isLossyRule = (r: TransformationRule) => LOSSY_TRANSFORMATIONS.has(r.kind);
+
+/** One step of what the engine actually did to a value, for previews and per-record reporting. */
+export interface AppliedTransformationDto {
+  kind: TransformationKind;
+  before: string | null;
+  after: string | null;
+  lossy: boolean;
+}
+
+export interface TransformationIssueDto {
+  severity: 'ERROR' | 'WARNING';
+  code: string;
+  message: string;
+  field?: string | null;
+}
+
+/** The result of running one field through the pipeline. */
+export interface TransformFieldResultDto {
+  field: string;
+  targetField: string | null;
+  originalValue: string | null;
+  transformedValue: string | null;
+  applied: AppliedTransformationDto[];
+  issues: TransformationIssueDto[];
+  blocked: boolean;
+  lossy: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Data profiling
+// ---------------------------------------------------------------------------
+
+/** Whether a statistic was computed over every record or over a sample. Never blurred. */
+export type StatisticBasis = 'EXACT' | 'SAMPLED';
+
+export interface ValueFrequencyDto {
+  value: string | null;
+  count: number;
+}
+
+export interface FieldProfileDto {
+  field: string;
+  displayName: string;
+  type: AttributeType;
+  /** The target column this field is mapped to, when the profile was run for a plan. */
+  targetField?: string | null;
+  basis: StatisticBasis;
+  /** Records examined. Equals the table total when the basis is EXACT. */
+  examined: number;
+  nullCount: number;
+  nullPercent: number;
+  blankCount: number;
+  distinctCount: number | null;
+  duplicateCount: number | null;
+  /** Text statistics. */
+  minLength: number | null;
+  maxLength: number | null;
+  averageLength: number | null;
+  whitespaceCount: number;
+  /** Numeric statistics. */
+  minValue: number | null;
+  maxValue: number | null;
+  averageValue: number | null;
+  maxScale: number | null;
+  /** Date statistics, ISO strings. */
+  minDate: string | null;
+  maxDate: string | null;
+  invalidDateCount: number;
+  /** Values that could not be converted at all (non-numeric in a numeric column, …). */
+  invalidValueCount: number;
+  /** The distinct values and their counts, for choice mapping. Capped. */
+  topValues: ValueFrequencyDto[];
+  topValuesTruncated: boolean;
+  /** Quality findings for this field, derived from the target and from the data. */
+  issues: DataQualityIssueDto[];
+}
+
+export interface TableProfileDto {
+  environmentId: string;
+  table: string;
+  displayName: string;
+  basis: StatisticBasis;
+  /** Total records in the table. Approximate for very large Dataverse tables. */
+  totalRecords: number;
+  totalApproximate: boolean;
+  examined: number;
+  columns: number;
+  primaryKeyField: string | null;
+  /** Records whose primary key is null or blank. */
+  primaryKeyMissing: number;
+  /** Source records sharing the configured match key. */
+  duplicateKeyCount: number;
+  fields: FieldProfileDto[];
+  issues: DataQualityIssueDto[];
+  profiledAt: string;
+  /** How long profiling took, so a user can judge a full profile of a bigger table. */
+  durationMs: number;
+}
+
+/** The kinds of rule the platform can check. Not a general data-quality product. */
+export const DATA_QUALITY_RULE_KINDS = [
+  'REQUIRED',
+  'NOT_BLANK',
+  'MAX_LENGTH',
+  'MIN_LENGTH',
+  'VALID_EMAIL',
+  'VALID_PHONE',
+  'NUMERIC_RANGE',
+  'DATE_RANGE',
+  'ALLOWED_VALUES',
+  'UNIQUE',
+  'REGEX_PATTERN',
+] as const;
+export type DataQualityRuleKind = (typeof DATA_QUALITY_RULE_KINDS)[number];
+
+export interface DataQualityRuleDto {
+  kind: DataQualityRuleKind;
+  field: string;
+  /** MAX_LENGTH / MIN_LENGTH / NUMERIC_RANGE / DATE_RANGE. */
+  max?: number | string | null;
+  min?: number | string | null;
+  /** ALLOWED_VALUES. */
+  values?: string[];
+  /** REGEX_PATTERN: a literal pattern, validated server-side and never user-executed code. */
+  pattern?: string | null;
+  /** Where the rule came from: the target schema, the mapping, or a person. */
+  origin: 'TARGET_SCHEMA' | 'MAPPING' | 'USER';
+  severity: 'BLOCKER' | 'WARNING';
+}
+
+export interface DataQualityIssueDto {
+  severity: 'BLOCKER' | 'WARNING';
+  /** e.g. REQUIRED_VALUE_MISSING, STRING_TOO_LONG, INVALID_EMAIL, DUPLICATE_KEY. */
+  code: string;
+  field: string | null;
+  message: string;
+  /** How many records are affected, within what was examined. */
+  affected: number;
+  basis: StatisticBasis;
+  resolution?: string | null;
+  /** A few offending values, for a person to recognise the problem. Masked when secured. */
+  samples?: { recordId: string; value: string | null }[];
+}
+
+/** The workspace-level summary of everything profiling found. */
+export interface DataQualitySummaryDto {
+  planId: string;
+  tablesAnalyzed: number;
+  recordsProfiled: number;
+  basis: StatisticBasis;
+  blockers: number;
+  warnings: number;
+  /** Issue counts by code, for the dashboard's category list. */
+  categories: { code: string; label: string; severity: 'BLOCKER' | 'WARNING'; count: number }[];
+  tables: { table: string; displayName: string; blockers: number; warnings: number }[];
+  profiledAt: string;
+}
+
+/** A reusable pipeline that can be applied to a field mapping. */
+export interface TransformationTemplateDto {
+  id: string;
+  name: string;
+  description: string;
+  rules: TransformationRule[];
+  /** Built-in templates ship with the product and cannot be edited. */
+  builtIn: boolean;
+}
 export type TableCategory = 'CONFIGURATION' | 'REFERENCE' | 'TRANSACTIONAL';
 
 export type PlanStatus = 'DRAFT' | 'PLANNED' | 'EXECUTED' | 'ARCHIVED';

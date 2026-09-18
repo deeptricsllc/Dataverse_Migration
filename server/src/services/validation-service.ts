@@ -2,7 +2,10 @@ import { and, asc, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type {
+  ChoiceMappingDto,
   DifferenceType,
+  FieldTransformDto,
+  TransformationRule,
   ValidationCheckDto,
   ValidationDifferenceDto,
   ValidationEntityResultDto,
@@ -33,7 +36,8 @@ import type { MetadataService } from './metadata-service';
 import { auditFlags, type PlanOptions } from '../../../shared/domain';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
-import { displayValue, transformValue, valuesEqual } from './values';
+import { transformField } from './transformation/engine';
+import { displayValue, valuesEqual } from './values';
 import { envRef } from './env-ref';
 
 const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
@@ -57,7 +61,20 @@ interface PendingDiff {
 export interface EntityComparisonInput {
   source: TableMetadata;
   target: TableMetadata;
-  mappings: { sourceField: string; targetField: string; isLookup: boolean }[];
+  /**
+   * The mappings as the run executed them, including their transformation pipeline. Validation
+   * compares the TRANSFORMED source value against the target, because that is what the migration
+   * wrote: a source of `" ACTIVE "` that was trimmed and value-mapped to `100000000` matches a
+   * target of `100000000`, and comparing the raw value would report a false mismatch.
+   */
+  mappings: {
+    sourceField: string;
+    targetField: string;
+    isLookup: boolean;
+    transformations?: TransformationRule[] | null;
+    transform?: FieldTransformDto | null;
+    choiceMap?: ChoiceMappingDto | null;
+  }[];
   /** Records to compare: source record, target record (if found) and how it was migrated. */
   pairs: {
     source: DvRecord;
@@ -126,15 +143,25 @@ export function compareRecords(input: EntityComparisonInput): {
         }
         continue;
       }
-      const converted = transformValue(sAttr, tAttr, sv);
-      const expectedValue = converted.ok ? converted.value : sv;
+      // The same engine the migration used, with the same rules from the run snapshot.
+      const converted = transformField({
+        value: sv ?? null,
+        source: sAttr,
+        target: tAttr,
+        rules: m.transformations,
+        legacyTransform: m.transform,
+        choiceMap: m.choiceMap,
+        context: { record: pair.source, sourceAttributes: sAttrs },
+      });
+      const expectedValue = converted.ok ? converted.value : (sv ?? null);
       if (!valuesEqual(tAttr, expectedValue, tv)) {
         recordDiffers = true;
         diffs.push({
           sourceRecordId: pair.source.id,
           targetRecordId: pair.target.id,
           field: m.targetField,
-          sourceValue: displayValue(sAttr, sv),
+          // The transformed value is what should be in the target, so that is what is reported.
+          sourceValue: converted.ok ? displayValue(tAttr, expectedValue) : displayValue(sAttr, sv),
           targetValue: displayValue(tAttr, tv),
           differenceType: preExisting ? 'PRE_EXISTING_DIFFERENCE' : 'VALUE_MISMATCH',
           outcome: preExisting ? 'WARNING' : 'FAIL',

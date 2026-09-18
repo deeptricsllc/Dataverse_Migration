@@ -156,6 +156,8 @@ describe('no-op guarantee: identical records produce no write', () => {
     values: { dtx_name: 'North', dtx_code: 'N1' },
     deferred: {},
     principalFallbacks: [],
+    appliedTransformations: [],
+    lossyFields: [],
     impersonateUserId: null,
     auditWork: null,
     issues: [],

@@ -1,4 +1,9 @@
-import type { ChoiceMappingDto, FieldTransformDto, MatchStrategy } from '../../../shared/domain';
+import type {
+  ChoiceMappingDto,
+  FieldTransformDto,
+  MatchStrategy,
+  TransformationRule,
+} from '../../../shared/domain';
 
 /** Immutable copy of the plan taken when a run starts, so later plan edits never alter a run. */
 export interface RunPlanSnapshot {
@@ -18,7 +23,12 @@ export interface RunPlanSnapshot {
       targetField: string;
       isLookup: boolean;
       deferredTargets: string[];
-      /** How the source value becomes the target value. Absent means a direct copy. */
+      /**
+       * The ordered transformation pipeline, copied when the run started. A later edit to the
+       * plan cannot change what this run did, so validating it years later is still deterministic.
+       */
+      transformations?: TransformationRule[] | null;
+      /** Single-step transformation from plans that predate pipelines. */
       transform?: FieldTransformDto | null;
       /** Value map for a choice target (SQL text into a Dataverse option, for example). */
       choiceMap?: ChoiceMappingDto | null;
