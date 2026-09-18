@@ -651,6 +651,47 @@ export interface DataQualitySummaryDto {
   profiledAt: string;
 }
 
+/** One field of a record-level before/after preview. */
+export interface PreviewFieldDto {
+  field: string;
+  targetField: string | null;
+  sourceValue: string | null;
+  transformedValue: string | null;
+  targetValue: string | null;
+  applied: AppliedTransformationDto[];
+  issues: TransformationIssueDto[];
+  changed: boolean;
+}
+
+export interface PreviewRecordDto {
+  sourceRecordId: string;
+  recordName: string | null;
+  targetRecordId: string | null;
+  action: PreflightAction;
+  reason: string | null;
+  fields: PreviewFieldDto[];
+}
+
+/** The preview of one field's pipeline over representative source values. */
+export interface TransformPreviewDto {
+  field: string;
+  targetField: string | null;
+  rows: {
+    sourceValue: string | null;
+    transformedValue: string | null;
+    status: 'OK' | 'WARNING' | 'BLOCKED';
+    message: string | null;
+    applied: AppliedTransformationDto[];
+  }[];
+  previewed: number;
+  valid: number;
+  warnings: number;
+  blocked: number;
+  /** True when at least one row's transformation discards information. */
+  lossy: boolean;
+  sampled: boolean;
+}
+
 /** A reusable pipeline that can be applied to a field mapping. */
 export interface TransformationTemplateDto {
   id: string;
@@ -680,6 +721,32 @@ export interface PlanOptions {
   userResolutionPolicy: UserResolutionPolicy;
   /** Identity used by the FALLBACK policy. Never defaults to the executing user implicitly. */
   fallbackPrincipal: FallbackPrincipalDto | null;
+  /**
+   * Acknowledgement that the configured lossy transformations (truncation, precision or
+   * time-of-day loss) are intended. Records exactly what was accepted, so adding another lossy
+   * rule afterwards invalidates it and has to be accepted again.
+   */
+  lossyAcknowledgement: LossyAcknowledgementDto | null;
+}
+
+export interface LossyAcknowledgementDto {
+  /** `table.sourceField:RULE` for every lossy rule that was accepted. */
+  accepted: string[];
+  acknowledgedBy: string;
+  acknowledgedAt: string;
+}
+
+/** One configured transformation that will discard information, and what it affects. */
+export interface LossyTransformationDto {
+  table: string;
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  /** `table.sourceField:RULE`, the key used by the acknowledgement. */
+  key: string;
+  description: string;
+  /** Records the last profile or preflight found affected, when that is known. */
+  affected?: number | null;
 }
 
 /** Dataverse columns that only the audit/ownership options can write. */
@@ -700,6 +767,7 @@ export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
   auditPolicy: 'NONE',
   userResolutionPolicy: 'STRICT',
   fallbackPrincipal: null,
+  lossyAcknowledgement: null,
 };
 
 export interface PlanIssue {
@@ -731,6 +799,10 @@ export interface FieldMappingDto {
   deferredTargets: string[];
   /** Cross-provider type verdict shown in the mapping UI. */
   compatibility: TypeCompatibility;
+  /** The ordered transformation pipeline. Empty means a direct copy. */
+  transformations: TransformationRule[];
+  /** True when any configured rule deliberately discards information. */
+  lossy: boolean;
   /** How the source value is turned into the target value. DIRECT for an unchanged copy. */
   transform: FieldTransformDto;
   /** Value-level mapping for choice columns (SQL text into a Dataverse choice, for example). */

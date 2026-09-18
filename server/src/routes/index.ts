@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { CONDITION_OPERATORS, TRANSFORMATION_KINDS } from '../../../shared/domain';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
@@ -397,6 +398,137 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   );
 
   // ---------------------------------------------------------------------------
+  // Profiling, data quality and transformations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A transformation rule, validated server-side. The `kind` is a closed enum, so configuration
+   * can never smuggle in code: there is no expression, script or SQL anywhere in this shape.
+   */
+  const conditionSchema = z.object({
+    field: fieldName.nullish(),
+    operator: z.enum(CONDITION_OPERATORS),
+    value: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]).optional(),
+  });
+  const baseRule = {
+    kind: z.enum(TRANSFORMATION_KINDS),
+    find: z.string().max(200).nullish(),
+    replaceWith: z.string().max(200).nullish(),
+    value: z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]).optional(),
+    start: z.number().int().min(0).max(10_000).nullish(),
+    length: z.number().int().min(0).max(1_000_000).nullish(),
+    inputFormat: z.string().max(20).nullish(),
+    assumeUtc: z.boolean().nullish(),
+    scale: z.number().int().min(0).max(10).nullish(),
+    map: z
+      .array(
+        z.object({
+          from: z.string().max(400),
+          to: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]),
+        }),
+      )
+      .max(500)
+      .optional(),
+    onUnmapped: z.enum(['BLOCK', 'IGNORE', 'DEFAULT']).optional(),
+    defaultValue: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]).optional(),
+    parts: z
+      .array(z.object({ field: fieldName.nullish(), literal: z.string().max(200).nullish() }))
+      .max(20)
+      .optional(),
+    separator: z.string().max(20).nullish(),
+    skipEmptyParts: z.boolean().nullish(),
+    condition: conditionSchema.nullish(),
+    action: z.enum(['SET_VALUE', 'SET_NULL', 'APPLY']).nullish(),
+  };
+  // One level of nesting only: a conditional may apply rules, but those rules may not nest again.
+  const transformationRule = z.object({ ...baseRule, then: z.array(z.object(baseRule)).max(10).optional() });
+  const transformationRules = z.array(transformationRule).max(20);
+
+  app.get('/api/transformation-templates', async () => s.transformations.templates());
+
+  /** Profiles a source table for a plan, using the rules its target schema implies. */
+  app.post('/api/plans/:id/entities/:entityId/profile', async (req) => {
+    const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
+    const body = z
+      .object({ sampleSize: z.number().int().min(1).max(200_000).optional(), full: z.boolean().optional() })
+      .parse(req.body ?? {});
+    return s.dataQuality.profileEntity(req.ctx, id, entityId, body);
+  });
+
+  app.get('/api/plans/:id/entities/:entityId/quality-rules', async (req) => {
+    const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
+    return s.dataQuality.rulesForEntity(req.ctx, id, entityId);
+  });
+
+  /** The workspace data-quality summary: every mapped table profiled and grouped by category. */
+  app.post('/api/plans/:id/data-quality', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({ sampleSize: z.number().int().min(1).max(200_000).optional() })
+      .parse(req.body ?? {});
+    const { profiles: _profiles, ...summary } = await s.dataQuality.summary(req.ctx, id, body);
+    return summary;
+  });
+
+  /** Profiles any table of any connection, independently of a plan. */
+  app.post('/api/environments/:id/tables/:table/profile', async (req) => {
+    const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
+    const body = z
+      .object({
+        fields: z.array(fieldName).max(300).optional(),
+        sampleSize: z.number().int().min(1).max(200_000).optional(),
+        full: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+    return s.profiling.profileTable(req.ctx, { environmentId: id, table, ...body });
+  });
+
+  app.get('/api/environments/:id/tables/:table/fields/:field/profile', async (req) => {
+    const { id, table, field } = z.object({ id: uuid, table: tableName, field: fieldName }).parse(req.params);
+    const { sampleSize } = z
+      .object({ sampleSize: z.coerce.number().int().min(1).max(200_000).optional() })
+      .parse(req.query);
+    return s.profiling.profileField(req.ctx, { environmentId: id, table, field, sampleSize });
+  });
+
+  /** Replaces the ordered transformation pipeline of one field mapping. */
+  app.patch('/api/plans/:id/mappings/:mappingId/transformations', async (req) => {
+    const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
+    const { rules } = z.object({ rules: transformationRules }).parse(req.body);
+    return s.transformations.updatePipeline(req.ctx, id, mappingId, rules);
+  });
+
+  /**
+   * Previews a candidate pipeline over real source values, using the same engine the migration
+   * uses. Nothing is saved, so a user can see what a rule does before committing to it.
+   */
+  app.post('/api/plans/:id/mappings/:mappingId/preview', async (req) => {
+    const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
+    const { rules } = z.object({ rules: transformationRules.nullish() }).parse(req.body ?? {});
+    return s.transformations.previewField(req.ctx, id, mappingId, rules ?? null);
+  });
+
+  /** Record-level before/after: source value, transformed value, and what the target holds. */
+  app.get('/api/plans/:id/entities/:entityId/preview', async (req) => {
+    const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
+    const { limit } = z
+      .object({ limit: z.coerce.number().int().min(1).max(50).default(10) })
+      .parse(req.query);
+    return s.transformations.previewRecords(req.ctx, id, entityId, limit);
+  });
+
+  /** The transformations that will discard information, and whether they were accepted. */
+  app.get('/api/plans/:id/lossy-transformations', async (req) =>
+    s.transformations.lossyTransformations(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.post('/api/plans/:id/lossy-transformations/acknowledge', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { accepted } = z.object({ accepted: z.array(z.string().max(300)).max(500) }).parse(req.body);
+    return s.planning.acknowledgeLossy(req.ctx, id, accepted);
+  });
+
+  // ---------------------------------------------------------------------------
   // Preflight (dry run) — reads only, never writes to Dataverse
   // ---------------------------------------------------------------------------
 
@@ -741,6 +873,47 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
           ? changes.map((c) => [...head, c.field, c.sourceValue, c.targetValue])
           : [[...head, null, null, null]];
       }),
+    );
+  });
+
+  /** The data quality findings on their own, for the team fixing the source data. */
+  app.get('/api/plans/:id/data-quality.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const [plan, rows] = await Promise.all([
+      s.planning.get(req.ctx, id),
+      s.dataQuality.issueRows(req.ctx, id),
+    ]);
+    return sendCsv(
+      reply,
+      csvFileName(['data-quality', plan.name]),
+      [
+        'Severity',
+        'Category',
+        'Source Connection',
+        'Source Table',
+        'Source Record ID',
+        'Field',
+        'Original Value',
+        'Transformed Value',
+        'Target Field',
+        'Rule',
+        'Issue',
+        'Suggested Resolution',
+      ],
+      rows.map((r) => [
+        r.severity,
+        r.category,
+        plan.sourceEnvironment.displayName,
+        r.table,
+        r.sourceRecordId,
+        r.field,
+        r.sourceValue,
+        r.targetValue,
+        null,
+        r.category,
+        r.issue,
+        r.resolution ?? r.suggestedAction,
+      ]),
     );
   });
 

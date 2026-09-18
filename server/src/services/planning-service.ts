@@ -5,6 +5,7 @@ import {
   DEFAULT_PLAN_OPTIONS,
   auditNeedsImpersonation,
   auditNeedsPrincipals,
+  isLossyRule,
   type DiffStatus,
   type FieldMappingDto,
   type MappingStatus,
@@ -411,6 +412,40 @@ export class PlanningService {
     });
     // Field mappings are rebuilt against the newly chosen target table.
     return this.revalidate(ctx, planId);
+  }
+
+  /**
+   * Records that a person accepted the transformations that discard information.
+   *
+   * The acceptance names each rule, so configuring another lossy rule afterwards leaves it
+   * unaccepted and execution asks again. It is stored on the plan and copied into the run's
+   * options, which is what puts it in the audit trail.
+   */
+  async acknowledgeLossy(ctx: RequestContext, planId: string, accepted: string[]) {
+    const plan = await this.loadPlan(ctx.organizationId, planId);
+    await this.assertEditable(ctx.organizationId, plan);
+    const options: PlanOptions = {
+      ...DEFAULT_PLAN_OPTIONS,
+      ...plan.options,
+      lossyAcknowledgement: {
+        accepted: [...new Set(accepted)].sort(),
+        acknowledgedBy: ctx.displayName,
+        acknowledgedAt: new Date().toISOString(),
+      },
+    };
+    await this.db.update(migrationPlans).set({ options }).where(eq(migrationPlans.id, plan.id));
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'LOSSY_TRANSFORMATION_ACKNOWLEDGED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: plan.sourceEnvironmentId,
+      targetEnvironmentId: plan.targetEnvironmentId,
+      runId: plan.id,
+      requestId: ctx.requestId,
+      details: { accepted },
+    });
+    return this.get(ctx, planId);
   }
 
   /** Target tables that could hold this source table's data, best match first. */
@@ -1281,6 +1316,8 @@ export function toMappingDto(m: MappingRow): FieldMappingDto {
     required: m.required,
     deferred: m.deferred,
     compatibility: m.compatibility,
+    transformations: m.transformations ?? [],
+    lossy: (m.transformations ?? []).some(isLossyRule),
     transform: m.transform,
     choiceMap: m.choiceMap ?? null,
     deferredTargets: m.deferredTargets,

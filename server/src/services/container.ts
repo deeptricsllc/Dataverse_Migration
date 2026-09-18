@@ -14,6 +14,9 @@ import { MigrationEngine } from './migration-engine';
 import { MigrationRunService } from './migration-run-service';
 import { PlanningService } from './planning-service';
 import { ConnectionService } from './connection-service';
+import { DataQualityService } from './data-quality-service';
+import { ProfilingService } from './profiling-service';
+import { TransformationService } from './transformation/transformation-service';
 import { DiagnosticsService } from './diagnostics-service';
 import { PreflightService } from './preflight-service';
 import { RemediationService } from './remediation-service';
@@ -43,7 +46,25 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
-  const runs = new MigrationRunService(db, config, planning, environments, queue, audit, logger);
+  const transformations = new TransformationService(
+    db,
+    planning,
+    environments,
+    metadata,
+    connections,
+    audit,
+    logger,
+  );
+  const runs = new MigrationRunService(
+    db,
+    config,
+    planning,
+    transformations,
+    environments,
+    queue,
+    audit,
+    logger,
+  );
   const engine = new MigrationEngine(db, environments, metadata, connections, principals, audit, logger);
   const validation = new ValidationService(db, environments, metadata, connections, queue, audit, logger);
   const preflight = new PreflightService(
@@ -67,6 +88,8 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
   );
   const connectionAdmin = new ConnectionService(db, connections, audit, logger);
+  const profiling = new ProfilingService(db, environments, metadata, connections, logger);
+  const dataQuality = new DataQualityService(db, profiling, environments, metadata, connections, logger);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
@@ -109,6 +132,9 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     engine,
     validation,
     preflight,
+    transformations,
+    profiling,
+    dataQuality,
     diagnostics,
     remediation,
     connectionAdmin,

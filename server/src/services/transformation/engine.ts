@@ -402,12 +402,16 @@ export function applyRules(
   ctx: TransformContext = {},
 ): RuleOutcome {
   let current = value;
+  // The first warning is carried out for single-rule callers; the full path
+  // ({@link transformField}) collects every warning individually.
+  let warning: TransformationIssueDto | undefined;
   for (const rule of rules) {
     const result = applyRule(current, rule, ctx);
     if (!result.ok) return result;
+    warning ??= result.warning;
     current = result.value;
   }
-  return ok(current);
+  return ok(current, warning);
 }
 
 /** Plans written before pipelines existed stored one step; it becomes a one-rule pipeline. */

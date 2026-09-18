@@ -29,6 +29,7 @@ import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { PlanningService } from './planning-service';
+import type { TransformationService } from './transformation/transformation-service';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { envRef } from './env-ref';
 
@@ -39,6 +40,7 @@ export class MigrationRunService {
     private readonly db: AppDb,
     private readonly config: AppConfig,
     private readonly planning: PlanningService,
+    private readonly transformations: TransformationService,
     private readonly environmentsSvc: EnvironmentService,
     private readonly queue: JobQueue,
     private readonly audit: AuditService,
@@ -94,6 +96,20 @@ export class MigrationRunService {
     }
     if (plan.warningCount > 0 && !input.acknowledgeWarnings) {
       throw badRequest(`Acknowledge the ${plan.warningCount} warning(s) before executing`);
+    }
+    // A transformation that discards information has to be accepted deliberately, and the
+    // acceptance has to name the exact rules: adding another lossy rule afterwards invalidates it.
+    const lossy = await this.transformations.lossyTransformations(ctx, planId);
+    if (lossy.length) {
+      const accepted = new Set(plan.options.lossyAcknowledgement?.accepted ?? []);
+      const unaccepted = lossy.filter((l) => !accepted.has(l.key));
+      if (unaccepted.length) {
+        throw badRequest(
+          `Acknowledge the ${unaccepted.length} transformation(s) that discard data before executing: ${unaccepted
+            .map((l) => `${l.field} (${l.kind})`)
+            .join(', ')}`,
+        );
+      }
     }
     await this.assertWritesAllowed(ctx, plan.targetEnvironment.id, 'EXECUTE');
     const [active] = await this.db
@@ -158,6 +174,9 @@ export class MigrationRunService {
         conflictStrategy: plan.options.conflictStrategy,
         bypassCustomBusinessLogic: plan.options.bypassCustomBusinessLogic,
         acknowledgedWarnings: plan.warningCount,
+        // The run records which lossy transformations were accepted, and by whom.
+        lossyTransformations: lossy.map((l) => l.key),
+        lossyAcknowledgement: plan.options.lossyAcknowledgement,
       },
     });
     this.logger.info({ migrationRunId: run.id, planId, requestId: ctx.requestId }, 'Migration run queued');
