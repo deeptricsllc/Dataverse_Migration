@@ -1,8 +1,9 @@
-import type { DataQualitySummaryDto, LossyTransformationDto, MigrationPlanDto } from '@shared/domain';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Play, ShieldAlert } from 'lucide-react';
-import { Button, Callout, Card, ErrorState, ExportButton, Pill, Spinner, Table, Td, Th } from './ui';
-import { get, post } from '../lib/api';
+import type { DataQualitySummaryDto, MigrationPlanDto } from '@shared/domain';
+import { useMutation } from '@tanstack/react-query';
+import { Play } from 'lucide-react';
+import { LossyAcknowledgement } from './LossyAcknowledgement';
+import { Button, Card, ErrorState, ExportButton, Pill, Spinner, Table, Td, Th } from './ui';
+import { post } from '../lib/api';
 import { fmtNumber } from '../lib/format';
 
 /**
@@ -20,86 +21,9 @@ export function DataQualityCard({
   const summary = useMutation({
     mutationFn: () => post<DataQualitySummaryDto>(`/api/plans/${plan.id}/data-quality`, {}),
   });
-  const lossy = useQuery({
-    queryKey: ['lossy', plan.id],
-    queryFn: () => get<LossyTransformationDto[]>(`/api/plans/${plan.id}/lossy-transformations`),
-  });
-  const acknowledge = useMutation({
-    mutationFn: (accepted: string[]) =>
-      post<MigrationPlanDto>(`/api/plans/${plan.id}/lossy-transformations/acknowledge`, { accepted }),
-    onSuccess: onPlan,
-  });
-
-  const accepted = new Set(plan.options.lossyAcknowledgement?.accepted ?? []);
-  const unaccepted = (lossy.data ?? []).filter((l) => !accepted.has(l.key));
-
   return (
     <div className="space-y-5">
-      {(lossy.data?.length ?? 0) > 0 && (
-        <Card
-          title="Transformations that discard information"
-          subtitle="These have to be accepted by name before the migration can run."
-          data-testid="lossy-transformations"
-        >
-          <Table>
-            <thead>
-              <tr>
-                <Th>Table</Th>
-                <Th>Field</Th>
-                <Th>Transformation</Th>
-                <Th>What is lost</Th>
-                <Th>Status</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {lossy.data!.map((l) => (
-                <tr key={l.key}>
-                  <Td>{l.table}</Td>
-                  <Td>
-                    {l.field} → {l.targetField}
-                  </Td>
-                  <Td>
-                    <Pill tone="amber">{l.kind.toLowerCase()}</Pill>
-                  </Td>
-                  <Td className="text-xs text-slate-600">{l.description}</Td>
-                  <Td>
-                    {accepted.has(l.key) ? (
-                      <Pill tone="teal">accepted</Pill>
-                    ) : (
-                      <Pill tone="red">not accepted</Pill>
-                    )}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-          {unaccepted.length > 0 && (
-            <div className="mt-3">
-              <Callout tone="warning" title={`${unaccepted.length} transformation(s) need acceptance`}>
-                Accepting records who accepted what, and when, in the run&apos;s audit trail. Adding another
-                lossy transformation later asks the question again.
-              </Callout>
-              <Button
-                className="mt-2"
-                variant="primary"
-                icon={<ShieldAlert className="h-4 w-4" />}
-                loading={acknowledge.isPending}
-                data-testid="acknowledge-lossy"
-                onClick={() => acknowledge.mutate((lossy.data ?? []).map((l) => l.key))}
-              >
-                I accept these {unaccepted.length} transformation(s)
-              </Button>
-            </div>
-          )}
-          {plan.options.lossyAcknowledgement && unaccepted.length === 0 && (
-            <p className="mt-2 text-xs text-slate-500">
-              Accepted by {plan.options.lossyAcknowledgement.acknowledgedBy} on{' '}
-              {new Date(plan.options.lossyAcknowledgement.acknowledgedAt).toLocaleString()}.
-            </p>
-          )}
-          {acknowledge.error && <ErrorState error={acknowledge.error} />}
-        </Card>
-      )}
+      <LossyAcknowledgement plan={plan} onPlan={onPlan} />
 
       <Card
         title="Data quality"

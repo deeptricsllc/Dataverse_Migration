@@ -503,7 +503,10 @@ export interface AppliedTransformationDto {
   kind: TransformationKind;
   before: string | null;
   after: string | null;
+  /** True only when the rule actually discarded information, not merely changed the value. */
   lossy: boolean;
+  /** What was lost, phrased without embedding the value (which may be from a secured column). */
+  loss?: string | null;
 }
 
 export interface TransformationIssueDto {
@@ -768,13 +771,67 @@ export interface LossyAcknowledgementDto {
 export interface LossyTransformationDto {
   table: string;
   field: string;
+  targetTable: string | null;
   targetField: string | null;
   kind: TransformationKind;
   /** `table.sourceField:RULE`, the key used by the acknowledgement. */
   key: string;
   description: string;
-  /** Records the last profile or preflight found affected, when that is known. */
-  affected?: number | null;
+  /**
+   * Records whose value actually loses information — not every record the rule runs on. A
+   * TRUNCATE(160) over 100 records where 7 exceed the limit reports 7.
+   * Null when nothing has measured it yet.
+   */
+  affected: number | null;
+  /** Records examined to produce {@link affected}. */
+  examined: number | null;
+  /**
+   * EXACT when a completed preflight measured every record; SAMPLED when the number comes from
+   * a bounded scan and is therefore a floor rather than a total.
+   */
+  basis: StatisticBasis | null;
+  /** The longest source value seen, for "maximum source length: 247". */
+  maxSourceLength: number | null;
+  /** The length values are cut to — the target column's limit for a TRUNCATE derived from it. */
+  targetMaxLength: number | null;
+  /** True when the counts came from a preflight rather than a sample. */
+  fromPreflight: boolean;
+}
+
+/** One record a lossy transformation actually changed, for the drill-down and the export. */
+export interface LossyRecordDto {
+  table: string;
+  sourceRecordId: string;
+  recordName: string | null;
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  originalValue: string | null;
+  transformedValue: string | null;
+  /** What was lost, e.g. "247 characters truncated to 160". Never embeds the value. */
+  loss: string;
+}
+
+/** The per-record loss detail a preflight persists so it can be drilled into later. */
+export interface LossyRecordDetail {
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  before: string | null;
+  after: string | null;
+  loss: string;
+}
+
+/** What a preflight measured about each lossy transformation, keyed as LossyTransformationDto. */
+export interface LossyImpactDto {
+  key: string;
+  table: string;
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  affected: number;
+  examined: number;
+  maxSourceLength: number | null;
 }
 
 /** Dataverse columns that only the audit/ownership options can write. */
@@ -1226,6 +1283,8 @@ export interface PreflightRecordDto {
   reasonCode: string | null;
   reason: string | null;
   changes: FieldChangeDto[];
+  /** Fields where a transformation discarded information for this record. */
+  lossy?: LossyRecordDetail[];
 }
 
 export interface PreflightRunDto {
@@ -1240,6 +1299,8 @@ export interface PreflightRunDto {
   entities: PreflightEntityResultDto[];
   /** Unresolved/ambiguous identities found while analyzing, for the acknowledgement screen. */
   identityImpact: IdentityImpactDto;
+  /** Exactly how many records each lossy transformation actually changes. */
+  lossyImpact: LossyImpactDto[];
   progressMessage: string | null;
   errorMessage: string | null;
   createdAt: string;

@@ -50,6 +50,13 @@
       "when": 1789702898998,
       "tag": "0006_transformation_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789712933952,
+      "tag": "0007_lossy_impact",
+      "breakpoints": true
     }
   ]
 }

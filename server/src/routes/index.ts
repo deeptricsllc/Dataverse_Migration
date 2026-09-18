@@ -521,6 +521,19 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     s.transformations.lossyTransformations(req.ctx, idParams.parse(req.params).id),
   );
 
+  /** The records one lossy transformation actually changed, from the last completed preflight. */
+  app.get('/api/plans/:id/lossy-records', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        key: z.string().max(300).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+      })
+      .parse(req.query);
+    return s.transformations.lossyRecords(req.ctx, id, q);
+  });
+
   app.post('/api/plans/:id/lossy-transformations/acknowledge', async (req) => {
     const { id } = idParams.parse(req.params);
     const { accepted } = z.object({ accepted: z.array(z.string().max(300)).max(500) }).parse(req.body);
@@ -677,6 +690,38 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         m.matchMethod,
         m.deferredStatus,
         m.updatedAt,
+      ]),
+    );
+  });
+
+  /** The same drill-down as a file. Secured values were masked before they were ever stored. */
+  app.get('/api/plans/:id/lossy-records.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const { key } = z.object({ key: z.string().max(300).optional() }).parse(req.query);
+    const [plan, { items }] = await Promise.all([
+      s.planning.get(req.ctx, id),
+      s.transformations.lossyRecords(req.ctx, id, { key, limit: 100_000, offset: 0 }),
+    ]);
+    return sendCsv(
+      reply,
+      csvFileName(['affected-records', plan.name]),
+      [
+        'Table',
+        'Record ID',
+        'Field',
+        'Original value',
+        'Transformed value',
+        'Transformation',
+        'Loss description',
+      ],
+      items.map((r) => [
+        r.table,
+        r.sourceRecordId,
+        r.targetField ? `${r.field} → ${r.targetField}` : r.field,
+        r.originalValue,
+        r.transformedValue,
+        r.kind,
+        r.loss,
       ]),
     );
   });

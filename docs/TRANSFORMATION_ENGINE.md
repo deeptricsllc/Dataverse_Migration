@@ -384,14 +384,45 @@ Four kinds are lossy by definition (`LOSSY_TRANSFORMATIONS` in `shared/domain.ts
 They are surfaced in three places, at increasing commitment:
 
 1. **Per value.** The rule returns a `LOSSY_TRANSFORMATION` warning, and `transformField` marks the
-   step `lossy: true` in `applied[]` — but only when the value actually changed. `TRUNCATE(10)` over
-   `"abc"` is not a loss and is not reported as one.
+   step `lossy: true` in `applied[]` — but only when information was really discarded. `TRUNCATE(10)`
+   over `"abc"` is not a loss, `TO_DATE` on a midnight timestamp is not a loss, and neither is
+   reported as one. The step also carries a short `loss` reason ("200 characters truncated to 160")
+   that never embeds the value, so it is safe to show for a secured column. `lostSteps()` in the
+   engine is the single predicate every count of loss uses.
 2. **Per record.** `record-planner` collects the field names into `lossyFields`, and the preflight and
    run reports carry them.
 3. **Per plan.** `GET /api/plans/:id/lossy-transformations` lists every configured lossy rule as a
    `LossyTransformationDto` with a stable `key` of the form `table.sourceField:KIND` — for example
    `dbo.Customer.CustomerName:TRUNCATE` — plus a plain-English description
-   ("Values longer than 10 characters are cut to 10").
+   ("Values longer than 10 characters are cut to 10") and **how many records it actually affects**.
+
+### How the affected count is measured
+
+`affected` counts records whose value genuinely loses information, never records the rule merely ran
+on. `TRUNCATE(160)` over 145,283 records where 38 exceed the limit reports 38.
+
+| Source                       | `basis`   | `fromPreflight` | When                                       |
+| ---------------------------- | --------- | --------------- | ------------------------------------------ |
+| A completed preflight        | `EXACT`   | `true`          | Whenever one exists — it read every record |
+| A preflight that hit its cap | `SAMPLED` | `true`          | The table exceeded `MAX_RECORDS_PER_TABLE` |
+| A bounded scan (5,000 rows)  | `SAMPLED` | `false`         | No preflight yet, and the table is larger  |
+| A bounded scan that finished | `EXACT`   | `false`         | No preflight yet, but the whole table fit  |
+
+The preflight is the preferred source because it already streams every record: `collectLoss` reshapes
+what the engine reported for each prepared record and `trackLoss` folds it into one
+`LossyImpactDto` per key, persisted on `preflight_runs.lossy_impact` alongside the per-record detail
+on `preflight_records.lossy`. Nothing re-implements the transformation — the count is a by-product of
+the same pass that classifies the record.
+
+Without a preflight, `TransformationService.sampleLoss` reads a bounded prefix of the table through
+the same `transformField`. That can only produce a floor, so the UI labels it
+`SAMPLED / ESTIMATED` and says how many records it looked at. An estimate is never shown as a total.
+
+`GET /api/plans/:id/lossy-records?key=…` (and `…/lossy-records.csv`) drill into the affected records —
+table, record ID, field, original value, transformed value, transformation and loss description —
+from the preflight's stored detail. Values from a secured column were masked when the preflight wrote
+them, so neither the screen nor the export can unmask them, and the CSV goes through the same
+formula-injection neutralisation as every other export.
 
 **Execution is refused until each key is accepted.** `POST /api/plans/:id/execute` fetches the lossy
 list, subtracts `options.lossyAcknowledgement.accepted`, and fails with HTTP 400 naming every rule

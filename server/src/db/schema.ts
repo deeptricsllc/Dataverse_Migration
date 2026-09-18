@@ -32,6 +32,8 @@ import type {
   FieldChangeDto,
   FieldTransformDto,
   IdentityImpactDto,
+  LossyImpactDto,
+  LossyRecordDetail,
   ObjectMappingStatus,
   SqlConnectionConfig,
   TransformationMetricsDto,
@@ -699,6 +701,11 @@ export const preflightRuns = pgTable(
     options: jsonb('options').$type<PlanOptions>().notNull(),
     totals: jsonb('totals').$type<PreflightTotals>(),
     identityImpact: jsonb('identity_impact').$type<IdentityImpactDto>(),
+    /** Exactly how many records each configured lossy transformation actually changes. */
+    lossyImpact: jsonb('lossy_impact')
+      .$type<LossyImpactDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     progressMessage: text('progress_message'),
     errorMessage: text('error_message'),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -743,6 +750,11 @@ export const preflightRecords = pgTable(
     reason: text('reason'),
     changes: jsonb('changes')
       .$type<FieldChangeDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Per-field loss detail, so the acknowledgement can drill into the affected records. */
+    lossy: jsonb('lossy')
+      .$type<LossyRecordDetail[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
   },
