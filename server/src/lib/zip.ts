@@ -106,12 +106,23 @@ export function writeZip(entries: ZipEntry[]): Buffer {
  * a streaming producer can leave the local header's sizes at zero with the real values in a data
  * descriptor — which is exactly what some spreadsheet tools do.
  */
-export function readZip(buf: Buffer): Map<string, Buffer> {
+/**
+ * The most an archive may expand to, in total.
+ *
+ * Deflate reaches roughly 1032:1, so without a bound a 32 KB entry inflates to 33 MB and an upload
+ * at the accepted limit can demand tens of gigabytes. The declared `uncompressedSize` is no defence:
+ * it is attacker-controlled, and checking it after the buffer exists is a corruption check, not a
+ * guard. So the limit is passed to the inflater, which stops rather than allocating.
+ */
+const MAX_TOTAL_INFLATED = 256 * 1024 * 1024;
+
+export function readZip(buf: Buffer, maxInflated = MAX_TOTAL_INFLATED): Map<string, Buffer> {
   const eocd = findEndOfCentralDirectory(buf);
   if (eocd < 0) throw new Error('Not a ZIP file: no end-of-central-directory record');
   const count = buf.readUInt16LE(eocd + 10);
   let p = buf.readUInt32LE(eocd + 16);
   const out = new Map<string, Buffer>();
+  let inflated = 0;
 
   for (let i = 0; i < count; i++) {
     if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('Corrupt ZIP central directory');
@@ -128,10 +139,30 @@ export function readZip(buf: Buffer): Map<string, Buffer> {
     const localExtraLength = buf.readUInt16LE(localOffset + 28);
     const start = localOffset + 30 + localNameLength + localExtraLength;
     const raw = buf.subarray(start, start + compressedSize);
+    // Declared sizes are checked before anything is allocated, so a lie about them costs nothing.
+    const remaining = maxInflated - inflated;
+    if (uncompressedSize > remaining) {
+      throw new Error(
+        `ZIP entry ${name} declares ${uncompressedSize} bytes, which exceeds the ${maxInflated} byte limit for one archive`,
+      );
+    }
     let data: Buffer;
     if (method === 0) data = Buffer.from(raw);
-    else if (method === 8) data = zlib.inflateRawSync(raw);
-    else throw new Error(`Unsupported ZIP compression method ${method} for ${name}`);
+    else if (method === 8) {
+      try {
+        // The inflater enforces the bound itself, so a bomb never reaches memory.
+        data = zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, remaining) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'unknown';
+        throw new Error(
+          /buffer|maxOutputLength|memory/i.test(message)
+            ? `ZIP entry ${name} expands beyond the ${maxInflated} byte limit for one archive`
+            : `ZIP entry ${name} could not be decompressed: ${message}`,
+          { cause: err },
+        );
+      }
+    } else throw new Error(`Unsupported ZIP compression method ${method} for ${name}`);
+    inflated += data.length;
     if (uncompressedSize && data.length !== uncompressedSize) {
       throw new Error(`Corrupt ZIP entry ${name}: expected ${uncompressedSize} bytes, got ${data.length}`);
     }

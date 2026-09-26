@@ -15,6 +15,13 @@ const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
 const UPLOAD_BODY_LIMIT = 48 * 1024 * 1024;
 
 /**
+ * Per-route limits for the requests that cost real work; the same note as in `routes/index.ts`.
+ * An import inflates and parses a 48 MB upload, and an analysis queues a job over up to 200 tables.
+ */
+const EXPENSIVE = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } };
+const VERY_EXPENSIVE = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+
+/**
  * Projects, source analysis, mapping workbooks and schedules.
  *
  * A separate module from the original routes because these are a distinct half of the product: the
@@ -105,7 +112,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     s.analysis.list(req.ctx, idParams.parse(req.params).id),
   );
 
-  app.post('/api/projects/:id/analyses', async (req) => {
+  app.post('/api/projects/:id/analyses', VERY_EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z
       .object({
@@ -201,7 +208,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Every profiled column of an analysis, one row each. The wide view people take away. */
-  app.get('/api/analyses/:id/columns.csv', async (req, reply) => {
+  app.get('/api/analyses/:id/columns.csv', VERY_EXPENSIVE, async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const run = await s.analysis.get(req.ctx, id);
     const rows: (string | number | null)[][] = [];
@@ -272,7 +279,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
    * takes effect. The file arrives base64-encoded in JSON: a mapping sheet is small, and this keeps
    * the upload inside the same CSRF-protected JSON path as every other write.
    */
-  app.post('/api/plans/:id/mapping-workbook', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req) => {
+  app.post('/api/plans/:id/mapping-workbook', { bodyLimit: UPLOAD_BODY_LIMIT, ...EXPENSIVE }, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z
       .object({
@@ -314,7 +321,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
    * Imports a CSV or workbook. The file arrives base64-encoded in JSON, which keeps the upload on
    * the same CSRF-protected path as every other write and needs no multipart parser.
    */
-  app.post('/api/staged-sources/:id/import', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req) => {
+  app.post('/api/staged-sources/:id/import', { bodyLimit: UPLOAD_BODY_LIMIT, ...EXPENSIVE }, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z
       .object({
@@ -329,14 +336,14 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Imports a spreadsheet out of OneDrive or a SharePoint document library. */
-  app.post('/api/staged-sources/:id/import-onedrive', async (req) => {
+  app.post('/api/staged-sources/:id/import-onedrive', EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
     const { reference } = z.object({ reference: z.string().min(1).max(2000) }).parse(req.body);
     return s.stagedSources.importFromGraph(req.ctx, id, { reference });
   });
 
   /** Imports a SharePoint list, given as sites/{site-id}/lists/{list-id}. */
-  app.post('/api/staged-sources/:id/import-sharepoint-list', async (req) => {
+  app.post('/api/staged-sources/:id/import-sharepoint-list', EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
     const { reference } = z.object({ reference: z.string().min(1).max(2000) }).parse(req.body);
     return s.stagedSources.importFromSharePointList(req.ctx, id, { reference });
@@ -404,7 +411,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Fire now, without disturbing the recurrence. */
-  app.post('/api/schedules/:id/trigger', async (req) =>
+  app.post('/api/schedules/:id/trigger', VERY_EXPENSIVE, async (req) =>
     s.schedules.trigger(req.ctx, idParams.parse(req.params).id),
   );
 

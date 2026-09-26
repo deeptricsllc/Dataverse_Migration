@@ -88,8 +88,15 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     allowedOrigins.add(`http://127.0.0.1:${config.PORT}`);
   }
 
-  // Authentication, tenant context and CSRF protection for the API.
-  app.addHook('preHandler', async (req: FastifyRequest) => {
+  /**
+   * Authentication, tenant context and CSRF protection for the API.
+   *
+   * `onRequest`, not `preHandler`. Fastify parses the body between them, so an unauthenticated request
+   * to an upload route was fully received and JSON-parsed — up to that route's 48 MB limit — before the
+   * 401 was raised. That is a large memory and CPU sink available with no credentials at all. Cookies
+   * and headers are both available this early, so nothing is lost by refusing sooner.
+   */
+  app.addHook('onRequest', async (req: FastifyRequest) => {
     const url = req.routeOptions.url ?? req.url.split('?')[0];
     if (!url.startsWith('/api/')) return;
     if (!SAFE_METHODS.has(req.method)) {
@@ -122,7 +129,16 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     let body: ApiErrorBody;
     if (err instanceof AppError) {
       status = err.statusCode;
-      body = { error: { code: err.code, message: err.message, requestId: req.id, details: err.details } };
+      // Scrubbed like every other message: an integration error is wrapped in an AppError, and a
+      // connection string in its text is exactly the shape that would otherwise reach the client.
+      body = {
+        error: {
+          code: err.code,
+          message: scrubSecrets(err.message),
+          requestId: req.id,
+          details: err.details,
+        },
+      };
     } else if (err instanceof ZodError) {
       status = 400;
       body = {

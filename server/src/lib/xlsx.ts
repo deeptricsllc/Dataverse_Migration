@@ -164,6 +164,17 @@ function cell(ref: string, value: XlsxValue, style: number): string {
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${esc(value)}</t></is></c>`;
 }
 
+/**
+ * The grid a spreadsheet can actually have.
+ *
+ * Both are attacker-controlled in a file: `<row r="2000000000">` used to drive two billion pushes
+ * onto the row array, and `<c r="ZZZZZZZZ1">` the same for columns — from a file small enough to pass
+ * every size check, because the expensive thing is the number, not the bytes. Excel's own limits are
+ * the honest bound, and a file claiming more than them is not a spreadsheet.
+ */
+const MAX_ROWS = 1_048_576;
+const MAX_COLUMNS = 16_384;
+
 /** 0 -> A, 25 -> Z, 26 -> AA. */
 export function colRef(index: number): string {
   let n = index;
@@ -252,7 +263,11 @@ function parseSharedStrings(xml: string): string[] {
 function parseSheet(xml: string, shared: string[]): (string | number | boolean | null)[][] {
   const rows: (string | number | boolean | null)[][] = [];
   for (const rowXml of xml.match(/<row\b[^>]*>[\s\S]*?<\/row>|<row\b[^>]*\/>/g) ?? []) {
-    const rowNumber = Number(attr(rowXml, 'r') ?? rows.length + 1);
+    const declared = Number(attr(rowXml, 'r') ?? rows.length + 1);
+    // A row number outside the grid is not a row. Taking the next position keeps the data rather
+    // than discarding it, and costs nothing.
+    const rowNumber =
+      Number.isFinite(declared) && declared >= 1 && declared <= MAX_ROWS ? declared : rows.length + 1;
     const row: (string | number | boolean | null)[] = [];
     for (const cellXml of rowXml.match(/<c\b[^>]*>[\s\S]*?<\/c>|<c\b[^>]*\/>/g) ?? []) {
       const ref = attr(cellXml, 'r');
@@ -287,12 +302,15 @@ function cellValue(cellXml: string, shared: string[]): string | number | boolean
   return Number.isFinite(n) ? n : value;
 }
 
-/** `C7` / `$AB$12` -> 2 / 27. */
+/** `C7` / `$AB$12` -> 2 / 27. Clamped: a reference beyond the grid cannot address anything. */
 export function columnIndex(ref: string): number {
   const letters = ref.replace(/[^A-Za-z]/g, '').toUpperCase();
   let n = 0;
-  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
-  return Math.max(0, n - 1);
+  for (const ch of letters) {
+    n = n * 26 + (ch.charCodeAt(0) - 64);
+    if (n > MAX_COLUMNS) return MAX_COLUMNS - 1;
+  }
+  return Math.max(0, Math.min(n - 1, MAX_COLUMNS - 1));
 }
 
 const attr = (tag: string, name: string): string | null => {

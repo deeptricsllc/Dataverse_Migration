@@ -191,10 +191,8 @@ export class MysqlConnector implements MigrationConnector {
   private toError(err: unknown, action: string): DataverseError {
     const e = err as { code?: string; errno?: number; sqlMessage?: string; message?: string };
     const code = e?.code ?? '';
-    const message = (e?.sqlMessage ?? e?.message ?? String(err)).replace(
-      /password=[^;\s]*/gi,
-      'password=***',
-    );
+    // No local redaction: DataverseError scrubs every message it carries.
+    const message = e?.sqlMessage ?? e?.message ?? String(err);
 
     if (code === 'ER_ACCESS_DENIED_ERROR' || code === 'ER_DBACCESS_DENIED_ERROR' || e?.errno === 1045) {
       return new DataverseError(

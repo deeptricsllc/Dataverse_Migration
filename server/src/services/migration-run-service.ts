@@ -26,6 +26,7 @@ import {
 import type { AppConfig } from '../config';
 import type { JobQueue } from '../jobs/queue';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors';
+import { requireAdminForProductionTarget } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
@@ -54,9 +55,21 @@ export class MigrationRunService {
    * clear error before a run is even queued.
    */
   private async assertWritesAllowed(ctx: RequestContext, targetEnvironmentId: string, action: string) {
+    // A member may migrate to a sandbox; production takes someone accountable for it. Checked before
+    // the read-only switch so the answer is about who you are, not about how this deployment is
+    // configured.
+    const env = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
+    requireAdminForProductionTarget(
+      ctx,
+      env,
+      action === 'EXECUTE' ? 'Migrating' : `${action[0]}${action.slice(1).toLowerCase()}ing`,
+    );
     if (!this.config.REAL_TENANT_READ_ONLY) return;
     const target = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
-    if (target.provider !== 'dataverse') return;
+    // Every real target, not only Dataverse. A SQL target used to be accepted and queued, with the
+    // refusal arriving later per statement inside the connector — so the data was safe but the run
+    // history and the audit trail both said the attempt was allowed.
+    if (target.provider === 'demo' || target.provider === 'demosql') return;
     await this.audit.record({
       organizationId: ctx.organizationId,
       userId: ctx.userId,

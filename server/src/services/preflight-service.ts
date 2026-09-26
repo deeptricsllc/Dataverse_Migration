@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
@@ -32,6 +32,7 @@ import {
   preflightRuns,
   principalDirectory,
   users,
+  migrationRecordMaps,
 } from '../db/schema';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { JobQueue } from '../jobs/queue';
@@ -419,12 +420,29 @@ export class PreflightService {
     }
     for (const [logicalName, ids] of wanted) {
       const idList = [...ids];
-      const rows = await this.db
-        .select({ sourceId: sql<string>`source_id`, targetId: sql<string>`target_id` })
-        .from(sql`migration_record_maps`)
-        .where(
-          sql`organization_id = ${p.pf.organizationId} and source_environment_id = ${p.pf.sourceEnvironmentId} and target_environment_id = ${p.pf.targetEnvironmentId} and logical_name = ${logicalName} and outcome <> 'FAILED' and target_id is not null and source_id in ${sql.raw(`(${idList.map((i) => `'${i.replace(/'/g, "''")}'`).join(',') || `''`})`)}`,
-        );
+      // The ids come from the source system — for an imported file, straight out of its key column —
+      // so they are input. This was the one place in the codebase that hand-escaped quotes into raw
+      // SQL: correct under PostgreSQL's default settings, wrong the moment those change, and exactly
+      // what a reviewer flags. Bound as an array instead, so nothing is escaped at all.
+      const rows = idList.length
+        ? await this.db
+            .select({
+              sourceId: migrationRecordMaps.sourceId,
+              targetId: migrationRecordMaps.targetId,
+            })
+            .from(migrationRecordMaps)
+            .where(
+              and(
+                eq(migrationRecordMaps.organizationId, p.pf.organizationId),
+                eq(migrationRecordMaps.sourceEnvironmentId, p.pf.sourceEnvironmentId),
+                eq(migrationRecordMaps.targetEnvironmentId, p.pf.targetEnvironmentId),
+                eq(migrationRecordMaps.logicalName, logicalName),
+                ne(migrationRecordMaps.outcome, 'FAILED'),
+                isNotNull(migrationRecordMaps.targetId),
+                inArray(migrationRecordMaps.sourceId, idList),
+              ),
+            )
+        : [];
       for (const r of rows) resolved.set(`${logicalName}:${r.sourceId}`, r.targetId);
       const table = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
       const unresolved = idList.filter((id) => !resolved.get(`${logicalName}:${id}`));
@@ -561,6 +579,13 @@ export class PreflightService {
     ctx: Pick<RequestContext, 'organizationId'>,
     planId: string,
   ): Promise<PreflightRunDto | null> {
+    // Null is the documented answer for "no preflight has run yet", so it must not double as the
+    // answer for "that plan is not yours". The plan is confirmed first.
+    const [plan] = await this.db
+      .select({ id: migrationPlans.id })
+      .from(migrationPlans)
+      .where(and(eq(migrationPlans.id, planId), eq(migrationPlans.organizationId, ctx.organizationId)));
+    if (!plan) throw notFound('Migration plan');
     const [row] = await this.db
       .select({ id: preflightRuns.id })
       .from(preflightRuns)

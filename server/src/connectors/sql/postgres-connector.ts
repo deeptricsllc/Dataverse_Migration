@@ -193,7 +193,9 @@ export class PostgresConnector implements MigrationConnector {
   private toError(err: unknown, action: string): DataverseError {
     const e = err as { code?: string; message?: string; severity?: string };
     const code = e?.code ?? '';
-    const message = (e?.message ?? String(err)).replace(/password=[^;\s]*/gi, 'password=***');
+    const message = e?.message ?? String(err);
+    // No local redaction: DataverseError scrubs every message it carries, so doing it here as well
+    // only produced a second marker for the same secret.
 
     if (code === '28P01' || code === '28000') {
       return new DataverseError(

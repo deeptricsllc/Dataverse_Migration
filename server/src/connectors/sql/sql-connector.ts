@@ -176,7 +176,9 @@ export class SqlConnector implements MigrationConnector {
     const e = err as { number?: number; code?: string; message?: string };
     const number = e.number;
     const retryable = number !== undefined && TRANSIENT_SQL_ERRORS.has(number);
-    const message = (e.message ?? String(err)).replace(/password=[^;]*/gi, 'password=***');
+    const message = e.message ?? String(err);
+    // No local redaction: DataverseError scrubs every message it carries, so doing it here as well
+    // only produced a second marker for the same secret.
     if (number === 18456 || e.code === 'ELOGIN') {
       return new DataverseError(
         'AUTH_REQUIRED',

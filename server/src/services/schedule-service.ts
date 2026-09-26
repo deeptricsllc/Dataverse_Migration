@@ -12,6 +12,7 @@ import type { AppDb } from '../db/client';
 import { migrationPlans, migrationRuns, migrationSchedules, users } from '../db/schema';
 import { cronError, describeCron, nextCronTime } from '../lib/cron';
 import { AppError, badRequest, errorMessage, notFound } from '../lib/errors';
+import { requireAdmin } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { MigrationRunService } from './migration-run-service';
@@ -106,6 +107,9 @@ export class ScheduleService {
       confirmTargetName: string;
     },
   ): Promise<MigrationScheduleDto> {
+    // A schedule keeps writing when nobody is watching, so creating one is a standing grant rather
+    // than a single action.
+    requireAdmin(ctx, 'Creating a schedule');
     const plan = await this.runs.planForSchedule(ctx, planId);
     const timeZone = (input.timeZone ?? 'UTC').trim() || 'UTC';
     const cron = input.cron.trim();
@@ -172,6 +176,7 @@ export class ScheduleService {
       acknowledgeWarnings?: boolean;
     },
   ): Promise<MigrationScheduleDto> {
+    requireAdmin(ctx, 'Changing a schedule');
     const { schedule } = await this.row(ctx, scheduleId);
     const cron = patch.cron?.trim() ?? schedule.cron;
     const timeZone = patch.timeZone?.trim() ?? schedule.timeZone;
@@ -220,6 +225,7 @@ export class ScheduleService {
   }
 
   async remove(ctx: RequestContext, scheduleId: string): Promise<void> {
+    requireAdmin(ctx, 'Deleting a schedule');
     await this.row(ctx, scheduleId);
     await this.db.delete(migrationSchedules).where(eq(migrationSchedules.id, scheduleId));
     await this.audit.record({
@@ -239,6 +245,7 @@ export class ScheduleService {
    * wait for the next slot. It goes through the identical path a timed firing does.
    */
   async trigger(ctx: RequestContext, scheduleId: string): Promise<{ runId: string }> {
+    requireAdmin(ctx, 'Firing a schedule');
     const { schedule } = await this.row(ctx, scheduleId);
     const result = await this.fire(schedule, 'TRIGGERED', ctx);
     if (result.kind === 'SKIPPED') throw new AppError(409, 'SCHEDULE_SKIPPED', result.reason);
@@ -319,6 +326,40 @@ export class ScheduleService {
     return outcome;
   }
 
+  /**
+   * The context a timed firing runs as: the person who created the schedule, with the role they hold
+   * **now**.
+   *
+   * It used to fabricate `role: 'ADMIN'`, which was harmless only while nothing checked the role.
+   * The moment writing to production needs an administrator, a fabricated one turns a schedule into a
+   * privilege-escalation path — a member creates it, and it fires with rights they do not have.
+   * Reading the role at fire time rather than storing it also means revoking someone's access stops
+   * their schedules, which is what revoking access is supposed to mean.
+   */
+  private async creatorContext(schedule: typeof migrationSchedules.$inferSelect): Promise<RequestContext> {
+    const [creator] = schedule.createdByUserId
+      ? await this.db
+          .select({ id: users.id, role: users.role, displayName: users.displayName })
+          .from(users)
+          .where(eq(users.id, schedule.createdByUserId))
+      : [];
+    if (!creator) {
+      // No creator left to act for. Refusing is the only safe answer: firing as nobody would mean
+      // firing with whatever rights the code happens to assume.
+      throw badRequest(
+        `The account that created "${schedule.name}" no longer exists, so it has nobody to run as. Recreate the schedule.`,
+      );
+    }
+    return {
+      organizationId: schedule.organizationId,
+      userId: creator.id,
+      role: creator.role,
+      isDemoOrg: false,
+      displayName: `${creator.displayName} (schedule: ${schedule.name})`,
+      requestId: `schedule-${schedule.id}`,
+    };
+  }
+
   /** One firing, from the timer or from a person pressing the button. */
   private async fire(
     schedule: typeof migrationSchedules.$inferSelect,
@@ -329,16 +370,7 @@ export class ScheduleService {
     | { kind: 'SKIPPED'; reason: string }
     | { kind: 'FAILED'; reason: string }
   > {
-    const runCtx: RequestContext =
-      ctx ??
-      ({
-        organizationId: schedule.organizationId,
-        userId: schedule.createdByUserId ?? '',
-        role: 'ADMIN',
-        isDemoOrg: false,
-        displayName: `Schedule: ${schedule.name}`,
-        requestId: `schedule-${schedule.id}`,
-      } as RequestContext);
+    const runCtx: RequestContext = ctx ?? (await this.creatorContext(schedule));
 
     try {
       // Blockers are caught by `start`. Warnings need this extra step, because `start` only knows

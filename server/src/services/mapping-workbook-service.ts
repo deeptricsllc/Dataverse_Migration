@@ -224,6 +224,10 @@ export class MappingWorkbookService {
     if (file.content.length > MAX_IMPORT_BYTES) {
       throw badRequest(`That file is larger than the ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB limit`);
     }
+    // The gate every sibling method already had and this one did not. Without it, a preview built
+    // from another organization's plan was returned to the caller: its tables, its columns and
+    // its current target mappings. Reads there are as much a breach as writes.
+    await this.planning.get(ctx, planId);
     const parsed = parseWorkbook(file.content, file.filename);
     const rows = parsed.mappings;
     if (rows.length > MAX_IMPORT_ROWS) {

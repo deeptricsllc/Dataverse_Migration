@@ -1278,8 +1278,19 @@ export class PlanningService {
     return out;
   }
 
-  /** The plans inside one migration project. */
+  /**
+   * The plans inside one migration project.
+   *
+   * The project is confirmed to belong to the caller first. Filtering the caller's own plans was safe
+   * — nothing leaked — but it answered 200 with an empty list for a project in another organization,
+   * which is neither a refusal nor an answer.
+   */
   async listForProject(ctx: RequestContext, projectId: string) {
+    const [project] = await this.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.organizationId, ctx.organizationId)));
+    if (!project) throw notFound('Project');
     const all = await this.list(ctx, 500);
     return all.filter((p) => p.projectId === projectId);
   }

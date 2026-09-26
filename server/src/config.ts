@@ -49,7 +49,10 @@ const schema = z.object({
    * user is asked to consent to at sign-in. That is a decision for whoever runs the tenant, not a
    * default — and a deployment that does not use it should never ask.
    */
-  MICROSOFT_FILES_ENABLED: z.coerce.boolean().default(false),
+  // `bool`, not `z.coerce.boolean()`: coercion is `Boolean(String)`, so the string "false" is
+  // truthy and MICROSOFT_FILES_ENABLED=false would have switched the feature ON — adding
+  // Files.Read.All and Sites.Read.All to what every user in the tenant is asked to consent to.
+  MICROSOFT_FILES_ENABLED: bool(false),
   DATAVERSE_API_VERSION: z.string().default('v9.2'),
   POWER_PLATFORM_ENRICHMENT: bool(false),
   ALLOW_BUSINESS_LOGIC_BYPASS: bool(false),

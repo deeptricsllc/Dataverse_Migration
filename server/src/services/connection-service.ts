@@ -18,6 +18,7 @@ import {
 import type { ConnectionFactory } from '../dataverse/factory';
 import { toDataverseError } from '../dataverse/errors';
 import { AppError, badRequest, notFound } from '../lib/errors';
+import { requireAdmin } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { toEnvironmentDto, type EnvironmentRow } from './environment-service';
@@ -286,6 +287,9 @@ export class ConnectionService {
    * A connection that is still referenced is therefore refused rather than cascading.
    */
   async remove(ctx: RequestContext, connectionId: string): Promise<{ deleted: true }> {
+    // Deleting a connection destroys a stored credential and the configuration other people's plans
+    // depend on, so it outlives the task and needs an administrator.
+    requireAdmin(ctx, 'Deleting a connection');
     const env = await this.loadSql(ctx, connectionId);
     const [usedByRun] = await this.db
       .select({ id: migrationRuns.id })

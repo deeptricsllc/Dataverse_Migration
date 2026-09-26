@@ -125,7 +125,8 @@ describe('credential handling', () => {
       'connect',
     );
     expect(err.message).not.toContain('hunter2');
-    expect(err.message).toContain('password=***');
+    // One marker, produced by the one scrubber every error message passes through.
+    expect(err.message).toContain('password=[REDACTED]');
   });
 
   it('encrypts a stored credential and detects tampering', () => {

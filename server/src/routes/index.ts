@@ -20,6 +20,25 @@ const page = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/**
+ * Per-route limits for the requests that cost real work.
+ *
+ * The global allowance is 900 a minute, which is right for reading screens and badly wrong for the
+ * handful of endpoints that each scan a customer's database, inflate a 48 MB upload, or queue a job
+ * over two hundred tables. Those do not need a generous allowance — a person clicks them a few times
+ * an hour — and leaving them on the global bucket means one authenticated account can saturate this
+ * deployment or, worse, the customer's source database.
+ */
+const EXPENSIVE = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } };
+/** Queues a job that can profile hundreds of tables; a handful an hour is the real usage. */
+const VERY_EXPENSIVE = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+/**
+ * Opens a connection to a host and port the caller chose, and reports what happened. That is useful
+ * for configuring a connection and also a way to probe the network this deployment sits in, so it gets
+ * the tightest allowance of all.
+ */
+const PROBES_A_HOST = { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } };
+
 export async function registerRoutes(app: FastifyInstance, s: Services) {
   const { config } = s;
   // Projects, analysis, mapping workbooks and schedules live in their own module.
@@ -173,7 +192,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Comparison
   // ---------------------------------------------------------------------------
 
-  app.post('/api/comparisons', async (req) => {
+  app.post('/api/comparisons', VERY_EXPENSIVE, async (req) => {
     const body = z
       .object({
         sourceEnvironmentId: uuid,
@@ -392,11 +411,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Tests settings that have not been saved yet, so nothing is stored until they work. */
-  app.post('/api/connections/test', async (req) =>
+  app.post('/api/connections/test', PROBES_A_HOST, async (req) =>
     s.connectionAdmin.testUnsaved(req.ctx, sqlConnectionBody.parse(req.body)),
   );
 
-  app.post('/api/connections/:id/test', async (req) =>
+  app.post('/api/connections/:id/test', PROBES_A_HOST, async (req) =>
     s.connectionAdmin.test(req.ctx, idParams.parse(req.params).id),
   );
 
@@ -411,7 +430,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/transformation-templates', async () => s.transformations.templates());
 
   /** Profiles a source table for a plan, using the rules its target schema implies. */
-  app.post('/api/plans/:id/entities/:entityId/profile', async (req) => {
+  app.post('/api/plans/:id/entities/:entityId/profile', EXPENSIVE, async (req) => {
     const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
     const body = z
       .object({ sampleSize: z.number().int().min(1).max(200_000).optional(), full: z.boolean().optional() })
@@ -425,7 +444,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** The workspace data-quality summary: every mapped table profiled and grouped by category. */
-  app.post('/api/plans/:id/data-quality', async (req) => {
+  app.post('/api/plans/:id/data-quality', EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z
       .object({ sampleSize: z.number().int().min(1).max(200_000).optional() })
@@ -435,7 +454,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Profiles any table of any connection, independently of a plan. */
-  app.post('/api/environments/:id/tables/:table/profile', async (req) => {
+  app.post('/api/environments/:id/tables/:table/profile', EXPENSIVE, async (req) => {
     const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
     const body = z
       .object({
@@ -447,7 +466,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return s.profiling.profileTable(req.ctx, { environmentId: id, table, ...body });
   });
 
-  app.get('/api/environments/:id/tables/:table/fields/:field/profile', async (req) => {
+  app.get('/api/environments/:id/tables/:table/fields/:field/profile', EXPENSIVE, async (req) => {
     const { id, table, field } = z.object({ id: uuid, table: tableName, field: fieldName }).parse(req.params);
     const { sampleSize } = z
       .object({ sampleSize: z.coerce.number().int().min(1).max(200_000).optional() })
@@ -509,7 +528,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Preflight (dry run) — reads only, never writes to Dataverse
   // ---------------------------------------------------------------------------
 
-  app.post('/api/plans/:id/preflight', async (req) =>
+  app.post('/api/plans/:id/preflight', VERY_EXPENSIVE, async (req) =>
     s.preflight.create(req.ctx, idParams.parse(req.params).id),
   );
 

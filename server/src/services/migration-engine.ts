@@ -326,7 +326,36 @@ export class MigrationEngine {
         .select({ n: sql<number>`count(*)` })
         .from(migrationRecordMaps)
         .where(and(eq(migrationRecordMaps.runId, runId), eq(migrationRecordMaps.deferredStatus, 'FAILED')));
-      const withErrors = final.failed > 0 || Number(deferredFailed?.n ?? 0) > 0;
+      /**
+       * A whole table can fail without a single record failing: the table is missing in the source or
+       * target, or the source read itself failed. Those paths write an error and mark the table
+       * FAILED, but never produce a FAILED record, so a run that lost an entire table used to be
+       * stamped COMPLETED — with the plan marked EXECUTED and the audit trail recording success. For
+       * a migration tool that is the worst possible lie, so the table statuses are counted too.
+       */
+      const [failedEntities] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(migrationRunEntities)
+        .where(and(eq(migrationRunEntities.runId, runId), eq(migrationRunEntities.status, 'FAILED')));
+      const failedTables = Number(failedEntities?.n ?? 0);
+      // And any unresolved error of ERROR severity, so a future failure path that writes an error
+      // without producing a failed record cannot slip through either.
+      const [unresolved] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(migrationErrors)
+        .where(
+          and(
+            eq(migrationErrors.runId, runId),
+            eq(migrationErrors.severity, 'ERROR'),
+            eq(migrationErrors.resolved, false),
+          ),
+        );
+      const withErrors = runHadErrors({
+        failedRecords: final.failed,
+        deferredFailed: Number(deferredFailed?.n ?? 0),
+        failedTables,
+        unresolvedErrors: Number(unresolved?.n ?? 0),
+      });
       const status = withErrors ? 'COMPLETED_WITH_ERRORS' : 'COMPLETED';
       await this.db
         .update(migrationRuns)
@@ -346,9 +375,11 @@ export class MigrationEngine {
       if (run.scheduleId && ctx.watermark.value) {
         await this.recordScheduleWatermark(run.scheduleId, ctx.watermark.value);
       }
+      // A plan is only "executed" when the run it produced actually carried everything. Marking it
+      // executed after a table was lost tells the next person the work is done.
       await this.db
         .update(migrationPlans)
-        .set({ status: 'EXECUTED' })
+        .set({ status: withErrors ? 'PLANNED' : 'EXECUTED' })
         .where(eq(migrationPlans.id, run.planId));
       this.metadata.invalidateCounts(target.id);
       await this.audit.record({
@@ -1182,6 +1213,30 @@ export class MigrationEngine {
  * Deliberately a maximum over everything seen rather than "the last record's value": records arrive
  * in primary-key order, not watermark order, so the last one read is not the newest one.
  */
+/**
+ * Whether a finished run carried everything it was asked to.
+ *
+ * Extracted and exported because it was wrong, and wrong in the way that matters most: it counted
+ * only failed *records*. A whole table can fail without one — the table is missing in the source or
+ * target, or the source read itself fails. Those paths mark the table FAILED and write an error but
+ * produce no failed record, so a run that lost an entire table was stamped COMPLETED, the plan was
+ * marked EXECUTED and the audit trail recorded success. Every signal now feeds one decision, in one
+ * place that can be tested on its own.
+ */
+export function runHadErrors(counts: {
+  failedRecords: number;
+  deferredFailed: number;
+  failedTables: number;
+  unresolvedErrors: number;
+}): boolean {
+  return (
+    counts.failedRecords > 0 ||
+    counts.deferredFailed > 0 ||
+    counts.failedTables > 0 ||
+    counts.unresolvedErrors > 0
+  );
+}
+
 export function observeWatermark(into: { value: string | null }, page: DvRecord[], field: string): void {
   for (const record of page) {
     const raw = record.values[field];
