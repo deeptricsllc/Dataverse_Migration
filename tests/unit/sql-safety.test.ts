@@ -134,11 +134,19 @@ describe('credential handling', () => {
     const ciphertext = box.encrypt('hunter2');
     expect(ciphertext).not.toContain('hunter2');
     expect(box.decrypt(ciphertext)).toBe('hunter2');
-    // Flip the last character to something it is not. Appending a fixed suffix was a no-op roughly
-    // once every few thousand runs — whenever the ciphertext already ended that way — and a suite that
-    // fails at random is a suite people stop believing.
-    const last = ciphertext.slice(-1);
-    const tampered = `${ciphertext.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`;
+    /**
+     * Tamper with the FIRST character of the ciphertext segment, not the last.
+     *
+     * This test used to change the end, and failed at random about once in a few thousand runs. The
+     * reason is base64, not the cipher: depending on length, the final character carries bits that
+     * decode to nothing, so altering it can produce the identical bytes — and authentication then
+     * passes, correctly. The first character of a segment always contributes six meaningful bits, so
+     * changing it always changes the decoded bytes and the tag check always has something to catch.
+     */
+    const parts = ciphertext.split('.');
+    const body = parts[parts.length - 1];
+    parts[parts.length - 1] = `${body[0] === 'A' ? 'B' : 'A'}${body.slice(1)}`;
+    const tampered = parts.join('.');
     expect(tampered).not.toBe(ciphertext);
     expect(() => box.decrypt(tampered)).toThrow();
   });
