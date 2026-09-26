@@ -16,6 +16,7 @@ import { DEMO_DATA_VERSION, DEMO_ENVIRONMENTS, datasetFor, type DemoEnvKey } fro
 const SEED_MARKER = '__seed_version';
 import { GlobalDiscoveryProvider, type EnvironmentDiscoveryProvider } from './discovery';
 import type { DiscoveredEnvironment } from './types';
+import { DEFAULT_RETRY_POLICY } from './retry';
 import { WebApiConnection } from './web-api-connection';
 import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
@@ -83,8 +84,15 @@ export class ConnectionFactory {
     env: EnvironmentRow,
     userId: string,
     logContext: Record<string, unknown> = {},
+    /**
+     * How many times a transient failure is retried. A migration carries the plan's own setting,
+     * because a tenant that throttles hard needs more attempts than a screen refresh does.
+     */
+    opts: { maxAttempts?: number } = {},
   ): Promise<MigrationConnector> {
-    if (env.connectionType === 'DATAVERSE') return this.forEnvironment(env, userId, logContext);
+    if (env.connectionType === 'DATAVERSE') {
+      return this.forEnvironment(env, userId, logContext, opts);
+    }
     const logger = this.logger.child({ environmentId: env.id, ...logContext });
     if (env.provider === 'demosql') {
       if (!this.config.DEMO_MODE) throw new AppError(400, 'DEMO_DISABLED', 'Demo connections are disabled');
@@ -152,6 +160,7 @@ export class ConnectionFactory {
     env: EnvironmentRow,
     userId: string,
     logContext: Record<string, unknown> = {},
+    opts: { maxAttempts?: number } = {},
   ): MigrationConnector {
     const logger = this.logger.child({ environmentId: env.id, ...logContext });
     if (env.connectionType !== 'DATAVERSE') {
@@ -181,6 +190,13 @@ export class ConnectionFactory {
       apiVersion: this.config.DATAVERSE_API_VERSION,
       logger,
       readOnly: this.config.REAL_TENANT_READ_ONLY,
+      // `maxRetries` on a plan was settable and read nowhere: a customer could raise it against a
+      // throttling tenant and nothing changed. This is where it belongs — the transient-failure
+      // retry that already honours Retry-After.
+      retryPolicy:
+        opts.maxAttempts === undefined
+          ? undefined
+          : { ...DEFAULT_RETRY_POLICY, maxAttempts: Math.max(1, opts.maxAttempts) },
       getAccessToken: () => this.identity.getResourceToken(userId, env.apiUrl || env.url),
     });
   }

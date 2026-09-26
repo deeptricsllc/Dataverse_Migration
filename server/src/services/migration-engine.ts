@@ -205,12 +205,21 @@ export class MigrationEngine {
         run.organizationId,
         run.targetEnvironmentId,
       );
-      const sConn = await this.connections.connectorFor(source, run.executedByUserId, {
-        migrationRunId: runId,
-      });
-      const tConn = await this.connections.connectorFor(target, run.executedByUserId, {
-        migrationRunId: runId,
-      });
+      // `maxRetries + 1` attempts: the option is how many times to retry, and the policy counts the
+      // first try as one of its attempts.
+      const attempts = { maxAttempts: (run.options.maxRetries ?? DEFAULT_PLAN_OPTIONS.maxRetries) + 1 };
+      const sConn = await this.connections.connectorFor(
+        source,
+        run.executedByUserId,
+        { migrationRunId: runId },
+        attempts,
+      );
+      const tConn = await this.connections.connectorFor(
+        target,
+        run.executedByUserId,
+        { migrationRunId: runId },
+        attempts,
+      );
       const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...run.options };
       const writeOptions: WriteOptions = {
         bypassCustomBusinessLogic: options.bypassCustomBusinessLogic,

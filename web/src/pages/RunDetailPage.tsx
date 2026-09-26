@@ -134,8 +134,13 @@ export function RunDetailPage() {
                 icon={<RotateCw className="h-4 w-4" />}
                 loading={control.isPending && control.variables === 'retry'}
                 onClick={() => control.mutate('retry')}
+                // The old label said "Retry failed records", which overstated it: only the failed
+                // records are written, but the source is read again from the start. On a large table
+                // that is the difference between a moment and an hour, and somebody planning a
+                // maintenance window needs to know which.
+                title="Reads the source again and re-processes only the records that failed or were never reached. Records already migrated are skipped, never duplicated."
               >
-                {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Retry failed records'}
+                {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Re-run, writing only what failed'}
               </Button>
             )}
             {terminal && (
