@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { SessionProvider, useSessionQuery } from './lib/session';
+import { AnalysisPage } from './pages/AnalysisPage';
 import { ComparePage } from './pages/ComparePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
@@ -11,6 +12,8 @@ import { MigrationPage } from './pages/MigrationPage';
 import { NewMigrationPage } from './pages/NewMigrationPage';
 import { PlanPage } from './pages/PlanPage';
 import { PreflightPage } from './pages/PreflightPage';
+import { ProjectPage } from './pages/ProjectPage';
+import { ProjectsPage } from './pages/ProjectsPage';
 import { RunDetailPage } from './pages/RunDetailPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -40,6 +43,9 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Protected />}>
         <Route index element={<DashboardPage />} />
+        <Route path="projects" element={<ProjectsPage />} />
+        <Route path="projects/:projectId" element={<ProjectPage />} />
+        <Route path="analyses/:analysisId" element={<AnalysisPage />} />
         <Route path="environments" element={<EnvironmentsPage />} />
         <Route path="compare" element={<ComparePage />} />
         <Route path="compare/:comparisonId" element={<ComparePage />} />

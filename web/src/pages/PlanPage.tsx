@@ -23,6 +23,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChoiceMappingModal } from '../components/ChoiceMappingModal';
 import { DataQualityCard } from '../components/DataQualityCard';
+import { MappingWorkbookCard } from '../components/MappingWorkbookCard';
+import { SchedulesCard } from '../components/SchedulesCard';
 import { RecordPreviewCard } from '../components/RecordPreviewCard';
 import { TransformationEditor } from '../components/TransformationEditor';
 import { ObjectMappingCard } from '../components/ObjectMappingCard';
@@ -1133,6 +1135,10 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
       </Card>
 
       <DataQualityCard plan={plan} onPlan={onPlan} />
+
+      <MappingWorkbookCard plan={plan} />
+
+      <SchedulesCard plan={plan} />
 
       {plan.targetEnvironment.environmentClass === 'PRODUCTION' && (
         <Callout tone="danger" title="Production target">

@@ -5,6 +5,7 @@ import {
   Boxes,
   ChevronDown,
   Database,
+  FolderKanban,
   GitCompareArrows,
   History,
   LayoutDashboard,
@@ -24,6 +25,7 @@ import { cx } from './ui';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/environments', label: 'Connections', icon: Database },
   { to: '/compare', label: 'Compare', icon: GitCompareArrows },
   { to: '/users', label: 'User mapping', icon: Users },
@@ -174,7 +176,12 @@ export function WorkspaceHeader() {
 export function Layout() {
   const { user, realTenantReadOnly } = useSession();
   const location = useLocation();
-  const showWorkspace = !['/', '/settings'].includes(location.pathname);
+  // Project, analysis and settings pages state their own source and target, so the global
+  // source→target strip would only repeat or contradict them.
+  const showWorkspace =
+    !['/', '/settings'].includes(location.pathname) &&
+    !location.pathname.startsWith('/projects') &&
+    !location.pathname.startsWith('/analyses');
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 flex-none flex-col border-r border-slate-200 bg-slate-900 text-slate-300 md:flex">
