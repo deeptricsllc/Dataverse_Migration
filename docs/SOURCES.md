@@ -153,13 +153,57 @@ and a display name is not unique enough to look one up safely.
 
 Being specific, because "the tests pass" means different things here.
 
-| Connector              | Tested against                                                                                                                                                                                                              |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL             | **Real PostgreSQL.** PGlite is Postgres compiled to WebAssembly, so `pg_catalog` behaves as it does on a server. Identity vs serial, generated columns, partial unique indexes, composite keys, `char(3)` lengths, defaults |
-| CSV / Excel            | **End to end.** Created, imported, discovered, profiled, read back through the connector, analysed, and refused as a target                                                                                                 |
-| MySQL                  | **Unit only.** Quoting, parameter binding, the type vocabulary and catalog-to-metadata against hand-built `information_schema` rows. There is no embedded MySQL; the driver conversation is not covered                     |
-| OneDrive / SharePoint  | **Unit only.** Link resolution, sharing-link encoding, list-to-rows shaping and error mapping against a stubbed Graph. The live call is not covered                                                                         |
-| SQL Server / Dataverse | Demo connectors, plus the existing integration and end-to-end journeys                                                                                                                                                      |
+### The connector contract
+
+`tests/integration/connector-contract.test.ts` is one behavioural specification every connector must
+satisfy. It exists because the platform treats connectors interchangeably — profiling, preflight,
+migration and validation all call the same methods and rely on the same guarantees — and until it was
+written, nothing asserted that two connectors actually _behave_ alike. A new connector could satisfy
+the TypeScript interface while breaking what everything downstream assumes.
+
+It asserts, for every connector: tables are discoverable and describable; an unknown table is an
+error rather than an empty result; asking for specific columns returns those and **not** others;
+paging returns the same records whatever the page size, with nothing repeated or dropped;
+`retrieveByIds` returns exactly what was asked for; `findByFields` finds the record it was given and
+respects its limit; an unknown watermark column is refused rather than falling back to a full read;
+every column states its provider family; and a read-only connector refuses writes and is marked as a
+view.
+
+It was validated by deliberately breaking things and confirming it fails: a projection that returned
+an unrequested column, and a keyset predicate that advanced one row short. The first attempt did
+**not** catch the projection bug, because the contract asked for every column and the check was
+vacuously true — which is why it now requests a strict subset.
+
+Two of those assertions are the ones worth having. A wrong keyset predicate silently drops or repeats
+whole pages and shows up almost nowhere else. A watermark column that falls back to a full read makes
+an incremental schedule quietly expensive and its watermark meaningless.
+
+### Running it against a real server
+
+The reason this matters more than another unit test: MySQL and the other live drivers are not
+"unverifiable" for want of an embedded server. They are one environment variable away from verified,
+with the specification already written.
+
+```
+TEST_POSTGRES_URL=postgresql://user:pass@host:5432/db npm test
+TEST_MYSQL_URL=mysql://user:pass@host:3306/db npm test
+TEST_MSSQL_URL=sqlserver://user:pass@host:1433/db npm test
+```
+
+The contract finds a table with rows by itself, so no fixture is needed, and it never writes.
+
+### Coverage today
+
+| Connector              | Tested against                                                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL             | **Real PostgreSQL** for discovery: PGlite is Postgres compiled to WebAssembly, so `pg_catalog` behaves as it does on a server. The driver path needs `TEST_POSTGRES_URL`               |
+| CSV / Excel            | **End to end**, including the contract suite and the browser journey                                                                                                                   |
+| Dataverse / SQL Server | Demo connectors through the contract suite, plus the existing integration and end-to-end journeys                                                                                      |
+| MySQL                  | **Unit plus the contract suite when a server is supplied.** Quoting, binding, the type vocabulary and catalog-to-metadata are covered outright; the driver path needs `TEST_MYSQL_URL` |
+| OneDrive / SharePoint  | **Unit only.** Link resolution, sharing-link encoding, list-to-rows shaping and the access diagnosis against a stubbed Graph. The live call needs a real tenant                        |
 
 Where a connector has not been exercised against the real service, that is stated rather than implied
-by a green suite.
+by a green suite. The Graph-backed kinds compensate differently: their connection test performs a real
+Graph probe and names which of the four failure modes occurred — the feature is off, nobody consented,
+the account lacks the scope, or Graph is unreachable — so the first person with a real tenant gets a
+diagnosis rather than something to bisect.

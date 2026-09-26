@@ -1,3 +1,4 @@
+import { graphScopes } from '../auth/microsoft-identity';
 import { and, count, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
@@ -20,6 +21,7 @@ import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
 import { MysqlConnector } from '../connectors/sql/mysql-connector';
 import { PostgresConnector } from '../connectors/sql/postgres-connector';
+import { graphRequester } from '../connectors/staged/graph';
 import { StagedConnector, stagedProvider } from '../connectors/staged/staged-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
 import {
@@ -95,18 +97,24 @@ export class ConnectionFactory {
     }
     // An imported source has no server to reach: its rows live in the platform's own database.
     if (isStagedConnection(env.connectionType)) {
+      const kind =
+        env.connectionType === 'ONEDRIVE'
+          ? 'ONEDRIVE'
+          : env.connectionType === 'SHAREPOINT'
+            ? 'SHAREPOINT'
+            : 'UPLOAD';
       return new StagedConnector(
-        stagedProvider(
-          env.connectionType === 'ONEDRIVE'
-            ? 'ONEDRIVE'
-            : env.connectionType === 'SHAREPOINT'
-              ? 'SHAREPOINT'
-              : 'UPLOAD',
-        ),
+        stagedProvider(kind),
         env.url,
         env.id,
         this.db,
         logger,
+        // Only for the kinds that fetch, and only when the feature is switched on. Without it the
+        // connection test reports that the feature is off rather than failing on a token it was
+        // never going to get.
+        kind !== 'UPLOAD' && this.config.MICROSOFT_FILES_ENABLED && this.config.microsoftEnabled
+          ? async () => graphRequester(await this.identity.getAccessToken(userId, graphScopes()))
+          : undefined,
       );
     }
     if (!env.sqlConfig) {

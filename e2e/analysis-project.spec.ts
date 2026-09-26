@@ -23,10 +23,14 @@ test('analysis project: understand a source, then migrate from what it found', a
   await page.goto('/environments');
   await expect(page.getByTestId('env-card-Legacy SQL Server (Demo)')).toBeVisible({ timeout: 60_000 });
 
-  // 2. Create an analysis project. Choosing the kind decides what the form then asks for: an
-  // analysis project is never offered a target.
-  await page.goto('/projects');
-  await page.getByTestId('new-project').click();
+  // 2. The dashboard's primary action lands on the form, not merely on the project list.
+  await page.goto('/');
+  await page.getByTestId('dashboard-new-project').click();
+  await expect(page).toHaveURL(/\/projects\?new=1/);
+  await expect(page.getByTestId('project-kind')).toBeVisible();
+
+  // Choosing the kind decides what the form then asks for: an analysis project is never offered a
+  // target.
   await page.getByTestId('project-kind').selectOption('ANALYSIS');
   await expect(page.getByText(/An analysis project has no target/)).toBeVisible();
   await page.getByTestId('project-name').fill('Understand the legacy database');

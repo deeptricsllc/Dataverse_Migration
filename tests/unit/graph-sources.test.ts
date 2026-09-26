@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  probeGraphAccess,
   fetchDriveItem,
   fetchListRows,
   GRAPH_READ_SCOPES,
@@ -258,5 +259,67 @@ describe('reading a SharePoint list', () => {
   it('reports a list it cannot see', async () => {
     const { request } = stubGraph({ 'sites/s1/lists/l1': { status: 404 } });
     await expect(fetchListRows(request, ref)).rejects.toThrow(/could not be found/);
+  });
+});
+
+describe('telling somebody what is actually wrong', () => {
+  /**
+   * The four things that go wrong here produce four different fixes, and they are easy to confuse:
+   * the feature is off, nobody consented, the account lacks the scope, or Graph is unreachable. A
+   * generic failure leaves the first person with a real tenant to bisect them.
+   */
+  it('names a missing consent separately from a missing permission', async () => {
+    const unauthorized = stubGraph({
+      'me/drive': {
+        status: 401,
+        json: { error: { code: 'InvalidAuthenticationToken', message: 'Access token is empty.' } },
+      },
+    });
+    const noToken = await probeGraphAccess(unauthorized.request, 'ONEDRIVE');
+    expect(noToken.ok).toBe(false);
+    expect(noToken.resolution).toMatch(/consent has to be granted at sign-in/i);
+
+    const forbidden = stubGraph({
+      'me/drive': {
+        status: 403,
+        json: { error: { code: 'accessDenied', message: 'Insufficient privileges.' } },
+      },
+    });
+    const denied = await probeGraphAccess(forbidden.request, 'ONEDRIVE');
+    expect(denied.ok).toBe(false);
+    // A different fix: the scope, not the sign-in.
+    expect(denied.resolution).toMatch(/Files\.Read\.All/);
+  });
+
+  it('probes the endpoint the connection actually needs', async () => {
+    // Probing me/drive for a SharePoint list would report Files.Read.All missing when the real gap is
+    // Sites.Read.All.
+    const sites = stubGraph({ 'sites/root': { status: 403, json: { error: { message: 'no' } } } });
+    const result = await probeGraphAccess(sites.request, 'SHAREPOINT');
+    expect(sites.asked).toEqual(['sites/root']);
+    expect(result.resolution).toMatch(/Sites\.Read\.All/);
+
+    const drive = stubGraph({ 'me/drive': { status: 200, json: { name: 'OneDrive' } } });
+    const ok = await probeGraphAccess(drive.request, 'ONEDRIVE');
+    expect(drive.asked).toEqual(['me/drive']);
+    expect(ok.ok).toBe(true);
+    expect(ok.message).toContain('OneDrive');
+  });
+
+  it('distinguishes an account with no OneDrive from a permissions problem', async () => {
+    // A licensing question, not a consent one, and it has a different answer.
+    const none = stubGraph({ 'me/drive': { status: 404, json: {} } });
+    const result = await probeGraphAccess(none.request, 'ONEDRIVE');
+    expect(result.message).toMatch(/no OneDrive/);
+    expect(result.resolution).toMatch(/SharePoint sharing link/);
+  });
+
+  it('reports an unreachable Graph as unreachable', async () => {
+    const broken: GraphRequest = async () => {
+      throw new Error('getaddrinfo ENOTFOUND graph.microsoft.com');
+    };
+    const result = await probeGraphAccess(broken, 'ONEDRIVE');
+    expect(result.ok).toBe(false);
+    expect(result.resolution).toMatch(/outbound access/);
   });
 });

@@ -9,7 +9,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, FolderPlus, Microscope, Truck } from 'lucide-react';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import {
@@ -38,7 +38,21 @@ import {
  * safety gate. The form asks that first and then only asks for what that kind actually needs.
  */
 export function ProjectsPage() {
-  const [creating, setCreating] = useState(false);
+  /**
+   * `?new=1` opens the form on arrival, so a "New project" button elsewhere lands on the form rather
+   * than on the list with the form still to find. It is a URL rather than router state because it
+   * survives a reload and can be linked to.
+   */
+  const [params, setParams] = useSearchParams();
+  const [creating, setCreating] = useState(params.get('new') === '1');
+  const closeForm = () => {
+    setCreating(false);
+    if (params.get('new')) {
+      const next = new URLSearchParams(params);
+      next.delete('new');
+      setParams(next, { replace: true });
+    }
+  };
   const [showArchived, setShowArchived] = useState(false);
   const projects = useQuery({
     queryKey: ['projects', showArchived],
@@ -103,7 +117,7 @@ export function ProjectsPage() {
         />
       )}
 
-      <NewProjectModal open={creating} onClose={() => setCreating(false)} />
+      <NewProjectModal open={creating} onClose={closeForm} />
     </div>
   );
 }

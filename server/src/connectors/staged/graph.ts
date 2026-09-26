@@ -297,6 +297,74 @@ function flatten(value: unknown): string | number | boolean | null {
 }
 
 /**
+ * Checks whether this deployment can read files at all, and says what is missing when it cannot.
+ *
+ * The value here is not the happy path. It is that the first person to point the platform at a real
+ * tenant gets told *which* of the four things went wrong — the feature is off, nobody consented, the
+ * account lacks the scope, or Graph is simply unreachable — rather than a generic failure they then
+ * have to bisect. Those four produce very different fixes and are easy to confuse.
+ */
+export async function probeGraphAccess(
+  request: GraphRequest,
+  kind: 'ONEDRIVE' | 'SHAREPOINT',
+): Promise<{ ok: boolean; message: string; resolution: string | null }> {
+  // `me/drive` needs Files.Read.All; `sites/root` needs Sites.Read.All. Probing the one the
+  // connection actually uses means a missing scope is reported against the feature that needs it.
+  const path = kind === 'SHAREPOINT' ? 'sites/root' : 'me/drive';
+  let response: Awaited<ReturnType<GraphRequest>>;
+  try {
+    response = await request(path);
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Microsoft Graph could not be reached: ${err instanceof Error ? err.message : 'unknown error'}`,
+      resolution: 'Check that this deployment has outbound access to graph.microsoft.com.',
+    };
+  }
+
+  if (response.status === 200) {
+    const body = (response.json ?? {}) as { name?: string; displayName?: string; webUrl?: string };
+    const label = body.displayName ?? body.name ?? body.webUrl ?? 'available';
+    return { ok: true, message: `Reachable — ${label}`, resolution: null };
+  }
+  const error = ((response.json ?? {}) as { error?: { code?: string; message?: string } }).error;
+  const code = error?.code ?? '';
+  const detail = error?.message ?? `Graph returned ${response.status}`;
+
+  if (response.status === 401) {
+    return {
+      ok: false,
+      message: `Not signed in to Microsoft Graph: ${detail}`,
+      resolution:
+        'Sign out and in again so a Graph token is issued. If this deployment was only just switched on, consent has to be granted at sign-in.',
+    };
+  }
+  if (response.status === 403) {
+    return {
+      ok: false,
+      message: `Graph refused the request: ${detail}`,
+      resolution:
+        kind === 'SHAREPOINT'
+          ? 'The signed-in account needs Sites.Read.All consented, and access to the site.'
+          : 'The signed-in account needs Files.Read.All consented.',
+    };
+  }
+  if (response.status === 404 && kind === 'ONEDRIVE') {
+    return {
+      ok: false,
+      message: 'This account has no OneDrive.',
+      resolution:
+        'Use a SharePoint sharing link or a drives/{drive-id} path instead, or sign in with an account that has OneDrive.',
+    };
+  }
+  return {
+    ok: false,
+    message: `${code ? `${code}: ` : ''}${detail}`,
+    resolution: 'Check the Microsoft Graph permissions granted to this application.',
+  };
+}
+
+/**
  * The live Graph call.
  *
  * Deliberately the only thing here that talks to the network, and deliberately thin: a token, a URL

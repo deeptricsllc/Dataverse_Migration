@@ -49,7 +49,7 @@ export function DashboardPage() {
             variant="primary"
             icon={<FolderPlus className="h-4 w-4" />}
             data-testid="dashboard-new-project"
-            onClick={() => navigate('/projects')}
+            onClick={() => navigate('/projects?new=1')}
           >
             New project
           </Button>
@@ -71,7 +71,7 @@ export function DashboardPage() {
           action={
             <Button
               variant="primary"
-              onClick={() => navigate(d.environments.total === 0 ? '/environments' : '/projects')}
+              onClick={() => navigate(d.environments.total === 0 ? '/environments' : '/projects?new=1')}
             >
               {d.environments.total === 0 ? 'Add a connection' : 'New project'}
             </Button>
@@ -386,7 +386,7 @@ export function DashboardPage() {
                   variant="primary"
                   size="sm"
                   icon={<Truck className="h-3.5 w-3.5" />}
-                  onClick={() => navigate('/projects')}
+                  onClick={() => navigate('/projects?new=1')}
                 >
                   New migration project
                 </Button>

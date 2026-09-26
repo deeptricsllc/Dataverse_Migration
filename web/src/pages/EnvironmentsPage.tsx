@@ -408,6 +408,9 @@ export function EnvironmentsPage() {
           // Dataverse without the Dataverse API is unusable; a SQL connection always is.
           const usable = env.connectionType !== 'DATAVERSE' || env.dataverseAvailable;
           const staged = isStagedConnection(env.connectionType);
+          // An upload has nothing to reach; OneDrive and SharePoint do, so those keep the test that
+          // tells someone which of consent, scope or reachability is the problem.
+          const testable = !staged || env.connectionType !== 'FILE';
           // A staged source has no settings to edit — it has data to import, which is its own card.
           const editable = env.connectionType !== 'DATAVERSE' && !staged;
           const TypeIcon = TYPE_ICONS[env.connectionType];
@@ -480,7 +483,7 @@ export function EnvironmentsPage() {
                   </p>
                 )}
                 <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                  {!staged && (
+                  {testable && (
                     <Button
                       size="sm"
                       icon={<PlugZap className="h-3.5 w-3.5" />}

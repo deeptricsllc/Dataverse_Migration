@@ -13,6 +13,7 @@ import type { AppDb } from '../../db/client';
 import { stagedRows, stagedTables } from '../../db/schema';
 import { DataverseError } from '../../dataverse/errors';
 import { unsupportedOperation } from '../errors';
+import { probeGraphAccess, type GraphRequest } from './graph';
 import { newerThanWatermark, STAGED_CAPABILITIES } from '../types';
 import type {
   ConnectionTestResult,
@@ -45,6 +46,11 @@ export class StagedConnector implements MigrationConnector {
     private readonly environmentId: string,
     private readonly db: AppDb,
     private readonly logger: Logger,
+    /**
+     * Reaches Microsoft Graph, for the kinds that fetch from it. Absent for an upload, which has
+     * nothing to reach, and absent when reading from OneDrive is switched off.
+     */
+    private readonly graph?: () => Promise<GraphRequest>,
   ) {}
 
   private table(logicalName: string) {
@@ -61,21 +67,34 @@ export class StagedConnector implements MigrationConnector {
       .from(stagedTables)
       .where(eq(stagedTables.environmentId, this.environmentId));
     const rows = imported.reduce((n, t) => n + t.rowCount, 0);
+    // An upload has nothing to reach; OneDrive and SharePoint very much do, and saying otherwise
+    // would leave the one real failure mode of those kinds untested by the one button meant to test it.
+    const reach = this.provider === 'file' ? null : await this.probe();
     return {
-      ok: imported.length > 0,
+      ok: imported.length > 0 && reach?.ok !== false,
       summary:
-        imported.length > 0
-          ? `${imported.length} table(s), ${rows.toLocaleString()} row(s) imported`
-          : 'Nothing imported yet',
+        reach && !reach.ok
+          ? reach.message
+          : imported.length > 0
+            ? `${imported.length} table(s), ${rows.toLocaleString()} row(s) imported`
+            : 'Nothing imported yet',
       checks: [
-        {
-          key: 'network',
-          label: 'Source available',
-          status: 'PASS',
-          // There is nothing to reach: the rows are already here. Saying otherwise would invite
-          // someone to debug a network problem that cannot exist.
-          message: 'Imported data is stored with the connection; nothing is fetched to read it',
-        },
+        reach
+          ? {
+              key: 'network',
+              label: 'Microsoft Graph reachable',
+              status: reach.ok ? ('PASS' as const) : ('FAIL' as const),
+              message: reach.message,
+              resolution: reach.resolution,
+            }
+          : {
+              key: 'network',
+              label: 'Source available',
+              status: 'PASS' as const,
+              // There is nothing to reach: the rows are already here. Saying otherwise would invite
+              // someone to debug a network problem that cannot exist.
+              message: 'Imported data is stored with the connection; nothing is fetched to read it',
+            },
         {
           key: 'read',
           label: 'Data imported',
@@ -94,6 +113,31 @@ export class StagedConnector implements MigrationConnector {
         },
       ],
     };
+  }
+
+  /** Whether this deployment can reach Graph at all, and what is missing when it cannot. */
+  private async probe(): Promise<{ ok: boolean; message: string; resolution: string | null }> {
+    if (!this.graph) {
+      return {
+        ok: false,
+        message: 'Reading from OneDrive and SharePoint is switched off for this deployment.',
+        resolution:
+          'Set MICROSOFT_FILES_ENABLED and sign in with Microsoft. The files are read with your own account, so consent is granted at sign-in.',
+      };
+    }
+    try {
+      return await probeGraphAccess(
+        await this.graph(),
+        this.provider === 'sharepoint' ? 'SHAREPOINT' : 'ONEDRIVE',
+      );
+    } catch (err) {
+      this.logger.warn({ err }, 'Graph probe failed');
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Microsoft Graph could not be reached.',
+        resolution: 'Sign out and in again so a Graph token is issued for your account.',
+      };
+    }
   }
 
   async listTables(): Promise<TableSummary[]> {
