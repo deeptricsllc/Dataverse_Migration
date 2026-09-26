@@ -126,20 +126,30 @@ export function schemaFilter<T extends { schemaName: string }>(
 }
 
 /**
- * Rewrites `@name` placeholders as the positional `$1…$n` a PostgreSQL driver expects.
+ * Rewrites `@name` placeholders as the positional form a driver expects.
  *
  * Every SQL string in these connectors is written with named placeholders, because that is what
- * makes them readable and what stops a parameter being bound to the wrong slot. PostgreSQL has no
- * named parameters, so the translation happens once, here, rather than by writing every query twice.
- * A name used more than once reuses its position.
+ * makes them readable and what stops a parameter being bound to the wrong slot. Neither PostgreSQL
+ * nor MySQL has named parameters, so the translation happens once, here, rather than by writing
+ * every query twice.
+ *
+ * `style` differs in more than appearance. PostgreSQL numbers its placeholders, so a name used twice
+ * reuses one position and is bound once. MySQL's `?` are anonymous, so the same name used twice has
+ * to be bound twice, in order. Getting that backwards silently shifts every later parameter.
  */
 export function toPositional(
   text: string,
   params: Record<string, FieldValue>,
+  style: 'numbered' | 'question' = 'numbered',
 ): { text: string; values: (string | number | boolean | Date | null)[] } {
   const order: string[] = [];
   // Word-boundary-terminated so `@id1` is never matched as `@id` followed by a stray `1`.
   const rewritten = text.replace(/@([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
+    if (style === 'question') {
+      // Anonymous placeholders: every occurrence is its own parameter.
+      order.push(name);
+      return '?';
+    }
     let at = order.indexOf(name);
     if (at < 0) {
       order.push(name);

@@ -18,6 +18,7 @@ import type { DiscoveredEnvironment } from './types';
 import { WebApiConnection } from './web-api-connection';
 import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
+import { MysqlConnector } from '../connectors/sql/mysql-connector';
 import { PostgresConnector } from '../connectors/sql/postgres-connector';
 import { StagedConnector, stagedProvider } from '../connectors/staged/staged-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
@@ -119,6 +120,14 @@ export class ConnectionFactory {
         readOnly: this.config.REAL_TENANT_READ_ONLY,
       });
     }
+    if (env.connectionType === 'MYSQL') {
+      return new MysqlConnector({
+        config: env.sqlConfig,
+        password: await this.loadSecret(env.id),
+        logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
     return new SqlConnector(
       {
         config: env.sqlConfig,
@@ -176,6 +185,14 @@ export class ConnectionFactory {
   ): MigrationConnector {
     if (connectionType === 'POSTGRES') {
       return new PostgresConnector({
+        config,
+        password,
+        logger: this.logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
+    if (connectionType === 'MYSQL') {
+      return new MysqlConnector({
         config,
         password,
         logger: this.logger,
