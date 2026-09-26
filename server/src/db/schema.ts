@@ -1053,6 +1053,15 @@ export const migrationSchedules = pgTable(
     lastWatermark: text('last_watermark'),
     confirmSourceName: text('confirm_source_name').notNull(),
     confirmTargetName: text('confirm_target_name').notNull(),
+    /**
+     * The warnings a person had seen when they last confirmed this schedule, as issue codes.
+     * A firing whose plan has warnings outside this set is refused: those are warnings nobody
+     * reviewed, and a run with nobody watching is the wrong moment to decide they are acceptable.
+     */
+    acknowledgedWarnings: jsonb('acknowledged_warnings')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     nextRunAt: ts('next_run_at'),
     lastRunAt: ts('last_run_at'),
     lastRunId: uuid('last_run_id'),

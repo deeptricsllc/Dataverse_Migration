@@ -2,6 +2,7 @@ import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   SCHEDULE_MODES,
+  type PlanIssue,
   type MigrationScheduleDto,
   type RunTrigger,
   type ScheduleMode,
@@ -22,6 +23,25 @@ import type { MigrationRunService } from './migration-run-service';
  * errors and, against a real target, a queue of identical partial writes. Pausing makes someone look.
  */
 const MAX_CONSECUTIVE_FAILURES = 5;
+
+/**
+ * The distinct warning codes a plan currently raises.
+ *
+ * Codes, not counts: a schedule confirmed while one kind of warning was present should keep running
+ * as that warning comes and goes with the data, and should stop when a *different* kind appears.
+ * Counting would do neither — it would block on noise and wave through a genuinely new problem that
+ * happened to replace an old one.
+ */
+const warningCodes = (plan: { issues: PlanIssue[] }): string[] =>
+  [
+    ...new Set(plan.issues.filter((i) => i.severity === 'WARNING' && !i.acknowledged).map((i) => i.code)),
+  ].sort();
+
+/** Warning codes the plan has that this schedule was never confirmed against. */
+const unreviewed = (current: string[], acknowledged: string[]): string[] => {
+  const seen = new Set(acknowledged);
+  return current.filter((code) => !seen.has(code));
+};
 
 /** The default watermark column for an incremental run, per provider family. */
 const DEFAULT_WATERMARK = 'modifiedon';
@@ -57,12 +77,19 @@ export class ScheduleService {
       .leftJoin(users, eq(users.id, migrationSchedules.createdByUserId))
       .where(eq(migrationSchedules.planId, planId))
       .orderBy(desc(migrationSchedules.createdAt));
-    return rows.map((r) => toDto(r.schedule, plan.name, r.user ?? null));
+    if (rows.length === 0) return [];
+    const current = warningCodes(await this.runs.planForSchedule(ctx, planId));
+    return rows.map((r) => toDto(r.schedule, plan.name, r.user ?? null, current));
   }
 
   async get(ctx: Pick<RequestContext, 'organizationId'>, scheduleId: string): Promise<MigrationScheduleDto> {
     const { schedule, planName, createdBy } = await this.row(ctx, scheduleId);
-    return toDto(schedule, planName, createdBy);
+    // The plan is loaded so the screen can say whether anything new has appeared since.
+    const current = await this.runs
+      .planForSchedule(ctx as RequestContext, schedule.planId)
+      .then(warningCodes)
+      .catch(() => schedule.acknowledgedWarnings);
+    return toDto(schedule, planName, createdBy, current);
   }
 
   async create(
@@ -110,6 +137,8 @@ export class ScheduleService {
         watermarkField,
         confirmSourceName: plan.sourceEnvironment.displayName,
         confirmTargetName: plan.targetEnvironment.displayName,
+        // What the person creating this schedule could see. Anything new later stops it.
+        acknowledgedWarnings: warningCodes(plan),
         nextRunAt: input.enabled === false ? null : nextCronTime(cron, new Date(), timeZone),
         createdByUserId: ctx.userId,
       })
@@ -139,6 +168,8 @@ export class ScheduleService {
       enabled?: boolean;
       mode?: ScheduleMode;
       watermarkField?: string | null;
+      /** Re-confirms the warnings the plan has now, so the schedule may fire again. */
+      acknowledgeWarnings?: boolean;
     },
   ): Promise<MigrationScheduleDto> {
     const { schedule } = await this.row(ctx, scheduleId);
@@ -164,6 +195,11 @@ export class ScheduleService {
           mode === 'INCREMENTAL'
             ? (patch.watermarkField?.trim() ?? schedule.watermarkField ?? DEFAULT_WATERMARK)
             : null,
+        // Re-confirming is a separate, deliberate act: enabling a schedule is not the same as
+        // having read the warnings that appeared while it was off.
+        ...(patch.acknowledgeWarnings
+          ? { acknowledgedWarnings: warningCodes(await this.runs.planForSchedule(ctx, schedule.planId)) }
+          : {}),
         // Re-enabling clears the pause and the failure streak: someone has looked at it.
         pausedReason: enabled ? null : schedule.pausedReason,
         consecutiveFailures: enabled && !schedule.enabled ? 0 : schedule.consecutiveFailures,
@@ -305,6 +341,16 @@ export class ScheduleService {
       } as RequestContext);
 
     try {
+      // Blockers are caught by `start`. Warnings need this extra step, because `start` only knows
+      // "acknowledged or not" and a schedule needs "acknowledged *these*".
+      const plan = await this.runs.planForSchedule(runCtx, schedule.planId);
+      const appeared = unreviewed(warningCodes(plan), schedule.acknowledgedWarnings);
+      if (appeared.length > 0) {
+        throw badRequest(
+          `The plan has ${appeared.length} warning(s) nobody has reviewed (${appeared.join(', ')}). Open the schedule, check them, and confirm to let it run again.`,
+        );
+      }
+
       const run = await this.runs.start(
         runCtx,
         schedule.planId,
@@ -313,8 +359,9 @@ export class ScheduleService {
           // somewhere else these will not match, and the run is refused rather than misdirected.
           confirmSourceName: schedule.confirmSourceName,
           confirmTargetName: schedule.confirmTargetName,
-          // Warnings were reviewed when the schedule was created. Blockers and data-loss
-          // acknowledgement are NOT waived: those still stop a scheduled run.
+          // The warning codes were checked against this schedule's own acknowledgement just above,
+          // so the generic gate has nothing left to add. Blockers and data-loss acknowledgement are
+          // NOT waived: those still stop a scheduled run.
           acknowledgeWarnings: true,
         },
         {
@@ -432,6 +479,7 @@ const toDto = (
   row: typeof migrationSchedules.$inferSelect,
   planName: string,
   createdBy: string | null,
+  currentWarnings: string[],
 ): MigrationScheduleDto => ({
   id: row.id,
   planId: row.planId,
@@ -444,6 +492,8 @@ const toDto = (
   mode: row.mode,
   watermarkField: row.watermarkField,
   lastWatermark: row.lastWatermark,
+  acknowledgedWarnings: row.acknowledgedWarnings,
+  unreviewedWarnings: unreviewed(currentWarnings, row.acknowledgedWarnings),
   nextRunAt: row.nextRunAt?.toISOString() ?? null,
   lastRunAt: row.lastRunAt?.toISOString() ?? null,
   lastRunId: row.lastRunId,

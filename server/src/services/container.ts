@@ -106,7 +106,15 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
   );
   const dataQuality = new DataQualityService(db, profiling, environments, metadata, connections, logger);
-  const mappingWorkbooks = new MappingWorkbookService(db, projectsSvc, planning, analysis, audit, logger);
+  const mappingWorkbooks = new MappingWorkbookService(
+    db,
+    projectsSvc,
+    planning,
+    transformations,
+    analysis,
+    audit,
+    logger,
+  );
   const schedules = new ScheduleService(db, runs, audit, logger);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(

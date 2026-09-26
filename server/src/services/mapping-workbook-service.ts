@@ -14,11 +14,26 @@ import {
 import type { AppDb } from '../db/client';
 import { analysisTables, fieldMappings, migrationPlanEntities } from '../db/schema';
 import { badRequest } from '../lib/errors';
-import { readXlsx, rowsByHeader, writeXlsx, type XlsxSheet, type XlsxValue } from '../lib/xlsx';
+import {
+  readXlsx,
+  rowsByHeader,
+  writeXlsx,
+  type XlsxReadSheet,
+  type XlsxSheet,
+  type XlsxValue,
+} from '../lib/xlsx';
+import {
+  pipelineKey,
+  readTransformationSheets,
+  summarizeRules,
+  transformationSheets,
+  type FieldPipeline,
+} from './transformation-sheets';
 import type { AnalysisService } from './analysis-service';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { PlanningService } from './planning-service';
+import type { TransformationService } from './transformation/transformation-service';
 import type { ProjectService } from './project-service';
 
 /** A returned workbook is small; anything this size is not a mapping sheet. */
@@ -39,6 +54,7 @@ export class MappingWorkbookService {
     private readonly db: AppDb,
     private readonly projectsSvc: ProjectService,
     private readonly planning: PlanningService,
+    private readonly transformations: TransformationService,
     private readonly analysis: AnalysisService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
@@ -79,6 +95,7 @@ export class MappingWorkbookService {
       }),
       tablesSheet(run),
       fieldSheet(fieldRows, false),
+      ...transformationSheets([]),
       findingsSheet(await this.analysis.findings(ctx, analysisRunId)),
     ]);
 
@@ -125,6 +142,7 @@ export class MappingWorkbookService {
     const recordCounts = new Map((analysis?.tables ?? []).map((t) => [t.logicalName, t.recordCount]));
 
     const fieldRows: XlsxValue[][] = [];
+    const pipelines: FieldPipeline[] = [];
     for (const m of mappings) {
       const entity = byEntity.get(m.planEntityId);
       if (!entity) continue;
@@ -138,9 +156,16 @@ export class MappingWorkbookService {
             [entity.logicalName, m.sourceField, m.sourceType, '', '', records, '', '', '', '']),
         entity.targetLogicalName ?? '',
         m.status === 'IGNORED' ? IGNORE_TOKEN : (m.targetField ?? ''),
-        describeRules(m.transformations ?? []),
+        summarizeRules(m.transformations ?? []),
         m.reason ?? '',
       ]);
+      if (m.transformations?.length) {
+        pipelines.push({
+          table: entity.logicalName,
+          field: m.sourceField,
+          rules: m.transformations,
+        });
+      }
     }
 
     const book = writeXlsx([
@@ -160,6 +185,7 @@ export class MappingWorkbookService {
       }),
       planTablesSheet(plan, analysis),
       fieldSheet(fieldRows, true),
+      ...transformationSheets(pipelines),
       findingsSheet(analysis ? await this.analysis.findings(ctx, analysis.id) : []),
     ]);
 
@@ -198,7 +224,8 @@ export class MappingWorkbookService {
     if (file.content.length > MAX_IMPORT_BYTES) {
       throw badRequest(`That file is larger than the ${Math.round(MAX_IMPORT_BYTES / 1024 / 1024)} MB limit`);
     }
-    const rows = parseWorkbook(file.content, file.filename);
+    const parsed = parseWorkbook(file.content, file.filename);
+    const rows = parsed.mappings;
     if (rows.length > MAX_IMPORT_ROWS) {
       throw badRequest(`The workbook has ${rows.length} rows; the limit is ${MAX_IMPORT_ROWS}`);
     }
@@ -226,8 +253,19 @@ export class MappingWorkbookService {
       unmatched: [],
       changes: [],
       rejected: [],
+      transformationsChanged: 0,
       applied: opts.apply === true,
     };
+    // A pipeline the sheets describe but this plan cannot hold is reported before anything is
+    // applied, so a rejected transformation never looks like a silently ignored one.
+    for (const problem of parsed.transformations.problems) {
+      preview.rejected.push({
+        row: problem.row,
+        table: problem.table,
+        field: problem.field,
+        reason: `Transformations sheet: ${problem.reason}`,
+      });
+    }
 
     for (const row of rows) {
       const entity = entityByName.get(row.table.toLowerCase());
@@ -287,23 +325,38 @@ export class MappingWorkbookService {
         });
         continue;
       }
+    }
 
-      // Transformations, only where the sheet's text is unambiguous. Anything else is reported
-      // rather than guessed at: a wrong transformation silently changes data.
-      if (row.transformation.trim()) {
-        const parsed = parseRules(row.transformation);
-        if (!parsed.ok) {
+    // Transformations come from their own sheets, in full. Applied after the mappings, because a
+    // pipeline belongs to a column that has somewhere to go.
+    if (parsed.transformations.present) {
+      for (const mapping of mappings) {
+        const entity = entities.find((e) => e.id === mapping.planEntityId);
+        if (!entity) continue;
+        const wanted = parsed.transformations.byField.get(
+          pipelineKey(entity.logicalName, mapping.sourceField),
+        );
+        // A column the sheet does not mention is left alone. Absence is not a decision: somebody
+        // hand-writing a sheet to add one rule must not silently wipe every other pipeline. Clearing
+        // one is said explicitly, with a NONE row.
+        if (wanted === undefined) continue;
+        const current = mapping.transformations ?? [];
+        const next = wanted;
+        if (JSON.stringify(current) === JSON.stringify(next)) continue;
+        preview.transformationsChanged++;
+        if (!opts.apply) continue;
+        try {
+          // The same path the transformation editor uses, so the rules are validated and audited
+          // identically however they arrived.
+          await this.transformations.updatePipeline(ctx, planId, mapping.id, next);
+        } catch (err) {
+          preview.transformationsChanged--;
           preview.rejected.push({
-            row: row.line,
+            row: 0,
             table: entity.logicalName,
             field: mapping.sourceField,
-            reason: `${parsed.reason} — set this one in the transformation editor instead`,
+            reason: err instanceof Error ? err.message : 'The transformation was refused',
           });
-        } else if (describeRules(mapping.transformations ?? []) !== describeRules(parsed.rules)) {
-          await this.db
-            .update(fieldMappings)
-            .set({ transformations: parsed.rules, updatedByUserId: ctx.userId })
-            .where(eq(fieldMappings.id, mapping.id));
         }
       }
     }
@@ -321,6 +374,7 @@ export class MappingWorkbookService {
           filename: file.filename ?? null,
           matched: preview.matched,
           changed: preview.changes.filter((c) => c.action !== 'UNCHANGED').length,
+          transformationsChanged: preview.transformationsChanged,
           rejected: preview.rejected.length,
           unmatched: preview.unmatched.length,
         },
@@ -396,7 +450,9 @@ function overviewSheet(input: {
     notes: [
       'Fill in the Target table and Target field columns on the "Field mapping" sheet, then import this file back into the migration project.',
       `Write ${IGNORE_TOKEN} in Target field for a column that should deliberately not be migrated. Leave it blank to leave the decision open.`,
-      'The Source columns are facts measured from the source. Editing them changes nothing; only the Target and Transformation columns are read back.',
+      'The Source columns are facts measured from the source. Editing them changes nothing.',
+      'Transformations are edited on the "Transformations" sheet (with "Value maps" and "Concat parts" for their list-valued parts). The Transformation column on Field mapping is a read-only summary.',
+      'Nothing is applied until you import the file and confirm what it would change.',
     ],
   };
 }
@@ -475,20 +531,23 @@ function planTablesSheet(
 }
 
 /** The sheet that is read back. Its header labels are the contract. */
+const WIDE_MAPPING_COLUMNS = new Set<string>(['Sample value', 'Notes', 'Transformation (reference)']);
+
 function fieldSheet(rows: XlsxValue[][], hasTargets: boolean): XlsxSheet {
   return {
     name: 'Field mapping',
     columns: MAPPING_SHEET_COLUMNS.map((header) => ({
       header,
-      width: header === 'Sample value' || header === 'Notes' || header === 'Transformation' ? 34 : undefined,
+      // The columns that hold prose need the room; the rest size to their heading.
+      width: WIDE_MAPPING_COLUMNS.has(header) ? 34 : undefined,
     })),
     rows,
     notes: [
       hasTargets
-        ? 'Target table, Target field and Transformation are read back on import. Everything else is reference.'
+        ? 'Target table and Target field are read back on import. Everything else on this sheet is reference.'
         : 'Fill in Target table and Target field. Import this sheet into a migration project to apply them.',
       `Target field: a column name, blank to leave undecided, or ${IGNORE_TOKEN} to exclude the column deliberately.`,
-      'Transformation: rules separated by ">", e.g. TRIM > UPPERCASE > TRUNCATE(160). Leave blank for none.',
+      'Transformation (reference) is a summary only — edit pipelines on the "Transformations" sheet.',
     ],
   };
 }
@@ -564,7 +623,6 @@ interface ImportRow {
   table: string;
   field: string;
   targetField: string;
-  transformation: string;
 }
 
 /**
@@ -574,26 +632,35 @@ interface ImportRow {
  * somebody always sends back a CSV. The sheet is found by its header labels rather than its
  * position, so reordered columns and extra notes above the header keep working.
  */
-export function parseWorkbook(content: Buffer, filename?: string): ImportRow[] {
+export function parseWorkbook(
+  content: Buffer,
+  filename?: string,
+): { mappings: ImportRow[]; transformations: ReturnType<typeof readTransformationSheets> } {
   const looksZip = content.length > 4 && content[0] === 0x50 && content[1] === 0x4b;
-  const rows = looksZip ? fromXlsx(content) : fromCsv(content.toString('utf8'));
-  if (rows === null) {
+  const sheets = looksZip ? readSheets(content) : [{ name: 'csv', rows: csvRows(content) }];
+  const mappings = findMappingRows(sheets);
+  if (mappings === null) {
     throw badRequest(
       `Could not find a sheet with "Source table", "Source field" and "Target field" columns in ${filename ?? 'that file'}. Export the mapping workbook and fill in that sheet.`,
     );
   }
-  return rows;
+  return { mappings, transformations: readTransformationSheets(sheets) };
 }
 
-function fromXlsx(content: Buffer): ImportRow[] | null {
-  let sheets;
+function readSheets(content: Buffer): XlsxReadSheet[] {
   try {
-    sheets = readXlsx(content);
+    return readXlsx(content);
   } catch (err) {
     throw badRequest(
       `That file could not be read as a workbook: ${err instanceof Error ? err.message : 'unknown'}`,
     );
   }
+}
+
+const csvRows = (content: Buffer): (string | number | boolean | null)[][] =>
+  parseCsvRows(stripBom(content.toString('utf8')));
+
+function findMappingRows(sheets: XlsxReadSheet[]): ImportRow[] | null {
   for (const sheet of sheets) {
     const found = rowsByHeader(sheet, ['Source table', 'Source field', 'Target field']);
     if (!found) continue;
@@ -603,7 +670,6 @@ function fromXlsx(content: Buffer): ImportRow[] | null {
       table: r.sourcetable ?? '',
       field: r.sourcefield ?? '',
       targetField: r.targetfield ?? '',
-      transformation: r.transformation ?? '',
     }));
   }
   return null;
@@ -611,20 +677,6 @@ function fromXlsx(content: Buffer): ImportRow[] | null {
 
 /** A CSV saved by Excel starts with a byte-order mark, which is not part of the first header. */
 const stripBom = (text: string) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
-
-function fromCsv(text: string): ImportRow[] | null {
-  const rows = parseCsvRows(stripBom(text));
-  const sheet = { name: 'csv', rows: rows as (string | number | boolean | null)[][] };
-  const found = rowsByHeader(sheet, ['Source table', 'Source field', 'Target field']);
-  if (!found) return null;
-  return found.rows.map((r, i) => ({
-    line: i + 1,
-    table: r.sourcetable ?? '',
-    field: r.sourcefield ?? '',
-    targetField: r.targetfield ?? '',
-    transformation: r.transformation ?? '',
-  }));
-}
 
 /** RFC 4180 enough: quoted fields, doubled quotes inside them, CRLF or LF. */
 export function parseCsvRows(text: string): string[][] {

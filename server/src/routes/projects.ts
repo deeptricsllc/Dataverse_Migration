@@ -330,6 +330,8 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
           .string()
           .regex(/^[A-Za-z0-9_ #$@.]{1,128}$/)
           .nullish(),
+        /** Re-confirms the warnings the plan has now, so a paused schedule may fire again. */
+        acknowledgeWarnings: z.boolean().optional(),
       })
       .parse(req.body ?? {});
     return s.schedules.update(req.ctx, id, body);

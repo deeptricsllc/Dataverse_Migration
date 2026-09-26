@@ -145,7 +145,15 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
     expect(String(res.headers['content-disposition'])).toMatch(/\.xlsx"$/);
 
     const sheets = readXlsx(res.rawPayload);
-    expect(sheets.map((x) => x.name)).toEqual(['Overview', 'Tables', 'Field mapping', 'Findings']);
+    expect(sheets.map((x) => x.name)).toEqual([
+      'Overview',
+      'Tables',
+      'Field mapping',
+      'Transformations',
+      'Value maps',
+      'Concat parts',
+      'Findings',
+    ]);
 
     const mapping = rowsByHeader(sheets[2], ['Source table', 'Source field', 'Target field'])!;
     expect(mapping).not.toBeNull();
@@ -220,27 +228,45 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
     expect(row.targettable).toBe('account');
   });
 
+  /** The mapping sheet a reviewer sends back, plus whatever transformation sheets are given. */
+  const workbook = (mappingRows: (string | number | null)[][], extra: Parameters<typeof writeXlsx>[0] = []) =>
+    writeXlsx([
+      {
+        name: 'Field mapping',
+        columns: [{ header: 'Source table' }, { header: 'Source field' }, { header: 'Target field' }],
+        rows: mappingRows,
+      },
+      ...extra,
+    ]);
+
   it('applies a filled-in workbook, refusing what the mapping screen would refuse', async () => {
     // What a reviewer sends back: two real decisions, one deliberate exclusion, one impossible
     // request, and one row naming a column this plan does not have.
-    const filled = writeXlsx([
-      {
-        name: 'Field mapping',
-        columns: [
-          { header: 'Source table' },
-          { header: 'Source field' },
-          { header: 'Target field' },
-          { header: 'Transformation' },
-        ],
-        rows: [
-          ['dbo.Customer', 'CustomerName', 'name', 'TRIM > TRUNCATE(160)'],
-          ['dbo.Customer', 'CustomerNumber', 'accountnumber', ''],
-          ['dbo.Customer', 'Notes', 'IGNORE', ''],
-          ['dbo.Customer', 'CustomerName', 'no_such_column_here', ''],
-          ['dbo.Customer', 'NotAColumn', 'name', ''],
-        ],
-      },
-    ]);
+    const filled = workbook(
+      [
+        ['dbo.Customer', 'CustomerName', 'name'],
+        ['dbo.Customer', 'CustomerNumber', 'accountnumber'],
+        ['dbo.Customer', 'Notes', 'IGNORE'],
+        ['dbo.Customer', 'CustomerName', 'no_such_column_here'],
+        ['dbo.Customer', 'NotAColumn', 'name'],
+      ],
+      [
+        {
+          name: 'Transformations',
+          columns: [
+            { header: 'Source table' },
+            { header: 'Source field' },
+            { header: 'Step' },
+            { header: 'Rule' },
+            { header: 'Length' },
+          ],
+          rows: [
+            ['dbo.Customer', 'CustomerName', 1, 'TRIM', ''],
+            ['dbo.Customer', 'CustomerName', 2, 'TRUNCATE', 160],
+          ],
+        },
+      ],
+    );
     const payload = { filename: 'mapping.xlsx', contentBase64: filled.toString('base64') };
 
     // A dry run changes nothing: a sheet arrives by email, and what it does is seen first.
@@ -254,6 +280,8 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
       expect.objectContaining({ field: 'NotAColumn', reason: 'That column is not in this plan' }),
     ]);
     expect(preview.changes.some((c) => c.field === 'CustomerName' && c.to === 'name')).toBe(true);
+    // The transformation sheets are counted too, and equally not applied yet.
+    expect(preview.transformationsChanged).toBe(1);
     const beforeApply = await api.get<{ mappings: { sourceField: string; targetField: string | null }[] }>(
       `/api/plans/${plan.id}/entities/${plan.entities[0].id}/mappings`,
     );
@@ -284,45 +312,194 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
     expect(lossy).toEqual([expect.objectContaining({ field: 'CustomerName', kind: 'TRUNCATE' })]);
   });
 
-  it('reports a transformation the sheet cannot express instead of guessing at it', async () => {
-    const filled = writeXlsx([
-      {
-        name: 'Field mapping',
-        columns: [
-          { header: 'Source table' },
-          { header: 'Source field' },
-          { header: 'Target field' },
-          { header: 'Transformation' },
-        ],
-        rows: [['dbo.Customer', 'Email', 'emailaddress1', 'TRIM > VALUE_MAP(...)']],
-      },
-    ]);
+  it('round-trips a value map, a concatenation and a conditional through the sheets', async () => {
+    // The rules a business analyst most needs to edit in a spreadsheet are exactly the ones a single
+    // text cell could not express.
+    const filled = workbook(
+      [
+        ['dbo.Customer', 'Email', 'emailaddress1'],
+        ['dbo.Customer', 'StatusCode', 'IGNORE'],
+      ],
+      [
+        {
+          name: 'Transformations',
+          columns: [
+            { header: 'Source table' },
+            { header: 'Source field' },
+            { header: 'Step' },
+            { header: 'Rule' },
+            { header: 'On unmapped' },
+            { header: 'Separator' },
+            { header: 'Condition field' },
+            { header: 'Condition operator' },
+            { header: 'Condition value' },
+            { header: 'Action' },
+            { header: 'Value' },
+            { header: 'Inside step' },
+          ],
+          rows: [
+            ['dbo.Customer', 'Email', 1, 'TRIM', '', '', '', '', '', '', '', ''],
+            ['dbo.Customer', 'Email', 2, 'LOWERCASE', '', '', '', '', '', '', '', ''],
+            ['dbo.Customer', 'Email', 3, 'VALUE_MAP', 'IGNORE', '', '', '', '', '', '', ''],
+            ['dbo.Customer', 'Email', 4, 'CONCAT', '', '-', '', '', '', '', '', ''],
+            ['dbo.Customer', 'Email', 5, 'IF_THEN', '', '', 'Email', 'IS_BLANK', '', 'APPLY', '', ''],
+            ['dbo.Customer', 'Email', 6, 'CONSTANT', '', '', '', '', '', '', 'unknown@example.com', 5],
+          ],
+        },
+        {
+          name: 'Value maps',
+          columns: [
+            { header: 'Source table' },
+            { header: 'Source field' },
+            { header: 'Step' },
+            { header: 'From' },
+            { header: 'To' },
+          ],
+          rows: [
+            ['dbo.Customer', 'Email', 3, 'none@example.com', ''],
+            ['dbo.Customer', 'Email', 3, 'OLD@EXAMPLE.COM', 'new@example.com'],
+          ],
+        },
+        {
+          name: 'Concat parts',
+          columns: [
+            { header: 'Source table' },
+            { header: 'Source field' },
+            { header: 'Step' },
+            { header: 'Order' },
+            { header: 'Field' },
+            { header: 'Literal' },
+          ],
+          rows: [
+            ['dbo.Customer', 'Email', 4, 2, '', 'example.com'],
+            ['dbo.Customer', 'Email', 4, 1, 'Email', ''],
+          ],
+        },
+      ],
+    );
     const result = await api.post<MappingImportPreviewDto>(`/api/plans/${plan.id}/mapping-workbook`, {
       contentBase64: filled.toString('base64'),
       apply: true,
     });
-    expect(result.rejected[0].reason).toMatch(/VALUE_MAP is configured in the app/);
-    // The mapping itself still applied; only the transformation was held back.
-    const after = await api.get<{ mappings: { sourceField: string; targetField: string | null }[] }>(
+    expect(result.rejected).toEqual([]);
+    expect(result.transformationsChanged).toBeGreaterThan(0);
+
+    const after = await api.get<{
+      mappings: { sourceField: string; targetField: string | null; transformations: unknown }[];
+    }>(`/api/plans/${plan.id}/entities/${plan.entities[0].id}/mappings`);
+    const email = after.mappings.find((m) => m.sourceField === 'Email')!;
+    expect(email.targetField).toBe('emailaddress1');
+    expect(email.transformations).toEqual([
+      { kind: 'TRIM' },
+      { kind: 'LOWERCASE' },
+      {
+        kind: 'VALUE_MAP',
+        onUnmapped: 'IGNORE',
+        // An empty To means "map this value onto nothing", which is not the same as leaving it out.
+        map: [
+          { from: 'none@example.com', to: null },
+          { from: 'OLD@EXAMPLE.COM', to: 'new@example.com' },
+        ],
+      },
+      {
+        kind: 'CONCAT',
+        separator: '-',
+        // Order decides the sequence, not the row position: these arrived reversed.
+        parts: [
+          { field: 'Email', literal: null },
+          { field: null, literal: 'example.com' },
+        ],
+      },
+      {
+        kind: 'IF_THEN',
+        condition: { field: 'Email', operator: 'IS_BLANK' },
+        action: 'APPLY',
+        // The nested rule pointed at step 5 through "Inside step".
+        then: [{ kind: 'CONSTANT', value: 'unknown@example.com' }],
+      },
+    ]);
+  });
+
+  it('exports what it imported, so a workbook survives a second lap', async () => {
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/plans/${plan.id}/mapping.xlsx`,
+      headers: { cookie: api.cookie },
+    });
+    const sheets = readXlsx(res.rawPayload);
+    const rules = rowsByHeader(
+      sheets.find((x) => x.name === 'Transformations')!,
+      ['Source table', 'Source field', 'Rule'],
+    )!;
+    const emailRules = rules.rows.filter((r) => r.sourcefield === 'Email').map((r) => r.rule);
+    expect(emailRules).toEqual(['TRIM', 'LOWERCASE', 'VALUE_MAP', 'CONCAT', 'IF_THEN', 'CONSTANT']);
+    // The nested rule still points back at the conditional it belongs to.
+    const nested = rules.rows.find((r) => r.rule === 'CONSTANT')!;
+    const conditional = rules.rows.find((r) => r.rule === 'IF_THEN')!;
+    expect(nested.insidestep).toBe(conditional.step);
+
+    const maps = rowsByHeader(
+      sheets.find((x) => x.name === 'Value maps')!,
+      ['From', 'To'],
+    )!;
+    expect(maps.rows.map((r) => r.from)).toContain('OLD@EXAMPLE.COM');
+    const parts = rowsByHeader(
+      sheets.find((x) => x.name === 'Concat parts')!,
+      ['Order'],
+    )!;
+    expect(parts.rows.map((r) => r.literal)).toContain('example.com');
+
+    // And the reference column on Field mapping summarizes rather than pretending to be editable.
+    const mapping = rowsByHeader(
+      sheets.find((x) => x.name === 'Field mapping')!,
+      ['Source field', 'Transformation (reference)'],
+    )!;
+    expect(mapping.rows.find((r) => r.sourcefield === 'Email')!.transformationreference).toContain(
+      'VALUE_MAP(2 value(s))',
+    );
+  });
+
+  it('refuses a pipeline the API itself would refuse, naming the column', async () => {
+    const filled = workbook(
+      [['dbo.Customer', 'Phone', 'telephone1']],
+      [
+        {
+          name: 'Transformations',
+          columns: [
+            { header: 'Source table' },
+            { header: 'Source field' },
+            { header: 'Step' },
+            { header: 'Rule' },
+          ],
+          rows: [['dbo.Customer', 'Phone', 1, 'NOT_A_REAL_RULE']],
+        },
+      ],
+    );
+    const result = await api.post<MappingImportPreviewDto>(`/api/plans/${plan.id}/mapping-workbook`, {
+      contentBase64: filled.toString('base64'),
+      apply: true,
+    });
+    // Caught by the same zod schema the transformation editor posts through.
+    expect(result.rejected.some((r) => r.field === 'Phone')).toBe(true);
+    expect(result.transformationsChanged).toBe(0);
+    // And the pipelines this sheet says nothing about are untouched, not wiped.
+    const after = await api.get<{ mappings: { sourceField: string; transformations: unknown[] }[] }>(
       `/api/plans/${plan.id}/entities/${plan.entities[0].id}/mappings`,
     );
-    expect(after.mappings.find((m) => m.sourceField === 'Email')!.targetField).toBe('emailaddress1');
+    expect(after.mappings.find((m) => m.sourceField === 'Email')!.transformations).toHaveLength(5);
   });
 
   /** Excel writes a byte-order mark at the front of a CSV; the importer has to see past it. */
   const BOM = String.fromCharCode(0xfeff);
 
   it('accepts the CSV somebody inevitably sends back instead of the workbook', async () => {
-    const csv = [
-      'Source table,Source field,Target field,Transformation',
-      'dbo.Customer,Phone,telephone1,TRIM',
-    ].join('\r\n');
+    const csv = ['Source table,Source field,Target field', 'dbo.Customer,Phone,telephone1'].join('\r\n');
     const preview = await api.post<MappingImportPreviewDto>(`/api/plans/${plan.id}/mapping-workbook`, {
       filename: 'mapping.csv',
       contentBase64: Buffer.from(BOM + csv, 'utf8').toString('base64'),
     });
     expect(preview.matched).toBe(1);
-    expect(preview.changes[0]).toMatchObject({ field: 'Phone', to: 'telephone1', action: 'MAP' });
+    expect(preview.changes[0]).toMatchObject({ field: 'Phone', to: 'telephone1' });
   });
 
   it('refuses a file that is not a mapping sheet at all', async () => {

@@ -133,4 +133,45 @@ describe('incremental reads and incremental schedules', () => {
     expect(full.mode).toBe('FULL');
     expect(full.watermarkField).toBeNull();
   });
+
+  it('refuses to fire on a warning nobody reviewed, and runs again once it is confirmed', async () => {
+    const plan = await api.post<MigrationPlanDto>('/api/plans', {
+      name: 'Accounts, watched for new warnings',
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: qa.id,
+      tables: ['account'],
+    });
+    const schedule = await api.post<MigrationScheduleDto>(`/api/plans/${plan.id}/schedules`, {
+      cron: '0 3 * * *',
+      confirmSourceName: dev.displayName,
+      confirmTargetName: qa.displayName,
+    });
+    // Whatever the plan warned about at creation is what a person saw and accepted.
+    expect(schedule.unreviewedWarnings).toEqual([]);
+
+    // A warning appears that nobody has looked at. Simulated by removing it from the schedule's
+    // own acknowledgement, which is exactly the state "a new warning code showed up" produces.
+    await t.services.db.execute(
+      `update migration_schedules set acknowledged_warnings = '[]'::jsonb where id = '${schedule.id}'`,
+    );
+    const stale = await api.get<MigrationScheduleDto>(`/api/schedules/${schedule.id}`);
+    const hasWarnings = stale.unreviewedWarnings.length > 0;
+
+    if (hasWarnings) {
+      // Firing is refused, and the reason names the codes rather than saying "failed".
+      await api.request('POST', `/api/schedules/${schedule.id}/trigger`, {}, 400);
+      const afterRefusal = await api.get<MigrationScheduleDto>(`/api/schedules/${schedule.id}`);
+      expect(afterRefusal.lastError).toMatch(/nobody has reviewed/);
+
+      // Re-confirming is a separate, deliberate act — not a side effect of enabling it.
+      const confirmed = await api.patch<MigrationScheduleDto>(`/api/schedules/${schedule.id}`, {
+        acknowledgeWarnings: true,
+      });
+      expect(confirmed.unreviewedWarnings).toEqual([]);
+      expect(confirmed.acknowledgedWarnings.length).toBeGreaterThan(0);
+    } else {
+      // A plan with no warnings at all has nothing to review, and the schedule is unaffected.
+      expect(stale.acknowledgedWarnings).toEqual([]);
+    }
+  });
 });

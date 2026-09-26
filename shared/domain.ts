@@ -1579,7 +1579,8 @@ export const MAPPING_SHEET_COLUMNS = [
   'Sample value',
   'Target table',
   'Target field',
-  'Transformation',
+  /** Read-only: a one-line rendering. Pipelines are edited on the Transformations sheet. */
+  'Transformation (reference)',
   'Notes',
 ] as const;
 
@@ -1590,8 +1591,10 @@ export interface MappingImportPreviewDto {
   /** Rows naming a table or field the plan does not contain. */
   unmatched: { row: number; table: string; field: string; reason: string }[];
   changes: MappingImportChangeDto[];
-  /** Rows that asked for a target field the target table does not have. */
+  /** Rows that asked for something the plan cannot hold, each naming its row. */
   rejected: { row: number; table: string; field: string; reason: string }[];
+  /** Columns whose transformation pipeline the workbook changes. */
+  transformationsChanged: number;
   applied: boolean;
 }
 
@@ -1633,6 +1636,13 @@ export interface MigrationScheduleDto {
   watermarkField: string | null;
   /** Highest watermark value a run of this schedule has read. */
   lastWatermark: string | null;
+  /** Warning codes reviewed when this schedule was last confirmed. */
+  acknowledgedWarnings: string[];
+  /**
+   * Warning codes the plan has now that were not reviewed. Non-empty means the schedule will refuse
+   * to fire until someone looks and re-confirms.
+   */
+  unreviewedWarnings: string[];
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastRunId: string | null;
