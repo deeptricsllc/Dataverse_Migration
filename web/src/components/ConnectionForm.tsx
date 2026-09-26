@@ -5,16 +5,22 @@ import type {
   EnvironmentDto,
   SqlAuthType,
 } from '@shared/domain';
-import { CONNECTION_TYPE_LABELS, SQL_AUTH_IMPLEMENTED } from '@shared/domain';
+import {
+  CONNECTION_TYPE_LABELS,
+  DEFAULT_SQL_PORT,
+  SQL_AUTH_IMPLEMENTED,
+  type SqlConnectionType,
+} from '@shared/domain';
 import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, CircleDashed, PlugZap, RefreshCw, XCircle } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { patch, post } from '../lib/api';
 import { Button, Callout, ErrorState, Modal } from './ui';
 
-type SqlType = Exclude<ConnectionType, 'DATAVERSE'>;
+type SqlType = SqlConnectionType;
 
 const TYPE_HINTS: Record<ConnectionType, string> = {
+  POSTGRES: 'PostgreSQL 12 or later — self-hosted or managed (RDS, Cloud SQL, Neon, Supabase).',
   DATAVERSE: 'Discovered from your Microsoft account.',
   SQL_SERVER: 'On-premises or self-hosted SQL Server.',
   AZURE_SQL: 'Azure SQL Database or Managed Instance.',
@@ -154,6 +160,13 @@ export function ConnectionModal({
   discovering: boolean;
 }) {
   const [type, setType] = useState<ConnectionType | null>(connection?.connectionType ?? null);
+  /** Choosing a server kind moves the port to the one it listens on, unless it was edited. */
+  const chooseType = (next: ConnectionType) => {
+    setType(next);
+    if (next === 'DATAVERSE') return;
+    const wasDefault = Object.values(DEFAULT_SQL_PORT).some((p) => String(p) === form.port);
+    if (wasDefault || !form.port) update({ port: String(DEFAULT_SQL_PORT[next as SqlType]) });
+  };
   const [form, setForm] = useState<SqlForm>(() => formFor(connection));
   const [result, setResult] = useState<ConnectionTestResultDto | null>(null);
   const update = (values: Partial<SqlForm>) => setForm((f) => ({ ...f, ...values }));
@@ -162,7 +175,7 @@ export function ConnectionModal({
     displayName: form.displayName.trim() || `${form.host.trim()}/${form.database.trim()}`,
     connectionType: type as SqlType,
     host: form.host.trim(),
-    port: Number(form.port) || 1433,
+    port: Number(form.port) || DEFAULT_SQL_PORT[type as SqlType],
     database: form.database.trim(),
     authType: form.authType,
     username: form.username.trim() || null,
@@ -189,8 +202,9 @@ export function ConnectionModal({
     onSuccess: onSaved,
   });
 
-  const isSql = type === 'SQL_SERVER' || type === 'AZURE_SQL';
+  const isSql = type !== null && type !== 'DATAVERSE';
   const isAzure = type === 'AZURE_SQL';
+  const isPostgres = type === 'POSTGRES';
   const complete =
     Boolean(form.host.trim()) &&
     Boolean(form.database.trim()) &&
@@ -239,7 +253,7 @@ export function ConnectionModal({
           <fieldset>
             <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {(['DATAVERSE', 'SQL_SERVER', 'AZURE_SQL'] as ConnectionType[]).map((t) => (
+              {(['DATAVERSE', 'SQL_SERVER', 'AZURE_SQL', 'POSTGRES'] as ConnectionType[]).map((t) => (
                 <label
                   key={t}
                   data-testid={`connection-type-${t}`}
@@ -251,7 +265,7 @@ export function ConnectionModal({
                     value={t}
                     checked={type === t}
                     onChange={() => {
-                      setType(t);
+                      chooseType(t);
                       setResult(null);
                     }}
                     className="mt-0.5"
@@ -300,7 +314,9 @@ export function ConnectionModal({
                 id="conn-name"
                 value={form.displayName}
                 onChange={(e) => update({ displayName: e.target.value })}
-                placeholder={isAzure ? 'Azure SQL — sales' : 'Legacy SQL Server'}
+                placeholder={
+                  isAzure ? 'Azure SQL — sales' : isPostgres ? 'Analytics Postgres' : 'Legacy SQL Server'
+                }
                 maxLength={200}
                 className={INPUT}
               />
@@ -316,7 +332,13 @@ export function ConnectionModal({
                   id="conn-host"
                   value={form.host}
                   onChange={(e) => update({ host: e.target.value })}
-                  placeholder={isAzure ? 'yourserver.database.windows.net' : 'sql01.corp.local'}
+                  placeholder={
+                    isAzure
+                      ? 'yourserver.database.windows.net'
+                      : isPostgres
+                        ? 'db.internal'
+                        : 'sql01.corp.local'
+                  }
                   autoComplete="off"
                   className={INPUT}
                 />

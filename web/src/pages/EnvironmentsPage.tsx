@@ -46,12 +46,14 @@ import { fmtRelative } from '../lib/format';
 import { useSession, useWorkspace } from '../lib/session';
 
 const TYPE_ICONS: Record<ConnectionType, typeof Database> = {
+  POSTGRES: Server,
   DATAVERSE: Database,
   SQL_SERVER: Server,
   AZURE_SQL: Cloud,
 };
 
-const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal'> = {
+const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal' | 'slate'> = {
+  POSTGRES: 'slate',
   DATAVERSE: 'violet',
   SQL_SERVER: 'blue',
   AZURE_SQL: 'teal',

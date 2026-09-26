@@ -3,7 +3,7 @@ import type { Logger } from 'pino';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
 import { POWER_PLATFORM_SCOPE } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
-import type { SqlConnectionConfig } from '../../../shared/domain';
+import type { SqlConnectionConfig, SqlConnectionType } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { demoRecords, type environments } from '../db/schema';
 import { AppError } from '../lib/errors';
@@ -17,6 +17,7 @@ import type { DiscoveredEnvironment } from './types';
 import { WebApiConnection } from './web-api-connection';
 import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
+import { PostgresConnector } from '../connectors/sql/postgres-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
 import {
   DEMO_SQL_ENVIRONMENTS,
@@ -92,6 +93,14 @@ export class ConnectionFactory {
     if (!env.sqlConfig) {
       throw new AppError(400, 'CONNECTION_INCOMPLETE', 'This SQL connection has no configuration');
     }
+    if (env.connectionType === 'POSTGRES') {
+      return new PostgresConnector({
+        config: env.sqlConfig,
+        password: await this.loadSecret(env.id),
+        logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
     return new SqlConnector(
       {
         config: env.sqlConfig,
@@ -143,10 +152,18 @@ export class ConnectionFactory {
 
   /** Builds a connector from an unsaved SQL configuration, for "test connection" before saving. */
   sqlConnectorFor(
-    connectionType: 'SQL_SERVER' | 'AZURE_SQL',
+    connectionType: SqlConnectionType,
     config: SqlConnectionConfig,
     password: string | null,
-  ): SqlConnector {
+  ): MigrationConnector {
+    if (connectionType === 'POSTGRES') {
+      return new PostgresConnector({
+        config,
+        password,
+        logger: this.logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
     return new SqlConnector(
       { config, password, logger: this.logger, readOnly: this.config.REAL_TENANT_READ_ONLY },
       connectionType === 'AZURE_SQL' ? 'azuresql' : 'sqlserver',

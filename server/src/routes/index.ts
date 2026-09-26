@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
@@ -357,14 +358,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   // ---------------------------------------------------------------------------
-  // Connections (SQL Server / Azure SQL). Dataverse environments come from discovery.
+  // Connections (SQL Server, Azure SQL, PostgreSQL). Dataverse comes from discovery.
   // ---------------------------------------------------------------------------
 
   const sqlConnectionBody = z.object({
     displayName: z.string().min(1).max(200),
-    connectionType: z.enum(['SQL_SERVER', 'AZURE_SQL']),
+    connectionType: z.enum(SQL_CONNECTION_TYPES),
     host: z.string().min(1).max(255),
-    port: z.coerce.number().int().min(1).max(65535).default(1433),
+    // No default: each server listens somewhere different, and the client sends the one it showed.
+    port: z.coerce.number().int().min(1).max(65535),
     database: z.string().min(1).max(128),
     authType: z
       .enum(['SQL_LOGIN', 'ENTRA_PASSWORD', 'ENTRA_INTEGRATED', 'MANAGED_IDENTITY', 'WINDOWS'])

@@ -201,7 +201,7 @@ export interface MigrationConnector {
   dispose?(): Promise<void>;
 }
 
-export type ConnectorProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'demosql';
+export type ConnectorProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'postgres' | 'demosql';
 
 /** Back-compatible alias: the Dataverse code predates the provider-neutral name. */
 export type DataverseConnection = MigrationConnector;

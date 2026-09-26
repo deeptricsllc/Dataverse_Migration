@@ -263,7 +263,39 @@ export function buildTableSummaries(rows: SqlTableRow[]): TableSummary[] {
   }));
 }
 
-export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadata {
+/**
+ * How one server names and sizes its types.
+ *
+ * Everything else in this module is the same reasoning for any relational database; the type
+ * vocabulary is not. Injecting it keeps one normalization path while letting PostgreSQL say that
+ * `timestamp` is a point in time and SQL Server say it is a row version.
+ */
+export interface SqlTypeVocabulary {
+  toAttributeType(
+    dataType: string,
+    precision: number | null,
+    scale: number | null,
+    maxLength: number | null,
+  ): AttributeType;
+  charLength(dataType: string, maxLength: number | null): number | null;
+  integerRange(dataType: string): { min: number; max: number } | null;
+  dateTimeBehavior(dataType: string): string | null;
+  unsupported: ReadonlySet<string>;
+}
+
+/** SQL Server's, which is what every existing caller means when it passes nothing. */
+export const SQL_SERVER_TYPES: SqlTypeVocabulary = {
+  toAttributeType: sqlToAttributeType,
+  charLength: sqlCharLength,
+  integerRange: sqlIntegerRange,
+  dateTimeBehavior: sqlDateTimeBehavior,
+  unsupported: SQL_UNSUPPORTED_TYPES,
+};
+
+export function buildTableMetadata(
+  input: BuildTableMetadataInput,
+  types: SqlTypeVocabulary = SQL_SERVER_TYPES,
+): TableMetadata {
   const { table } = input;
   const logicalName = sqlTableName(table.schemaName, table.tableName);
 
@@ -295,14 +327,14 @@ export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadat
   const { lookupTargets, manyToOne } = buildRelationships(fkRows, logicalName);
 
   const attributes: AttributeMeta[] = columnRows.map((row) =>
-    buildAttribute(row, {
+    buildAttribute(row, types, {
       isPk: pkSet.has(row.columnName.toLowerCase()),
       isPrimaryId: hasSinglePk && pkSet.has(row.columnName.toLowerCase()),
       lookupTarget: lookupTargets.get(row.columnName.toLowerCase()) ?? null,
     }),
   );
 
-  const nameAttribute = pickPrimaryName(attributes, pkSet);
+  const nameAttribute = pickPrimaryName(attributes, pkSet, types.unsupported);
   if (nameAttribute) nameAttribute.isPrimaryName = true;
 
   return {
@@ -329,10 +361,11 @@ export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadat
 
 function buildAttribute(
   row: SqlColumnRow,
+  types: SqlTypeVocabulary,
   ctx: { isPk: boolean; isPrimaryId: boolean; lookupTarget: string | null },
 ): AttributeMeta {
   const dataType = row.dataType;
-  const charLength = sqlCharLength(dataType, row.maxLength);
+  const charLength = types.charLength(dataType, row.maxLength);
   const isIdentity = yes(row.isIdentity);
   const isComputed = yes(row.isComputed);
   const isRowVersion = yes(row.isRowVersion);
@@ -346,9 +379,9 @@ function buildAttribute(
   // would rewrite the row's identity and break every foreign key pointing at it.
   const isValidForUpdate = !serverGenerated && !ctx.isPk;
 
-  const scalarType = sqlToAttributeType(dataType, row.precision, row.scale, charLength);
+  const scalarType = types.toAttributeType(dataType, row.precision, row.scale, charLength);
   const type = ctx.lookupTarget ? 'Lookup' : scalarType;
-  const range = sqlIntegerRange(dataType);
+  const range = types.integerRange(dataType);
   const isText = scalarType === 'String' || scalarType === 'Memo';
 
   return {
@@ -378,7 +411,7 @@ function buildAttribute(
     minValue: range?.min ?? null,
     maxValue: range?.max ?? null,
     format: null,
-    dateTimeBehavior: sqlDateTimeBehavior(dataType),
+    dateTimeBehavior: types.dateTimeBehavior(dataType),
     targets: ctx.lookupTarget ? [ctx.lookupTarget] : undefined,
     sql: {
       dataType,
@@ -400,13 +433,17 @@ function buildAttribute(
  * is guessed — a numeric or date column is never a name, and a wrong guess would show up as the
  * record's identity in every report and mapping screen.
  */
-function pickPrimaryName(attributes: AttributeMeta[], pkSet: Set<string>): AttributeMeta | null {
+function pickPrimaryName(
+  attributes: AttributeMeta[],
+  pkSet: Set<string>,
+  unsupported: ReadonlySet<string>,
+): AttributeMeta | null {
   return (
     attributes.find(
       (a) =>
         !pkSet.has(a.logicalName.toLowerCase()) &&
         (a.type === 'String' || a.type === 'Memo') &&
-        !SQL_UNSUPPORTED_TYPES.has((a.sql?.dataType ?? '').toLowerCase()) &&
+        !unsupported.has((a.sql?.dataType ?? '').toLowerCase()) &&
         NAME_LIKE.test(a.logicalName),
     ) ?? null
   );

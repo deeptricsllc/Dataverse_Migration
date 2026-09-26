@@ -29,11 +29,29 @@ export interface SessionResponseDto {
   realTenantReadOnly: boolean;
 }
 
-export type EnvironmentProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'demosql';
+export type EnvironmentProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'postgres' | 'demosql';
 export type ConnectionStatus = 'UNKNOWN' | 'CONNECTED' | 'FAILED';
 
 /** The kind of system a connection points at. Chosen by the user when adding a connection. */
-export type ConnectionType = 'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL';
+export type ConnectionType = 'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL' | 'POSTGRES';
+
+/** The connection types configured by hand rather than discovered. */
+export const SQL_CONNECTION_TYPES = ['SQL_SERVER', 'AZURE_SQL', 'POSTGRES'] as const;
+export type SqlConnectionType = (typeof SQL_CONNECTION_TYPES)[number];
+
+/** The port each server listens on unless told otherwise. */
+export const DEFAULT_SQL_PORT: Record<SqlConnectionType, number> = {
+  SQL_SERVER: 1433,
+  AZURE_SQL: 1433,
+  POSTGRES: 5432,
+};
+
+/** The schema a table belongs to when its name does not say. */
+export const DEFAULT_SQL_SCHEMA: Record<SqlConnectionType, string> = {
+  SQL_SERVER: 'dbo',
+  AZURE_SQL: 'dbo',
+  POSTGRES: 'public',
+};
 
 /** Connections of the same family share a connector implementation and a metadata dialect. */
 export type ProviderFamily = 'DATAVERSE' | 'SQL';
@@ -45,6 +63,7 @@ export const CONNECTION_TYPE_LABELS: Record<ConnectionType, string> = {
   DATAVERSE: 'Microsoft Dataverse',
   SQL_SERVER: 'SQL Server',
   AZURE_SQL: 'Azure SQL',
+  POSTGRES: 'PostgreSQL',
 };
 
 /**
