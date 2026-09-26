@@ -389,6 +389,7 @@ function buildAttribute(
     schemaName: row.columnName,
     displayName: row.columnName,
     type,
+    family: 'SQL',
     // The raw SQL type name is what diagnostics and the compatibility rules need; it is also how
     // `SQL_UNSUPPORTED_TYPES` recognises a column that cannot be migrated at all.
     rawType: dataType,

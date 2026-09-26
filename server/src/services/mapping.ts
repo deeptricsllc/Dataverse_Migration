@@ -1,5 +1,6 @@
 import type { MappingStatus } from '../../../shared/domain';
 import {
+  crossFamily,
   LOOKUP_TYPES,
   SYSTEM_MANAGED_COLUMNS,
   type AttributeMeta,
@@ -155,8 +156,7 @@ export function validateManualMapping(
 ): string | null {
   if (!target) return 'Target column does not exist';
   if (!target.isValidForCreate && !target.isValidForUpdate) return 'Target column is read-only';
-  const crossProvider = Boolean(source.sql) !== Boolean(target.sql);
-  if (crossProvider) {
+  if (crossFamily(source, target)) {
     return fieldVerdict(source, target) === 'INCOMPATIBLE' ? fieldVerdictReason(source, target) : null;
   }
   const compat = typeCompatibility(source, target);

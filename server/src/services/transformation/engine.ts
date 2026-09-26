@@ -23,6 +23,7 @@ import {
   type TransformationRule,
 } from '../../../../shared/domain';
 import {
+  crossFamily,
   isLookupValue,
   type AttributeMeta,
   type DvRecord,
@@ -518,9 +519,9 @@ export function transformField(input: TransformFieldInput): TransformFieldResult
     }
   }
 
-  // Type conversion into the target column.
-  const crossProvider = Boolean(input.source.sql) !== Boolean(input.target.sql);
-  const converted = crossProvider
+  // Type conversion into the target column. Between two different kinds of system the types do not
+  // mean the same thing, so the cross-provider converter runs instead of the same-provider one.
+  const converted = crossFamily(input.source, input.target)
     ? convertValue(current, input.source, input.target)
     : transformValue(input.source, input.target, current);
   if (!converted.ok) {
