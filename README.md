@@ -77,6 +77,9 @@ Transformation, profiling and data quality have their own guides:
 [docs/TRANSFORMATION_ENGINE.md](docs/TRANSFORMATION_ENGINE.md),
 [docs/DATA_PROFILING.md](docs/DATA_PROFILING.md) and [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md).
 
+Demoing it: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md). Evaluating it, gaps included:
+[docs/LAUNCH_READINESS.md](docs/LAUNCH_READINESS.md).
+
 Every source kind, what differs between them and what each is tested against:
 [docs/SOURCES.md](docs/SOURCES.md).
 
