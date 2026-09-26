@@ -93,9 +93,9 @@ describe('which Graph endpoint a reference means', () => {
     });
     // A browser URL does not contain the list id, and a display name is not unique enough to look one
     // up safely — two lists can have similar names.
-    expect(() =>
-      resolveListReference('https://contoso.sharepoint.com/sites/Team/Lists/Inventory'),
-    ).toThrow(/does not contain the list id/);
+    expect(() => resolveListReference('https://contoso.sharepoint.com/sites/Team/Lists/Inventory')).toThrow(
+      /does not contain the list id/,
+    );
   });
 
   it('asks only for read scopes', () => {

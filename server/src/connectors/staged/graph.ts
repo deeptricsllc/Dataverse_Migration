@@ -208,7 +208,11 @@ export async function fetchListRows(
     throw new DataverseError('NOT_FOUND', 'That list could not be found, or you cannot see it.', 404);
   }
   if (listMeta.status >= 400) {
-    throw new DataverseError('SERVER_ERROR', `Microsoft Graph returned ${listMeta.status} for that list.`, 502);
+    throw new DataverseError(
+      'SERVER_ERROR',
+      `Microsoft Graph returned ${listMeta.status} for that list.`,
+      502,
+    );
   }
   const displayName =
     ((listMeta.json ?? {}) as { displayName?: string; name?: string }).displayName ??
@@ -216,8 +220,7 @@ export async function fetchListRows(
     'List';
 
   const collected: Record<string, unknown>[] = [];
-  let path: string | null =
-    `sites/${ref.siteId}/lists/${ref.listId}/items?expand=fields&$top=200`;
+  let path: string | null = `sites/${ref.siteId}/lists/${ref.listId}/items?expand=fields&$top=200`;
   while (path && collected.length < maxRows) {
     const page = await request(path);
     if (page.status >= 400) {
