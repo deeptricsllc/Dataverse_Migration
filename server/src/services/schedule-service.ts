@@ -373,12 +373,17 @@ export class ScheduleService {
           lastStatus: 'FAILED',
           lastError: reason.slice(0, 2000),
           consecutiveFailures: failures,
-          enabled: pause ? false : schedule.enabled,
-          nextRunAt: pause ? null : schedule.nextRunAt,
-          pausedReason: pause
-            ? `Paused after ${failures} consecutive failures. Last error: ${reason.slice(0, 300)}`
-            : schedule.pausedReason,
           updatedAt: new Date(),
+          // `nextRunAt` is deliberately left alone: the claim already moved it to the next slot, and
+          // writing the old value back here would make a failing schedule re-fire on every poll.
+          // Pausing is the one case that changes it, by removing it.
+          ...(pause
+            ? {
+                enabled: false,
+                nextRunAt: null,
+                pausedReason: `Paused after ${failures} consecutive failures. Last error: ${reason.slice(0, 300)}`,
+              }
+            : {}),
         })
         .where(eq(migrationSchedules.id, schedule.id));
       await this.audit.record({
