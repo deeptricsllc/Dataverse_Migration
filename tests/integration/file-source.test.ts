@@ -136,10 +136,11 @@ describe('CSV and Excel as a source', () => {
     );
     const conn = await t.services.connections.connectorFor(env, 'test', {});
     const meta = await conn.getTable('customer_export_2026');
-    await expect(conn.createRecord(meta, { values: {} }, {})).rejects.toThrow(
+    const writeOptions = { bypassCustomBusinessLogic: false, suppressFlowTriggers: false };
+    await expect(conn.createRecord(meta, { values: {} }, writeOptions)).rejects.toThrow(
       /do not support create/i,
     );
-    await expect(conn.updateRecord(meta, 'C-001', { values: {} }, {})).rejects.toThrow(
+    await expect(conn.updateRecord(meta, 'C-001', { values: {} }, writeOptions)).rejects.toThrow(
       /do not support update/i,
     );
     // Marked a view, which is how the planner already refuses to offer something as a target.

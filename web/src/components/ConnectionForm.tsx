@@ -8,6 +8,7 @@ import type {
 import {
   CONNECTION_TYPE_LABELS,
   DEFAULT_SQL_PORT,
+  isStagedConnection,
   SQL_AUTH_IMPLEMENTED,
   type SqlConnectionType,
 } from '@shared/domain';
@@ -20,11 +21,19 @@ import { Button, Callout, ErrorState, Modal } from './ui';
 type SqlType = SqlConnectionType;
 
 const TYPE_HINTS: Record<ConnectionType, string> = {
-  POSTGRES: 'PostgreSQL 12 or later — self-hosted or managed (RDS, Cloud SQL, Neon, Supabase).',
   DATAVERSE: 'Discovered from your Microsoft account.',
   SQL_SERVER: 'On-premises or self-hosted SQL Server.',
   AZURE_SQL: 'Azure SQL Database or Managed Instance.',
+  POSTGRES: 'PostgreSQL 12 or later — self-hosted or managed (RDS, Cloud SQL, Neon, Supabase).',
+  MYSQL: 'MySQL 8 or MariaDB 10.5 or later.',
+  FILE: 'Upload a CSV or Excel file. Read-only — a file is never a migration target.',
+  ONEDRIVE: 'A spreadsheet in OneDrive or a SharePoint document library. Read-only.',
+  SHAREPOINT: 'A SharePoint list. Read-only.',
 };
+
+/** The kinds that are a file or a list rather than a server, so the form asks for nothing. */
+const STAGED_HINT =
+  'This source holds data you import into it. Create it, then upload a file — there is no server to reach, so there is no host, port or password.';
 
 const AUTH_LABELS: Record<SqlAuthType, string> = {
   SQL_LOGIN: 'SQL authentication (login and password)',
@@ -202,13 +211,28 @@ export function ConnectionModal({
     onSuccess: onSaved,
   });
 
-  const isSql = type !== null && type !== 'DATAVERSE';
+  const isStaged = type !== null && isStagedConnection(type);
+  const isSql = type !== null && type !== 'DATAVERSE' && !isStaged;
   const isAzure = type === 'AZURE_SQL';
   const isPostgres = type === 'POSTGRES';
   const complete =
     Boolean(form.host.trim()) &&
     Boolean(form.database.trim()) &&
     (form.authType !== 'SQL_LOGIN' || Boolean(form.username.trim()));
+
+  /**
+   * A file source has nothing to test and nothing to authenticate. It is created by name, and the
+   * data arrives afterwards — so it goes to its own endpoint rather than being squeezed through a
+   * form that would ask for a host it does not have.
+   */
+  const createStaged = useMutation({
+    mutationFn: () =>
+      post<EnvironmentDto>('/api/staged-sources', {
+        displayName: form.displayName.trim(),
+        kind: type === 'ONEDRIVE' ? 'ONEDRIVE' : type === 'SHAREPOINT' ? 'SHAREPOINT' : 'UPLOAD',
+      }),
+    onSuccess: onSaved,
+  });
 
   return (
     <Modal
@@ -217,7 +241,20 @@ export function ConnectionModal({
       wide
       title={connection ? `Edit ${connection.displayName}` : 'Add connection'}
       footer={
-        isSql ? (
+        isStaged ? (
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              variant="primary"
+              loading={createStaged.isPending}
+              disabled={!form.displayName.trim()}
+              data-testid="create-staged-source"
+              onClick={() => createStaged.mutate()}
+            >
+              Create source
+            </Button>
+          </>
+        ) : isSql ? (
           <>
             <Button onClick={onClose}>Cancel</Button>
             <Button
@@ -253,7 +290,9 @@ export function ConnectionModal({
           <fieldset>
             <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {(['DATAVERSE', 'SQL_SERVER', 'AZURE_SQL', 'POSTGRES'] as ConnectionType[]).map((t) => (
+              {(
+                ['DATAVERSE', 'SQL_SERVER', 'AZURE_SQL', 'POSTGRES', 'MYSQL', 'FILE'] as ConnectionType[]
+              ).map((t) => (
                 <label
                   key={t}
                   data-testid={`connection-type-${t}`}
@@ -298,6 +337,25 @@ export function ConnectionModal({
               Discover Dataverse environments
             </Button>
           </>
+        )}
+
+        {isStaged && (
+          <div className="space-y-4">
+            <Callout tone="info" title="Nothing to connect to">
+              {STAGED_HINT}
+            </Callout>
+            <Field id="staged-name" label="Name" hint="What this source is called in the platform.">
+              <input
+                id="staged-name"
+                value={form.displayName}
+                onChange={(e) => update({ displayName: e.target.value })}
+                placeholder="Customer extracts"
+                maxLength={200}
+                className={INPUT}
+              />
+            </Field>
+            {createStaged.error && <ErrorState error={createStaged.error} />}
+          </div>
         )}
 
         {isSql && (

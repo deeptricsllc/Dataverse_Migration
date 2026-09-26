@@ -4,7 +4,7 @@ import type {
   ConnectorCapabilities,
   EnvironmentDto,
 } from '@shared/domain';
-import { CONNECTION_TYPE_LABELS } from '@shared/domain';
+import { CONNECTION_TYPE_LABELS, isSqlConnection, isStagedConnection } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -12,7 +12,10 @@ import {
   CheckCircle2,
   Cloud,
   Database,
+  FileSpreadsheet,
+  FolderOpen,
   Globe,
+  List,
   MapPin,
   Minus,
   Pencil,
@@ -26,6 +29,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
+import { StagedSourceCard } from '../components/StagedSourceCard';
 import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
@@ -46,17 +50,25 @@ import { fmtRelative } from '../lib/format';
 import { useSession, useWorkspace } from '../lib/session';
 
 const TYPE_ICONS: Record<ConnectionType, typeof Database> = {
-  POSTGRES: Server,
   DATAVERSE: Database,
   SQL_SERVER: Server,
   AZURE_SQL: Cloud,
+  POSTGRES: Server,
+  MYSQL: Server,
+  FILE: FileSpreadsheet,
+  ONEDRIVE: FolderOpen,
+  SHAREPOINT: List,
 };
 
-const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal' | 'slate'> = {
-  POSTGRES: 'slate',
+const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal' | 'slate' | 'amber'> = {
   DATAVERSE: 'violet',
   SQL_SERVER: 'blue',
   AZURE_SQL: 'teal',
+  POSTGRES: 'slate',
+  MYSQL: 'slate',
+  FILE: 'amber',
+  ONEDRIVE: 'amber',
+  SHAREPOINT: 'amber',
 };
 
 /** Capabilities shown on every card. Read from the connector, never inferred from the provider. */
@@ -242,6 +254,8 @@ export function EnvironmentsPage() {
   }, [autoDiscover]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const list = useMemo(() => envs.data ?? [], [envs.data]);
+  /** File sources get their own section: what matters about them is their data, not their settings. */
+  const staged = useMemo(() => list.filter((e) => isStagedConnection(e.connectionType)), [list]);
   const types = useMemo(
     () => ['ALL', ...new Set(list.map((e) => e.environmentType).filter((t): t is string => Boolean(t)))],
     [list],
@@ -393,7 +407,9 @@ export function EnvironmentsPage() {
           const isTarget = workspace.target?.id === env.id;
           // Dataverse without the Dataverse API is unusable; a SQL connection always is.
           const usable = env.connectionType !== 'DATAVERSE' || env.dataverseAvailable;
-          const editable = env.connectionType !== 'DATAVERSE';
+          const staged = isStagedConnection(env.connectionType);
+          // A staged source has no settings to edit — it has data to import, which is its own card.
+          const editable = env.connectionType !== 'DATAVERSE' && !staged;
           const TypeIcon = TYPE_ICONS[env.connectionType];
           return (
             <article
@@ -464,15 +480,17 @@ export function EnvironmentsPage() {
                   </p>
                 )}
                 <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                  <Button
-                    size="sm"
-                    icon={<PlugZap className="h-3.5 w-3.5" />}
-                    loading={test.isPending && test.variables?.id === env.id}
-                    onClick={() => test.mutate(env)}
-                    disabled={!usable}
-                  >
-                    Test connection
-                  </Button>
+                  {!staged && (
+                    <Button
+                      size="sm"
+                      icon={<PlugZap className="h-3.5 w-3.5" />}
+                      loading={test.isPending && test.variables?.id === env.id}
+                      onClick={() => test.mutate(env)}
+                      disabled={!usable}
+                    >
+                      Test connection
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant={isSource ? 'primary' : 'secondary'}
@@ -481,14 +499,17 @@ export function EnvironmentsPage() {
                   >
                     {isSource ? 'Source' : 'Set as source'}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={isTarget ? 'primary' : 'secondary'}
-                    disabled={isTarget || workspace.saving || !usable}
-                    onClick={() => select('target', env)}
-                  >
-                    {isTarget ? 'Target' : 'Set as target'}
-                  </Button>
+                  {/* A file can never be written to, so it is never offered as a target. */}
+                  {!staged && (
+                    <Button
+                      size="sm"
+                      variant={isTarget ? 'primary' : 'secondary'}
+                      disabled={isTarget || workspace.saving || !usable}
+                      onClick={() => select('target', env)}
+                    >
+                      {isTarget ? 'Target' : 'Set as target'}
+                    </Button>
+                  )}
                   {editable && (
                     <>
                       <Button
@@ -531,13 +552,23 @@ export function EnvironmentsPage() {
           </Callout>
         </div>
       )}
-      {list.some((e) => e.connectionType !== 'DATAVERSE') && (
+      {list.some((e) => isSqlConnection(e.connectionType)) && (
         <div className="mt-4">
-          <Callout tone="info" title="SQL connections are opened directly">
-            A SQL Server has to be reachable from wherever this application runs. A hosted deployment normally
-            cannot reach a server behind a corporate firewall; the agent that would connect outward from your
-            network is designed in docs/ON_PREM_AGENT_ARCHITECTURE.md and does not exist yet.
+          <Callout tone="info" title="Database connections are opened directly">
+            A database server has to be reachable from wherever this application runs. A hosted deployment
+            normally cannot reach a server behind a corporate firewall; the agent that would connect outward
+            from your network is designed in docs/ON_PREM_AGENT_ARCHITECTURE.md and does not exist yet. A file
+            source needs none of this — its data is uploaded rather than fetched.
           </Callout>
+        </div>
+      )}
+
+      {staged.length > 0 && (
+        <div className="mt-8 space-y-4">
+          <h2 className="text-sm font-semibold text-slate-700">File sources</h2>
+          {staged.map((env) => (
+            <StagedSourceCard key={env.id} environment={env} />
+          ))}
         </div>
       )}
 
