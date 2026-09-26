@@ -1,7 +1,7 @@
 # Data Analysis & Migration Platform
 
-**DeepTrics** — understand a data source, then move it. Microsoft Dataverse, SQL Server, Azure SQL
-and PostgreSQL, any of them as source or target.
+**DeepTrics** — understand a data source, then move it. Dataverse, SQL Server, Azure SQL, PostgreSQL
+and MySQL as source or target; CSV, Excel, OneDrive and SharePoint as read-only sources.
 
 > Know what is in there. Know what will happen before migration. Migrate safely. Know exactly what
 > happened afterward.
@@ -29,7 +29,7 @@ incremental mode that reads only what changed.
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sign-in           | **Continue with Microsoft** (Entra ID, auth code + PKCE, server-side encrypted token cache) and a clearly marked **DEMO MODE** account                                                                                                                                                                                                                                                       |
 | Connections       | Dataverse environments discovered through the Global Discovery Service, plus SQL Server, Azure SQL and PostgreSQL connections configured by hand (credentials encrypted at rest, never returned by the API). Read-only connection tests, capability reporting, source/target selection remembered per user                                                                                   |
-| PostgreSQL        | A fourth provider, source or target. Its own catalog queries against `pg_catalog`, its own type vocabulary (`timestamp` is a point in time here, not a row version) and its own error mapping — sharing everything that does not depend on which server is answering, and nothing that does                                                                                                  |
+| More sources      | MySQL and MariaDB as a fifth database provider. CSV and Excel uploads, OneDrive and SharePoint files, and SharePoint lists as read-only sources: imported once, kept with their provenance, and served by one read path. Column types are inferred from the values, conservatively, with the reason reported per column                                                                      |
 | Projects          | Work is grouped into analysis or migration projects. The kind decides what exists: an analysis project has no target and no write path, a migration project carries every safety gate. A migration project can name the analysis project it was built from                                                                                                                                   |
 | Source analysis   | A source-wide read with no target involved: every table's row count, every column's statistics, the source's own declared constraints checked against its own data, a dependency-safe load order derived from real relationships, and the columns that are empty in every record examined                                                                                                    |
 | Mapping workbook  | A real .xlsx — overview, tables with load order, every column with its measured statistics, the transformation pipelines, findings — exported from an analysis or a plan, filled in outside the tool, and imported back. Every transformation kind round-trips, including value maps and conditionals. Each row goes through the same validation the mapping screen uses; dry run by default |
@@ -76,6 +76,9 @@ Projects, analysis, the mapping workbook and schedules have their own guide:
 Transformation, profiling and data quality have their own guides:
 [docs/TRANSFORMATION_ENGINE.md](docs/TRANSFORMATION_ENGINE.md),
 [docs/DATA_PROFILING.md](docs/DATA_PROFILING.md) and [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md).
+
+Every source kind, what differs between them and what each is tested against:
+[docs/SOURCES.md](docs/SOURCES.md).
 
 Connecting a database: [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md),
 [docs/AZURE_SQL_SETUP.md](docs/AZURE_SQL_SETUP.md) and [docs/POSTGRES_SETUP.md](docs/POSTGRES_SETUP.md).
