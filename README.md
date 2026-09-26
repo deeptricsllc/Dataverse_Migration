@@ -1,14 +1,27 @@
-# Data Migration & Validation Platform
+# Data Analysis & Migration Platform
 
-**DeepTrics** — discover, compare, plan, migrate and validate data between Microsoft Dataverse,
-SQL Server and Azure SQL.
+**DeepTrics** — understand a data source, then move it. Microsoft Dataverse, SQL Server and Azure
+SQL, as source or target.
 
-> Know what will happen before migration. Migrate safely. Know exactly what happened afterward.
+> Know what is in there. Know what will happen before migration. Migrate safely. Know exactly what
+> happened afterward.
 
-**Discover → Profile → Map → Clean & Transform → Preflight → Migrate → Validate → Reconcile**
+Work lives in a **project**, and a project is one of two kinds:
 
-Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
-(Discover → Compare → Plan → Migrate → Validate → Reconcile → Report/Rollback).
+| Kind               | What it does                                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Data analysis**  | Connects to a source and reports what is actually in it: tables, columns, volumes, keys, relationships, data quality. Has no target — nothing it can do writes anywhere.         |
+| **Data migration** | Maps and moves data into a target, with preflight, transformation, validation and reconciliation. Can start from an analysis project, so the mapping begins from measured facts. |
+
+**Analyse → Map (workbook) → Plan → Clean & Transform → Preflight → Migrate → Validate →
+Reconcile → Schedule**
+
+The two halves meet in the **mapping workbook**: an analysis exports a spreadsheet of every source
+column with what was measured in it, someone who knows the legacy system fills in the target
+columns, and a migration project imports it — through the same validation the mapping screen uses.
+
+Once a migration is correct, a **schedule** keeps it correct: cron with a real time zone, and an
+incremental mode that reads only what changed.
 
 ## What works today
 
@@ -16,6 +29,11 @@ Long-term direction: _Dataverse Environment Intelligence & ALM Platform_
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Sign-in           | **Continue with Microsoft** (Entra ID, auth code + PKCE, server-side encrypted token cache) and a clearly marked **DEMO MODE** account                                                                                                                                                                                                      |
 | Connections       | Dataverse environments discovered through the Global Discovery Service, plus SQL Server and Azure SQL connections configured by hand (credentials encrypted at rest, never returned by the API). Read-only connection tests, capability reporting, source/target selection remembered per user                                              |
+| Projects          | Work is grouped into analysis or migration projects. The kind decides what exists: an analysis project has no target and no write path, a migration project carries every safety gate. A migration project can name the analysis project it was built from                                                                                  |
+| Source analysis   | A source-wide read with no target involved: every table's row count, every column's statistics, the source's own declared constraints checked against its own data, a dependency-safe load order derived from real relationships, and the columns that are empty in every record examined                                                   |
+| Mapping workbook  | A real .xlsx — overview, tables with load order, every column with its measured statistics, findings — exported from an analysis or a plan, filled in outside the tool, and imported back. Every row goes through the same validation the mapping screen uses; dry run by default                                                           |
+| Schedules         | Recurring migrations on a five-field cron expression in a named IANA time zone, so 02:00 stays 02:00 across a daylight-saving change. Blockers and data-loss acknowledgement still stop a scheduled run; an overlapping run is skipped, not failed; repeated failures pause the schedule instead of queueing identical errors               |
+| Incremental runs  | A schedule can read only records changed since the last run, using a watermark column (`modifiedon`, a row version, a last-modified column). Filtered server-side by Dataverse `$filter` or one more SQL predicate. Only a run that finished advances the watermark, so a failure re-reads rather than skips                                |
 | Profiling         | Per-column nulls, blanks, whitespace, distinct and duplicate counts, length and numeric statistics, date ranges, invalid values and the distinct values that feed choice mapping. Every statistic says whether it is **exact** or **sampled**                                                                                               |
 | Data quality      | Rules derived from the target columns a source column is mapped into (required, maximum length, numeric range, email format), counted per record while profiling, so "38 records exceed 160 characters" is an exact number rather than an inference                                                                                         |
 | Clean & transform | An ordered, declarative transformation pipeline per field — trim, case, replace, prefix/suffix, substring, truncate, empty/null handling, defaults, type conversions, value maps, concatenation and simple conditionals — with a live preview that runs the same engine the migration runs                                                  |
@@ -50,6 +68,9 @@ Every path runs on the same engine, planner, matcher, preflight and validation �
 decides how to read and write, never what the migration does. See
 [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md) and
 [docs/AZURE_SQL_SETUP.md](docs/AZURE_SQL_SETUP.md).
+
+Projects, analysis, the mapping workbook and schedules have their own guide:
+[docs/ANALYSIS_AND_SCHEDULING.md](docs/ANALYSIS_AND_SCHEDULING.md).
 
 Transformation, profiling and data quality have their own guides:
 [docs/TRANSFORMATION_ENGINE.md](docs/TRANSFORMATION_ENGINE.md),

@@ -48,7 +48,7 @@ export function LoginPage() {
             <Boxes className="h-6 w-6" aria-hidden />
           </div>
           <div>
-            <div className="text-lg font-semibold leading-tight">Dataverse Migration Platform</div>
+            <div className="text-lg font-semibold leading-tight">Data Analysis & Migration Platform</div>
             <div className="text-sm text-slate-400">by DeepTrics</div>
           </div>
         </div>

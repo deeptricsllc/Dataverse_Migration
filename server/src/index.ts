@@ -28,7 +28,7 @@ if (!config.RUN_WORKER && database.kind === 'pglite') {
 await app.listen({ host: config.HOST, port: config.PORT });
 logger.info(
   { url: config.APP_BASE_URL, demoMode: config.DEMO_MODE, microsoftEnabled: config.microsoftEnabled },
-  'Dataverse Migration Platform started',
+  'Data Analysis and Migration Platform started',
 );
 if (worker) await worker.start();
 scheduler?.start();

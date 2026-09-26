@@ -191,7 +191,7 @@ export function Layout() {
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight text-white">DeepTrics</div>
-            <div className="text-[11px] leading-tight text-slate-400">Dataverse Migration</div>
+            <div className="text-[11px] leading-tight text-slate-400">Analysis & Migration</div>
           </div>
         </div>
         <nav className="mt-2 flex-1 space-y-0.5 px-3" aria-label="Main">
@@ -241,7 +241,7 @@ export function Layout() {
         )}
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-slate-900">Dataverse Migration Platform</span>
+            <span className="text-sm font-semibold text-slate-900">Data Analysis & Migration Platform</span>
             {realTenantReadOnly && !user.organization.isDemo && (
               <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-sky-900">
                 READ ONLY
