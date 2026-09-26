@@ -121,12 +121,38 @@ individually, naming the row, in `rejected`. A workbook cannot set a mapping the
 
 `IGNORE` in `Target field` means "deliberately not migrated". Blank leaves the decision open.
 
-### Transformations as text
+### Transformations
 
-`describeRules` / `parseRules` round-trip the pipeline as `TRIM > TRUNCATE(160)`. Only kinds whose
-whole configuration is one simple argument survive as text. A value map, a concatenation or a
-conditional renders as `VALUE_MAP(…)` and is **reported as needing the in-app editor** rather than
-guessed at — a wrong transformation silently changes data.
+Three more sheets, in `server/src/services/transformation-sheets.ts`:
+
+| Sheet             | Contents                                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Transformations` | One row per rule step, in the order they run. Typed columns for every scalar parameter, plus `Inside step` for nesting |
+| `Value maps`      | The entries of a `VALUE_MAP` or `TO_BOOLEAN` step, keyed by table, field and step                                      |
+| `Concat parts`    | The pieces of a `CONCAT` step, ordered by their own `Order` column rather than by row position                         |
+
+The first attempt squeezed a pipeline into one text cell. That handled `TRIM > TRUNCATE(160)` and
+could not express a value map, a concatenation or a conditional at all, so those exported as
+`VALUE_MAP(...)` and were refused on import. Wrong trade: the rules a business analyst most needs to
+edit in a spreadsheet are exactly the value maps. The normalized form round-trips every kind the
+engine supports.
+
+Three rules make it safe:
+
+- **What comes back is validated by `transformationRulesSchema`**, the same zod schema the
+  transformation editor posts through, extracted to `server/src/routes/schemas.ts` so the two cannot
+  drift. A workbook cannot describe a pipeline the API would reject.
+- **It is applied through `TransformationService.updatePipeline`**, the same method the editor calls,
+  so rules are validated and audited identically however they arrived.
+- **A column the sheet does not mention is left alone.** Absence is not a decision: somebody
+  hand-writing a sheet to add one rule must not silently wipe every other pipeline. Clearing one is
+  said explicitly, with a `NONE` row.
+
+A whole field's pipeline is dropped if any of its rows cannot be understood, rather than applied
+half-configured: half a value map is not a smaller value map, it is a different one.
+
+The `Transformation (reference)` column on `Field mapping` is a one-line summary and is **not**
+imported, so there is one source of truth.
 
 ---
 
@@ -143,8 +169,17 @@ keyboard that a timer cannot. So the confirmed names are captured on the schedul
 and passed back at every firing. If the plan is later pointed at a different target, they no longer
 match and the run is refused rather than misdirected.
 
-**Warnings.** `acknowledgeWarnings: true`, because they were reviewed when the schedule was created.
-Blockers and data-loss acknowledgement are **not** waived.
+**Warnings.** A schedule records the warning **codes** the plan raised when it was last confirmed
+(`acknowledged_warnings`). Firing recomputes them and refuses when the plan raises one outside that
+set, naming the codes. Blockers and data-loss acknowledgement are not waived either.
+
+Codes rather than counts, deliberately: a schedule should keep running as a known warning comes and
+goes with the data, and should stop when a _different kind_ appears. A count would block on noise and
+wave through a genuinely new problem that replaced an old one.
+
+Re-confirming is `PATCH /api/schedules/:id` with `acknowledgeWarnings: true` - its own deliberate
+act, not a side effect of re-enabling a paused schedule. Enabling is not the same as having read what
+changed.
 
 ### Firing
 
@@ -178,7 +213,8 @@ day-of-week is an OR, as cron has always had it.
 ### Incremental mode
 
 `queryRecords` takes an optional `since: { field, value }`. Dataverse turns it into `$filter`, SQL
-Server into one more predicate on the already-parameterized keyset read, and both demo connectors
+Server and PostgreSQL into one more predicate on the already-parameterized keyset read, and both demo
+connectors
 apply the identical comparison in memory — so a schedule tested against the demo source behaves as it
 will against a real one. `capabilities.supportsIncrementalRead` reports it.
 
