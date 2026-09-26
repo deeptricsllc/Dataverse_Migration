@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { PROJECT_KINDS, SCHEDULE_MODES } from '../../../shared/domain';
+import { PROJECT_KINDS, SCHEDULE_MODES, STAGED_SOURCE_KINDS } from '../../../shared/domain';
 import { csvFileName, toCsv } from '../lib/csv';
 import type { Services } from '../services/container';
 
@@ -8,8 +8,11 @@ const uuid = z.string().uuid();
 const idParams = z.object({ id: uuid });
 const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
 
-/** Big enough for a mapping workbook, small enough that nothing else fits. */
-const UPLOAD_BODY_LIMIT = 16 * 1024 * 1024;
+/**
+ * Big enough for a mapping workbook or a source extract, small enough that nothing else fits.
+ * Base64 inflates by a third, so the body limit is above the 32 MB file limit the importer enforces.
+ */
+const UPLOAD_BODY_LIMIT = 48 * 1024 * 1024;
 
 /**
  * Projects, source analysis, mapping workbooks and schedules.
@@ -285,6 +288,50 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
       { content, filename: body.filename },
       { apply: body.apply },
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Staged sources: files, and anything else read once and kept
+  // ---------------------------------------------------------------------------
+
+  /** Creates a source that holds imported data. No host, port or credential is involved. */
+  app.post('/api/staged-sources', async (req, reply) => {
+    const body = z
+      .object({
+        displayName: z.string().min(1).max(200),
+        kind: z.enum(STAGED_SOURCE_KINDS).default('UPLOAD'),
+      })
+      .parse(req.body);
+    reply.code(201);
+    return s.stagedSources.create(req.ctx, body);
+  });
+
+  app.get('/api/staged-sources/:id/tables', async (req) =>
+    s.stagedSources.list(req.ctx, idParams.parse(req.params).id),
+  );
+
+  /**
+   * Imports a CSV or workbook. The file arrives base64-encoded in JSON, which keeps the upload on
+   * the same CSRF-protected path as every other write and needs no multipart parser.
+   */
+  app.post('/api/staged-sources/:id/import', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({
+        filename: z.string().min(1).max(300),
+        contentBase64: z.string().min(1),
+      })
+      .parse(req.body);
+    return s.stagedSources.importFile(req.ctx, id, {
+      filename: body.filename,
+      content: Buffer.from(body.contentBase64, 'base64'),
+    });
+  });
+
+  app.delete('/api/staged-sources/:id/tables/:table', async (req, reply) => {
+    const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
+    await s.stagedSources.removeTable(req.ctx, id, table);
+    return reply.code(204).send();
   });
 
   // ---------------------------------------------------------------------------

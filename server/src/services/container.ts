@@ -24,6 +24,7 @@ import { DiagnosticsService } from './diagnostics-service';
 import { PreflightService } from './preflight-service';
 import { RemediationService } from './remediation-service';
 import { ScheduleService, Scheduler } from './schedule-service';
+import { StagedSourceService } from './staged-source-service';
 import { PrincipalService } from './principal-service';
 import { ValidationService } from './validation-service';
 
@@ -116,6 +117,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
   );
   const schedules = new ScheduleService(db, runs, audit, logger);
+  const stagedSources = new StagedSourceService(db, audit, logger);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
@@ -177,6 +179,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     analysis,
     mappingWorkbooks,
     schedules,
+    stagedSources,
     createScheduler,
     diagnostics,
     remediation,

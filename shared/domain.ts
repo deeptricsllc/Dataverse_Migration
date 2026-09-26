@@ -29,14 +29,34 @@ export interface SessionResponseDto {
   realTenantReadOnly: boolean;
 }
 
-export type EnvironmentProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'postgres' | 'demosql';
+export type EnvironmentProvider =
+  | 'dataverse'
+  | 'demo'
+  | 'sqlserver'
+  | 'azuresql'
+  | 'postgres'
+  | 'mysql'
+  | 'file'
+  | 'onedrive'
+  | 'sharepoint'
+  | 'demosql';
 export type ConnectionStatus = 'UNKNOWN' | 'CONNECTED' | 'FAILED';
 
 /** The kind of system a connection points at. Chosen by the user when adding a connection. */
-export type ConnectionType = 'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL' | 'POSTGRES';
+export type ConnectionType =
+  'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL' | 'POSTGRES' | 'MYSQL' | 'FILE' | 'ONEDRIVE' | 'SHAREPOINT';
 
 /** The connection types configured by hand rather than discovered. */
-export const SQL_CONNECTION_TYPES = ['SQL_SERVER', 'AZURE_SQL', 'POSTGRES'] as const;
+export const SQL_CONNECTION_TYPES = ['SQL_SERVER', 'AZURE_SQL', 'POSTGRES', 'MYSQL'] as const;
+
+/** Connection kinds whose rows are imported and kept rather than queried live. */
+export const STAGED_CONNECTION_TYPES = ['FILE', 'ONEDRIVE', 'SHAREPOINT'] as const;
+export type StagedConnectionType = (typeof STAGED_CONNECTION_TYPES)[number];
+
+export const isStagedConnection = (t: ConnectionType): t is StagedConnectionType =>
+  (STAGED_CONNECTION_TYPES as readonly string[]).includes(t);
+export const isSqlConnection = (t: ConnectionType): t is SqlConnectionType =>
+  (SQL_CONNECTION_TYPES as readonly string[]).includes(t);
 export type SqlConnectionType = (typeof SQL_CONNECTION_TYPES)[number];
 
 /** The port each server listens on unless told otherwise. */
@@ -44,6 +64,7 @@ export const DEFAULT_SQL_PORT: Record<SqlConnectionType, number> = {
   SQL_SERVER: 1433,
   AZURE_SQL: 1433,
   POSTGRES: 5432,
+  MYSQL: 3306,
 };
 
 /** The schema a table belongs to when its name does not say. */
@@ -51,6 +72,8 @@ export const DEFAULT_SQL_SCHEMA: Record<SqlConnectionType, string> = {
   SQL_SERVER: 'dbo',
   AZURE_SQL: 'dbo',
   POSTGRES: 'public',
+  // MySQL has no schema layer: a "schema" IS a database, so a table name needs no qualifier.
+  MYSQL: '',
 };
 
 /** Connections of the same family share a connector implementation and a metadata dialect. */
@@ -64,6 +87,10 @@ export const CONNECTION_TYPE_LABELS: Record<ConnectionType, string> = {
   SQL_SERVER: 'SQL Server',
   AZURE_SQL: 'Azure SQL',
   POSTGRES: 'PostgreSQL',
+  MYSQL: 'MySQL',
+  FILE: 'CSV / Excel file',
+  ONEDRIVE: 'OneDrive / SharePoint file',
+  SHAREPOINT: 'SharePoint list',
 };
 
 /**
@@ -1697,6 +1724,67 @@ export interface ScheduleRunHistoryItemDto {
 /** Why a run started. Recorded on the run so history distinguishes a person from a schedule. */
 export const RUN_TRIGGERS = ['MANUAL', 'SCHEDULED', 'TRIGGERED'] as const;
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
+
+// ---------------------------------------------------------------------------
+// Staged sources: everything that is not a live queryable database
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a staged table's rows came from.
+ *
+ * A spreadsheet, a list and a file in cloud storage have something in common that separates all of
+ * them from a database: you cannot ask them a question. There is no server to plan a query, no index
+ * to page by, no transaction. So instead of pretending otherwise, the rows are read once, kept, and
+ * re-read on demand — which also means the provenance of every row is recorded, and a migration can
+ * be repeated against exactly the data somebody signed off.
+ */
+export const STAGED_SOURCE_KINDS = ['UPLOAD', 'ONEDRIVE', 'SHAREPOINT'] as const;
+export type StagedSourceKind = (typeof STAGED_SOURCE_KINDS)[number];
+
+export const STAGED_SOURCE_LABELS: Record<StagedSourceKind, string> = {
+  UPLOAD: 'Uploaded file',
+  ONEDRIVE: 'OneDrive / SharePoint file',
+  SHAREPOINT: 'SharePoint list',
+};
+
+/** One imported table, with how it was read and what was inferred about it. */
+export interface StagedTableDto {
+  logicalName: string;
+  displayName: string;
+  kind: StagedSourceKind;
+  /** The file name, drive item or list this came from. */
+  sourceRef: string;
+  /** The sheet within a workbook, when there was more than one. */
+  sheetName: string | null;
+  rowCount: number;
+  columnCount: number;
+  /** The column that identifies a row, and whether it had to be invented. */
+  keyColumn: string;
+  keyIsSynthetic: boolean;
+  importedAt: string;
+  importedBy: string | null;
+  columns: StagedColumnDto[];
+}
+
+/** One inferred column, with the reasoning, so the guess is inspectable rather than magic. */
+export interface StagedColumnDto {
+  name: string;
+  type: AttributeType;
+  maxLength: number | null;
+  blanks: number;
+  distinct: number | null;
+  unique: boolean;
+  /** Why this type was chosen, in one line. */
+  reason: string;
+}
+
+/** What an import did, or would do. */
+export interface StagedImportResultDto {
+  tables: StagedTableDto[];
+  /** Sheets that were skipped, and why — an empty tab is normal and should not look like a failure. */
+  skipped: { name: string; reason: string }[];
+  totalRows: number;
+}
 
 export interface ApiErrorBody {
   error: { code: string; message: string; requestId?: string; details?: unknown };

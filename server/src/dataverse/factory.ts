@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
 import { POWER_PLATFORM_SCOPE } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
+import { isStagedConnection } from '../../../shared/domain';
 import type { SqlConnectionConfig, SqlConnectionType } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { demoRecords, type environments } from '../db/schema';
@@ -18,6 +19,7 @@ import { WebApiConnection } from './web-api-connection';
 import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
 import { PostgresConnector } from '../connectors/sql/postgres-connector';
+import { StagedConnector, stagedProvider } from '../connectors/staged/staged-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
 import {
   DEMO_SQL_ENVIRONMENTS,
@@ -88,6 +90,22 @@ export class ConnectionFactory {
         this.db,
         logger,
         this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+      );
+    }
+    // An imported source has no server to reach: its rows live in the platform's own database.
+    if (isStagedConnection(env.connectionType)) {
+      return new StagedConnector(
+        stagedProvider(
+          env.connectionType === 'ONEDRIVE'
+            ? 'ONEDRIVE'
+            : env.connectionType === 'SHAREPOINT'
+              ? 'SHAREPOINT'
+              : 'UPLOAD',
+        ),
+        env.url,
+        env.id,
+        this.db,
+        logger,
       );
     }
     if (!env.sqlConfig) {

@@ -126,6 +126,31 @@ export const DATAVERSE_CAPABILITIES: ConnectorCapabilities = {
   supportsIncrementalRead: true,
 };
 
+/**
+ * What an imported source can do.
+ *
+ * `supportsWrite: false` is the important one: it is what stops a file being offered as a migration
+ * target anywhere in the UI or the planner. Nothing here is aspirational — a file cannot be written
+ * back to, and the connector refuses rather than pretending.
+ */
+export const STAGED_CAPABILITIES: ConnectorCapabilities = {
+  supportsRead: true,
+  supportsWrite: false,
+  supportsTransactions: false,
+  supportsBatchWrite: false,
+  // There is no server-enforced uniqueness behind a spreadsheet column, so a detected key is a
+  // match hint, never a guarantee.
+  supportsAlternateKeys: false,
+  supportsOwnership: false,
+  supportsAuditImpersonation: false,
+  supportsChoices: false,
+  supportsServerSideLogicDetection: false,
+  supportsClientGeneratedIds: false,
+  supportsPrincipals: false,
+  // The filter is applied over the imported snapshot, which is all "since" can mean here.
+  supportsIncrementalRead: true,
+};
+
 export const SQL_CAPABILITIES: ConnectorCapabilities = {
   supportsRead: true,
   supportsWrite: true,
@@ -201,7 +226,17 @@ export interface MigrationConnector {
   dispose?(): Promise<void>;
 }
 
-export type ConnectorProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'postgres' | 'demosql';
+export type ConnectorProvider =
+  | 'dataverse'
+  | 'demo'
+  | 'sqlserver'
+  | 'azuresql'
+  | 'postgres'
+  | 'mysql'
+  | 'file'
+  | 'onedrive'
+  | 'sharepoint'
+  | 'demosql';
 
 /** Back-compatible alias: the Dataverse code predates the provider-neutral name. */
 export type DataverseConnection = MigrationConnector;

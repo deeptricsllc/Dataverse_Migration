@@ -49,6 +49,8 @@ export type AuditAction =
   | 'SCHEDULE_DELETED'
   | 'SCHEDULE_FIRED'
   | 'SCHEDULE_PAUSED'
+  | 'STAGED_SOURCE_IMPORTED'
+  | 'STAGED_SOURCE_TABLE_REMOVED'
   | 'DEMO_DATA_RESET';
 
 export interface AuditInput {

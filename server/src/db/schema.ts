@@ -49,6 +49,8 @@ import type {
   PrincipalTable,
   ProjectKind,
   ProjectStatus,
+  StagedColumnDto,
+  StagedSourceKind,
   RunTrigger,
   ScheduleMode,
   StatisticBasis,
@@ -1077,6 +1079,62 @@ export const migrationSchedules = pgTable(
   (t) => [
     index('migration_schedules_due_idx').on(t.enabled, t.nextRunAt),
     index('migration_schedules_plan_idx').on(t.planId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Staged sources (files, lists — anything read once and kept)
+// ---------------------------------------------------------------------------
+
+/**
+ * One imported table belonging to a staged connection.
+ *
+ * The metadata is stored because it was inferred, not declared: re-deriving it later from the rows
+ * could produce a different answer than the one the mapping was built against.
+ */
+export const stagedTables = pgTable(
+  'staged_tables',
+  {
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    displayName: text('display_name').notNull(),
+    kind: text('kind').$type<StagedSourceKind>().notNull(),
+    /** The file, drive item or list the rows were read from. */
+    sourceRef: text('source_ref').notNull(),
+    sheetName: text('sheet_name'),
+    rowCount: integer('row_count').notNull().default(0),
+    keyColumn: text('key_column').notNull(),
+    keyIsSynthetic: boolean('key_is_synthetic').notNull().default(true),
+    metadata: jsonb('metadata').$type<TableMetadata>().notNull(),
+    columns: jsonb('columns').$type<StagedColumnDto[]>().notNull(),
+    importedByUserId: uuid('imported_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    importedAt: ts('imported_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.environmentId, t.logicalName] })],
+);
+
+/**
+ * The rows themselves, one JSON object each.
+ *
+ * `ordinal` preserves the order the file had, which is the only order a spreadsheet has. It is also
+ * what the synthetic row key is built from, so a re-import of the same file addresses the same rows.
+ */
+export const stagedRows = pgTable(
+  'staged_rows',
+  {
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    recordId: text('record_id').notNull(),
+    ordinal: integer('ordinal').notNull(),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.environmentId, t.logicalName, t.recordId] }),
+    index('staged_rows_order_idx').on(t.environmentId, t.logicalName, t.ordinal),
   ],
 );
 

@@ -762,7 +762,12 @@ export class ProfilingService {
         if (examined >= limit) break outer;
         examined++;
         for (let i = 0; i < columns.length; i++) {
-          accumulators[i].add(record.values[columns[i].logicalName], record.id);
+          const name = columns[i].logicalName;
+          // A connector returns the primary key as the record's id, not as one of its values — that
+          // is the contract. Reading it out of `values` alone made every key column look completely
+          // empty, and therefore look like a column nobody had populated.
+          const value = name === pk ? (record.values[name] ?? record.id) : record.values[name];
+          accumulators[i].add(value, record.id);
         }
         const keyValue = record.values[pk];
         const key = keyValue === null || keyValue === undefined ? record.id : canonicalText(keyValue);

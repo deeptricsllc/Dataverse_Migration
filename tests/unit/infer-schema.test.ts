@@ -1,0 +1,227 @@
+import { describe, expect, it } from 'vitest';
+import { inferTable, ROW_KEY, toTableMetadata } from '../../server/src/connectors/staged/infer-schema';
+import { parseDelimited, prepareSheet, tableNameFor } from '../../server/src/services/staged-source-service';
+import { familyOf } from '../../shared/metadata';
+
+/**
+ * Working out what a spreadsheet's columns are.
+ *
+ * The inference is deliberately asymmetric: calling a text column a number makes every non-numeric
+ * row fail at migration time, while calling a number column text costs one conversion the engine
+ * already does. So a narrower type is only chosen when every non-empty value fits it — one "N/A" in a
+ * thousand rows keeps the column as text, which is the correct answer about that column.
+ */
+
+const infer = (headers: string[], rows: (string | number | boolean | null)[][]) =>
+  inferTable('t', 'T', headers, rows);
+
+const columnNamed = (headers: string[], rows: (string | number | boolean | null)[][], name: string) =>
+  infer(headers, rows).columns.find((c) => c.name === name)!;
+
+describe('column types', () => {
+  it('narrows only when every value fits', () => {
+    const headers = ['clean', 'dirty'];
+    const rows = [
+      ['1', '1'],
+      ['2', '2'],
+      // Not a blank — a real value that is not a number. "N/A" would count as empty, which is
+      // covered separately.
+      ['3', 'pending'],
+    ];
+    expect(columnNamed(headers, rows, 'clean').type).toBe('Integer');
+    // One unparseable value is the whole point: this column really does contain something else.
+    expect(columnNamed(headers, rows, 'dirty').type).toBe('String');
+    expect(columnNamed(headers, rows, 'dirty').reason).toMatch(/mixed values/);
+  });
+
+  it('treats the usual ways of writing nothing as nothing', () => {
+    const col = columnNamed(['amount'], [['10'], [''], ['-'], ['N/A'], ['NULL'], ['20']], 'amount');
+    // Those are blanks, not values, so the column is still numeric.
+    expect(col.type).toBe('Integer');
+    expect(col.blanks).toBe(4);
+  });
+
+  it('recognises numbers, dates, GUIDs and booleans', () => {
+    expect(columnNamed(['n'], [['1.5'], ['2.25']], 'n').type).toBe('Decimal');
+    expect(columnNamed(['d'], [['2026-01-31'], ['2026-02-01']], 'd').type).toBe('DateTime');
+    expect(columnNamed(['d'], [['2026-01-31T09:00:00Z']], 'd').type).toBe('DateTime');
+    expect(columnNamed(['g'], [['9f1c2b3a-0000-0000-0000-000000000001']], 'g').type).toBe('Uniqueidentifier');
+    expect(columnNamed(['b'], [['yes'], ['no'], ['YES']], 'b').type).toBe('Boolean');
+    expect(columnNamed(['b'], [['true'], ['false']], 'b').type).toBe('Boolean');
+  });
+
+  it('does not call a column of ones and zeroes a boolean', () => {
+    // A column of 0 and 1 is as often a count or a flag stored as a number. Reading it as a boolean
+    // would turn 1 into true and lose the ability to sum it.
+    const col = columnNamed(['qty'], [['0'], ['1'], ['1'], ['0']], 'qty');
+    expect(col.type).toBe('Integer');
+  });
+
+  it('refuses to guess which number is the day', () => {
+    // 03/04/2026 is two different dates depending on where the file came from, and there is nothing
+    // in the file that says which. Text is the honest answer.
+    const col = columnNamed(['when'], [['03/04/2026'], ['11/12/2026']], 'when');
+    expect(col.type).toBe('String');
+    expect(col.reason).toMatch(/ambiguous/);
+  });
+
+  it('keeps whole numbers it cannot hold exactly as text', () => {
+    // A 19-digit account number is not a quantity, and rounding it silently changes an identity.
+    const col = columnNamed(['account'], [['12345678901234567890'], ['12345678901234567891']], 'account');
+    expect(col.type).toBe('String');
+    expect(col.reason).toMatch(/too large/);
+  });
+
+  it('measures length and uniqueness, and says a column was empty', () => {
+    const col = columnNamed(['name'], [['abc'], ['abcdef'], ['']], 'name');
+    expect(col.maxLength).toBe(6);
+    expect(col.unique).toBe(true);
+    const empty = columnNamed(['unused'], [[''], [''], ['']], 'unused');
+    expect(empty.type).toBe('String');
+    expect(empty.reason).toMatch(/no values/);
+  });
+
+  it('gives a blank or duplicated heading a usable name instead of dropping its data', () => {
+    const table = infer(['id', '', 'Name', 'Name'], [['1', 'x', 'a', 'b']]);
+    expect(table.columns.map((c) => c.name)).toEqual(['id', 'column_2', 'Name', 'Name 2']);
+  });
+});
+
+describe('what identifies a row', () => {
+  it('uses a unique, always-present, key-shaped column', () => {
+    const table = infer(
+      ['customer_id', 'name'],
+      [
+        ['C1', 'Ann'],
+        ['C2', 'Bo'],
+      ],
+    );
+    expect(table.keyColumn).toBe('customer_id');
+    expect(table.keyIsSynthetic).toBe(false);
+  });
+
+  it('invents one rather than picking a column by accident', () => {
+    // `name` here is unique and never empty, but it is not a key: it stops being unique the moment
+    // a second Ann arrives — after the mapping was built on it.
+    const table = infer(
+      ['name', 'city'],
+      [
+        ['Ann', 'Leeds'],
+        ['Bo', 'York'],
+      ],
+    );
+    expect(table.keyIsSynthetic).toBe(true);
+    expect(table.keyColumn).toBe(ROW_KEY);
+  });
+
+  it('will not use a key column that has gaps or repeats', () => {
+    expect(
+      infer(
+        ['id', 'x'],
+        [
+          ['1', 'a'],
+          ['', 'b'],
+        ],
+      ).keyIsSynthetic,
+    ).toBe(true);
+    expect(
+      infer(
+        ['id', 'x'],
+        [
+          ['1', 'a'],
+          ['1', 'b'],
+        ],
+      ).keyIsSynthetic,
+    ).toBe(true);
+  });
+
+  it('picks a display column that reads like a label', () => {
+    expect(infer(['id', 'city', 'company_name'], [['1', 'Leeds', 'Acme']]).nameColumn).toBe('company_name');
+  });
+});
+
+describe('the metadata a file produces', () => {
+  it('is tabular, read-only and never a target', () => {
+    const meta = toTableMetadata(
+      infer(
+        ['customer_id', 'name', 'employees'],
+        [
+          ['C1', 'Acme', '10'],
+          ['C2', 'Globex', '20'],
+        ],
+      ),
+    );
+    // TABULAR is what makes the rest of the platform convert values out of it rather than copy them.
+    expect(meta.attributes.every((a) => familyOf(a) === 'TABULAR')).toBe(true);
+    // A file is never written to, and `isView` is how the planner already refuses a target.
+    expect(meta.isView).toBe(true);
+    expect(meta.attributes.every((a) => !a.isValidForCreate && !a.isValidForUpdate)).toBe(true);
+    expect(meta.attributes.every((a) => a.isValidForRead)).toBe(true);
+    // Nothing in a file is required: the file is the whole truth about what it contains.
+    expect(meta.attributes.every((a) => a.requiredLevel === 'None' || a.logicalName === ROW_KEY)).toBe(true);
+
+    expect(meta.primaryIdAttribute).toBe('customer_id');
+    expect(meta.primaryNameAttribute).toBe('name');
+    // A detected key is published as an alternate key so a migration can match on it.
+    expect(meta.keys[0].attributes).toEqual(['customer_id']);
+  });
+
+  it('adds the synthetic row key only when it had to', () => {
+    const withKey = toTableMetadata(infer(['id'], [['1']]));
+    expect(withKey.attributes.some((a) => a.logicalName === ROW_KEY)).toBe(false);
+    const without = toTableMetadata(infer(['city'], [['Leeds'], ['York']]));
+    expect(without.primaryIdAttribute).toBe(ROW_KEY);
+    // A row number means nothing outside this import, so it is never mapped anywhere.
+    const rowKey = without.attributes.find((a) => a.logicalName === ROW_KEY)!;
+    expect(rowKey.isValidForCreate).toBe(false);
+    expect(without.keys).toEqual([]);
+  });
+});
+
+describe('reading the file itself', () => {
+  it('detects the delimiter instead of assuming a comma', () => {
+    // A CSV exported in a locale that uses the comma for decimals is semicolon-delimited. Reading it
+    // as commas produces one column of nonsense rather than an error.
+    const semi = parseDelimited('name;amount\r\nAcme;1,50\r\nGlobex;2,75');
+    expect(semi[0]).toEqual(['name', 'amount']);
+    expect(semi[1][0]).toBe('Acme');
+    const tabbed = parseDelimited('name\tamount\nAcme\t10');
+    expect(tabbed[0]).toEqual(['name', 'amount']);
+    const comma = parseDelimited('name,amount\nAcme,10');
+    expect(comma[1]).toEqual(['Acme', '10']);
+  });
+
+  it('respects quoting when detecting and when splitting', () => {
+    const rows = parseDelimited('name,note\n"Acme, Inc.","said ""hello"""');
+    expect(rows[1]).toEqual(['Acme, Inc.', 'said "hello"']);
+  });
+
+  it('finds the header row under a title and a blank line', () => {
+    // Real exports put a title and a date above the header.
+    const found = prepareSheet({
+      name: 'Sheet1',
+      rows: [['Customer export'], [], ['id', 'name'], ['1', 'Acme']],
+    })!;
+    expect(found.headers).toEqual(['id', 'name']);
+    expect(found.rows).toEqual([['1', 'Acme']]);
+  });
+
+  it('drops trailing empty columns and fully empty rows', () => {
+    const found = prepareSheet({
+      name: 'S',
+      rows: [['id', 'name', '', ''], ['1', 'Acme', '', ''], [], ['2', 'Globex', '', '']],
+    })!;
+    expect(found.headers).toEqual(['id', 'name']);
+    expect(found.rows).toHaveLength(2);
+  });
+
+  it('reports a sheet with nothing in it rather than failing', () => {
+    expect(prepareSheet({ name: 'Empty', rows: [] })).toBeNull();
+    expect(prepareSheet({ name: 'HeaderOnly', rows: [['id', 'name']] })).toBeNull();
+  });
+
+  it('makes a stable table name from a file name', () => {
+    expect(tableNameFor('Customer Export (2026).csv', 'x')).toBe('customer_export_2026');
+    expect(tableNameFor('', 'Sheet1')).toBe('sheet1');
+  });
+});

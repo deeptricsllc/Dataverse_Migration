@@ -55,11 +55,13 @@ const SCHEMES: Record<SqlConnectionType, string> = {
   SQL_SERVER: 'sqlserver',
   AZURE_SQL: 'azuresql',
   POSTGRES: 'postgresql',
+  MYSQL: 'mysql',
 };
 const PROVIDERS: Record<SqlConnectionType, EnvironmentProvider> = {
   SQL_SERVER: 'sqlserver',
   AZURE_SQL: 'azuresql',
   POSTGRES: 'postgres',
+  MYSQL: 'mysql',
 };
 
 export class ConnectionService {
