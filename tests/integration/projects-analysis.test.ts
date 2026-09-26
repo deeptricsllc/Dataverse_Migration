@@ -309,6 +309,9 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
     expect(after.mappings.find((m) => m.sourceField === 'Email')!.targetField).toBe('emailaddress1');
   });
 
+  /** Excel writes a byte-order mark at the front of a CSV; the importer has to see past it. */
+  const BOM = String.fromCharCode(0xfeff);
+
   it('accepts the CSV somebody inevitably sends back instead of the workbook', async () => {
     const csv = [
       'Source table,Source field,Target field,Transformation',
@@ -316,7 +319,7 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
     ].join('\r\n');
     const preview = await api.post<MappingImportPreviewDto>(`/api/plans/${plan.id}/mapping-workbook`, {
       filename: 'mapping.csv',
-      contentBase64: Buffer.from(`﻿${csv}`, 'utf8').toString('base64'),
+      contentBase64: Buffer.from(BOM + csv, 'utf8').toString('base64'),
     });
     expect(preview.matched).toBe(1);
     expect(preview.changes[0]).toMatchObject({ field: 'Phone', to: 'telephone1', action: 'MAP' });
