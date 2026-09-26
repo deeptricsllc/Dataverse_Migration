@@ -1420,6 +1420,14 @@ export interface AuditEventDto {
 
 export interface DashboardDto {
   environments: { total: number; connected: number };
+  /** Work in progress, which is what the dashboard is now organized around. */
+  projects: { analysis: number; migration: number };
+  analyses: { total: number; completed: number; active: number; blockers: number };
+  schedules: { total: number; enabled: number; paused: number; needsAttention: number };
+  recentProjects: ProjectDto[];
+  recentAnalyses: AnalysisRunListItemDto[];
+  /** Schedules due next, so the dashboard says what will happen without anyone asking. */
+  upcomingSchedules: MigrationScheduleDto[];
   migrationRuns: { total: number; completed: number; withErrors: number; failed: number; active: number };
   validationRuns: { total: number; pass: number; warning: number; fail: number };
   recentMigrationRuns: MigrationRunListItemDto[];

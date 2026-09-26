@@ -125,6 +125,8 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     comparisons,
     runs,
     validation,
+    projectsSvc,
+    analysis,
   );
 
   /**

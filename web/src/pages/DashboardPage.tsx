@@ -1,14 +1,14 @@
-import type { DashboardDto } from '@shared/domain';
+import { PROJECT_KIND_LABELS, type DashboardDto } from '@shared/domain';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, GitCompareArrows, Plus } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarClock, FolderPlus, Microscope, Truck } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { WorkspaceHeader } from '../components/Layout';
 import {
   Button,
   Card,
   EmptyState,
   ErrorState,
   PageHeader,
+  Pill,
   Spinner,
   Stat,
   StatusBadge,
@@ -18,124 +18,195 @@ import {
 } from '../components/ui';
 import { get } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
-import { useSession, useWorkspace } from '../lib/session';
+import { useSession } from '../lib/session';
 
+/**
+ * The dashboard.
+ *
+ * Organized around work rather than around subsystems, because "what am I in the middle of" is the
+ * question someone opening this actually has. Projects first, then what is running or about to run,
+ * then history. The primary action is a new project, since that is now where everything starts.
+ */
 export function DashboardPage() {
   const { user } = useSession();
   const navigate = useNavigate();
-  const { ready } = useWorkspace();
   const q = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => get<DashboardDto>('/api/dashboard'),
     refetchInterval: 10_000,
   });
 
+  const d = q.data;
+  const nothingYet = d && d.projects.analysis + d.projects.migration === 0 && d.migrationRuns.total === 0;
+
   return (
     <>
       <PageHeader
         title={`Welcome, ${user.displayName.split(' ')[0]}`}
-        description="Overview of your environments, migrations and validations."
+        description="Analyse a source to understand it, or migrate data into a target. Work lives in projects."
         actions={
           <Button
             variant="primary"
-            icon={<Plus className="h-4 w-4" />}
-            onClick={() => navigate(ready ? '/migration/new' : '/environments')}
+            icon={<FolderPlus className="h-4 w-4" />}
+            data-testid="dashboard-new-project"
+            onClick={() => navigate('/projects')}
           >
-            New Migration
+            New project
           </Button>
         }
       />
-      <div className="mb-6 rounded-lg border border-slate-200 bg-slate-100/70 p-3">
-        <WorkspaceHeader />
-      </div>
+
       {q.isLoading && <Spinner />}
       {q.error && <ErrorState error={q.error} onRetry={() => q.refetch()} />}
-      {q.data && (
+
+      {d && nothingYet && (
+        <EmptyState
+          icon={<Microscope className="h-6 w-6" />}
+          title="Nothing here yet"
+          description={
+            d.environments.total === 0
+              ? 'Add a connection first, then create an analysis project to find out what is in the source.'
+              : 'Create an analysis project to find out what is in a source, then a migration project that uses what it found.'
+          }
+          action={
+            <Button
+              variant="primary"
+              onClick={() => navigate(d.environments.total === 0 ? '/environments' : '/projects')}
+            >
+              {d.environments.total === 0 ? 'Add a connection' : 'New project'}
+            </Button>
+          }
+        />
+      )}
+
+      {d && !nothingYet && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
             <Stat
-              label="Environments"
-              value={q.data.environments.total}
-              hint={`${q.data.environments.connected} connected`}
+              label="Analysis projects"
+              value={fmtNumber(d.projects.analysis)}
+              tone="violet"
+              hint={d.analyses.active > 0 ? `${d.analyses.active} running` : `${d.analyses.completed} run`}
+              onClick={() => navigate('/projects')}
+            />
+            <Stat
+              label="Migration projects"
+              value={fmtNumber(d.projects.migration)}
+              tone="blue"
+              onClick={() => navigate('/projects')}
+            />
+            <Stat
+              label="Findings"
+              value={fmtNumber(d.analyses.blockers)}
+              tone={d.analyses.blockers > 0 ? 'red' : 'green'}
+              hint="blockers in the source"
+            />
+            <Stat
+              label="Connections"
+              value={fmtNumber(d.environments.total)}
+              hint={`${d.environments.connected} connected`}
               onClick={() => navigate('/environments')}
             />
             <Stat
-              label="Migration runs"
-              value={q.data.migrationRuns.total}
-              hint={q.data.migrationRuns.active ? `${q.data.migrationRuns.active} active` : 'none active'}
+              label="Migrations"
+              value={fmtNumber(d.migrationRuns.total)}
+              hint={
+                d.migrationRuns.active > 0
+                  ? `${d.migrationRuns.active} active`
+                  : `${d.migrationRuns.withErrors + d.migrationRuns.failed} with problems`
+              }
+              tone={d.migrationRuns.active > 0 ? 'amber' : 'default'}
               onClick={() => navigate('/runs')}
             />
             <Stat
-              label="Succeeded"
-              tone="green"
-              value={q.data.migrationRuns.completed}
-              hint={`${q.data.migrationRuns.withErrors} with errors`}
-            />
-            <Stat
-              label="Failed runs"
-              tone={q.data.migrationRuns.failed ? 'red' : 'default'}
-              value={q.data.migrationRuns.failed}
-            />
-            <Stat
-              label="Validations"
-              value={q.data.validationRuns.total}
-              hint={`${q.data.validationRuns.pass} pass · ${q.data.validationRuns.warning} warn · ${q.data.validationRuns.fail} fail`}
-              onClick={() => navigate('/validation')}
+              label="Schedules"
+              value={fmtNumber(d.schedules.enabled)}
+              tone={d.schedules.needsAttention > 0 ? 'red' : d.schedules.enabled > 0 ? 'green' : 'default'}
+              hint={
+                d.schedules.needsAttention > 0
+                  ? `${d.schedules.needsAttention} need attention`
+                  : `${d.schedules.total} in total`
+              }
             />
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          {d.schedules.needsAttention > 0 && (
             <Card
-              className="lg:col-span-2"
-              title="Recent migration runs"
+              title="Schedules that need attention"
+              subtitle="A schedule pauses itself rather than repeating the same failure. Open its plan to see why."
+              actions={<AlertTriangle className="h-4 w-4 text-red-600" />}
+            >
+              <div className="space-y-2">
+                {d.upcomingSchedules
+                  .filter((s) => s.pausedReason || s.lastStatus === 'FAILED')
+                  .map((s) => (
+                    <div key={s.id} className="text-sm">
+                      <Link
+                        to={`/migration/plans/${s.planId}?step=review`}
+                        className="font-medium text-brand-700 hover:underline"
+                      >
+                        {s.planName}
+                      </Link>{' '}
+                      <span className="text-slate-500">— {s.name}.</span>{' '}
+                      <span className="text-red-700">{s.pausedReason ?? s.lastError}</span>
+                    </div>
+                  ))}
+                {d.upcomingSchedules.every((s) => !s.pausedReason && s.lastStatus !== 'FAILED') && (
+                  <p className="text-sm text-slate-600">
+                    Open the plan a schedule belongs to for the details.
+                  </p>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card
+              title="Projects"
+              subtitle="Most recently worked on."
+              data-testid="dashboard-projects"
               actions={
-                <Link to="/runs" className="text-xs font-medium text-brand-700 hover:underline">
-                  View all
+                <Link to="/projects" className="text-xs text-brand-700 hover:underline">
+                  All projects
                 </Link>
               }
-              bodyClassName="p-0"
             >
-              {q.data.recentMigrationRuns.length === 0 ? (
-                <EmptyState
-                  title="No migration runs yet"
-                  description="Select a source and target, analyze them and build a migration plan."
-                  action={
-                    <Button variant="primary" onClick={() => navigate('/migration/new')}>
-                      Start a migration
-                    </Button>
-                  }
-                />
+              {d.recentProjects.length === 0 ? (
+                <p className="text-sm text-slate-500">No projects yet.</p>
               ) : (
                 <Table>
-                  <thead className="bg-slate-50">
+                  <thead>
                     <tr>
-                      <Th>Plan</Th>
-                      <Th>Source → Target</Th>
-                      <Th>Status</Th>
-                      <Th className="text-right">Processed</Th>
-                      <Th>Started</Th>
+                      <Th>Name</Th>
+                      <Th>Kind</Th>
+                      <Th>Source</Th>
+                      <Th>Updated</Th>
+                      <Th />
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {q.data.recentMigrationRuns.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="cursor-pointer hover:bg-slate-50"
-                        onClick={() => navigate(`/runs/${r.id}`)}
-                      >
-                        <Td className="font-medium text-slate-900">{r.planName}</Td>
+                  <tbody>
+                    {d.recentProjects.map((p) => (
+                      <tr key={p.id} className="hover:bg-slate-50">
                         <Td>
-                          {r.sourceEnvironment.displayName} <ArrowRight className="inline h-3 w-3" />{' '}
-                          {r.targetEnvironment.displayName}
+                          <Link
+                            to={`/projects/${p.id}`}
+                            className="font-medium text-brand-700 hover:underline"
+                          >
+                            {p.name}
+                          </Link>
                         </Td>
                         <Td>
-                          <StatusBadge status={r.status} />
+                          <Pill tone={p.kind === 'ANALYSIS' ? 'violet' : 'blue'}>
+                            {PROJECT_KIND_LABELS[p.kind]}
+                          </Pill>
                         </Td>
-                        <Td className="text-right tabular-nums">
-                          {fmtNumber(r.processed)} / {fmtNumber(r.total)}
-                          {r.failed > 0 && <span className="ml-1 text-red-600">({r.failed} failed)</span>}
+                        <Td className="text-xs text-slate-500">{p.sourceEnvironment?.displayName ?? '—'}</Td>
+                        <Td className="text-xs text-slate-500">{fmtRelative(p.updatedAt)}</Td>
+                        <Td>
+                          <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`}>
+                            <ArrowRight className="h-4 w-4 text-slate-400" />
+                          </Link>
                         </Td>
-                        <Td className="text-slate-500">{fmtRelative(r.createdAt)}</Td>
                       </tr>
                     ))}
                   </tbody>
@@ -143,80 +214,187 @@ export function DashboardPage() {
               )}
             </Card>
 
-            <div className="space-y-6">
-              <Card title="Last environment comparison">
-                {q.data.lastComparison ? (
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-600">
-                        {q.data.lastComparison.sourceEnvironment.displayName} →{' '}
-                        {q.data.lastComparison.targetEnvironment.displayName}
-                      </span>
-                      <StatusBadge status={q.data.lastComparison.status} />
-                    </div>
-                    {q.data.lastComparison.summary && (
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <MiniStat label="Match" value={q.data.lastComparison.summary.match} />
-                        <MiniStat
-                          label="Different"
-                          value={
-                            q.data.lastComparison.summary.different +
-                            q.data.lastComparison.summary.incompatible
-                          }
-                        />
-                        <MiniStat label="Missing" value={q.data.lastComparison.summary.sourceOnly} />
-                      </div>
-                    )}
-                    <Link
-                      to={`/compare/${q.data.lastComparison.id}`}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-                    >
-                      Open comparison <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  </div>
-                ) : (
-                  <EmptyState
-                    icon={<GitCompareArrows className="h-6 w-6" />}
-                    title="No comparisons yet"
-                    action={<Button onClick={() => navigate('/compare')}>Analyze environments</Button>}
-                  />
-                )}
-              </Card>
-              <Card title="Recent validations" bodyClassName="p-0">
-                {q.data.recentValidationRuns.length === 0 ? (
-                  <p className="px-5 py-4 text-sm text-slate-500">No validation runs yet.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {q.data.recentValidationRuns.map((v) => (
-                      <li key={v.id}>
-                        <Link
-                          to={`/validation/${v.id}`}
-                          className="flex items-center justify-between px-5 py-2.5 text-sm hover:bg-slate-50"
-                        >
-                          <span className="truncate text-slate-700">
-                            {v.sourceEnvironment.displayName} → {v.targetEnvironment.displayName}
-                            <span className="block text-xs text-slate-500">{fmtRelative(v.createdAt)}</span>
-                          </span>
-                          <StatusBadge status={v.outcome ?? v.status} />
-                        </Link>
-                      </li>
+            <Card
+              title="Recent analyses"
+              subtitle="What the source actually contains, as last measured."
+              actions={<Microscope className="h-4 w-4 text-violet-600" />}
+            >
+              {d.recentAnalyses.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No analyses yet. An analysis project reads a source and reports what is in it — read-only,
+                  with no target involved.
+                </p>
+              ) : (
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Analysis</Th>
+                      <Th>Status</Th>
+                      <Th className="text-right">Tables</Th>
+                      <Th className="text-right">Records</Th>
+                      <Th>Statistics</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.recentAnalyses.map((a) => (
+                      <tr key={a.id} className="hover:bg-slate-50">
+                        <Td>
+                          <Link
+                            to={`/analyses/${a.id}`}
+                            className="font-medium text-brand-700 hover:underline"
+                          >
+                            {a.name}
+                          </Link>
+                        </Td>
+                        <Td>
+                          <StatusBadge status={a.status} />
+                        </Td>
+                        <Td className="text-right tabular-nums">{fmtNumber(a.totals.tables)}</Td>
+                        <Td className="text-right tabular-nums">{fmtNumber(a.totals.records)}</Td>
+                        <Td className="text-xs">
+                          {a.basis ? (
+                            <span className={a.basis === 'EXACT' ? 'text-emerald-700' : 'text-amber-700'}>
+                              {a.basis === 'EXACT' ? 'exact' : 'sampled'}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </Td>
+                      </tr>
                     ))}
-                  </ul>
-                )}
-              </Card>
-            </div>
+                  </tbody>
+                </Table>
+              )}
+            </Card>
           </div>
+
+          {d.upcomingSchedules.length > 0 && (
+            <Card
+              title="Running next"
+              subtitle="Scheduled migrations, so what happens next is visible without asking."
+              actions={<CalendarClock className="h-4 w-4 text-slate-500" />}
+              data-testid="dashboard-schedules"
+            >
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Plan</Th>
+                    <Th>Schedule</Th>
+                    <Th>Reads</Th>
+                    <Th>Next run</Th>
+                    <Th>Last run</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.upcomingSchedules.map((s) => (
+                    <tr key={s.id} className="hover:bg-slate-50">
+                      <Td>
+                        <Link
+                          to={`/migration/plans/${s.planId}?step=review`}
+                          className="font-medium text-brand-700 hover:underline"
+                        >
+                          {s.planName}
+                        </Link>
+                      </Td>
+                      <Td className="text-xs text-slate-600">
+                        {s.description}
+                        <span className="text-slate-400"> · {s.timeZone}</span>
+                      </Td>
+                      <Td className="text-xs">
+                        {s.mode === 'INCREMENTAL' ? (
+                          <Pill tone="violet">only what changed</Pill>
+                        ) : (
+                          <span className="text-slate-500">everything</span>
+                        )}
+                      </Td>
+                      <Td className="text-xs text-slate-600">
+                        {s.nextRunAt ? fmtRelative(s.nextRunAt) : '—'}
+                      </Td>
+                      <Td className="text-xs">
+                        {s.lastStatus ? <StatusBadge status={s.lastStatus} /> : '—'}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </Card>
+          )}
+
+          {d.recentMigrationRuns.length > 0 && (
+            <Card
+              title="Recent migrations"
+              subtitle="What was written, and what happened."
+              actions={
+                <Link to="/runs" className="text-xs text-brand-700 hover:underline">
+                  All runs
+                </Link>
+              }
+            >
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Plan</Th>
+                    <Th>Status</Th>
+                    <Th>Route</Th>
+                    <Th className="text-right">Records</Th>
+                    <Th className="text-right">Processed</Th>
+                    <Th className="text-right">Failed</Th>
+                    <Th>Started</Th>
+                    <Th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.recentMigrationRuns.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <Td className="font-medium">{r.planName}</Td>
+                      <Td>
+                        <StatusBadge status={r.status} />
+                      </Td>
+                      <Td className="text-xs text-slate-500">
+                        {r.sourceEnvironment.displayName} → {r.targetEnvironment.displayName}
+                      </Td>
+                      <Td className="text-right tabular-nums">{fmtNumber(r.total)}</Td>
+                      <Td className="text-right tabular-nums">{fmtNumber(r.processed)}</Td>
+                      <Td className="text-right tabular-nums">
+                        {r.failed > 0 ? <span className="text-red-700">{fmtNumber(r.failed)}</span> : '—'}
+                      </Td>
+                      <Td className="text-xs text-slate-500">{fmtRelative(r.createdAt)}</Td>
+                      <Td>
+                        <Link to={`/runs/${r.id}`} aria-label={`Open run of ${r.planName}`}>
+                          <ArrowRight className="h-4 w-4 text-slate-400" />
+                        </Link>
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            </Card>
+          )}
+
+          {d.projects.migration === 0 && d.projects.analysis > 0 && (
+            <Card title="Next step">
+              <p className="text-sm text-slate-600">
+                You have analysed a source. Create a{' '}
+                <Link to="/projects" className="text-brand-700 underline">
+                  migration project
+                </Link>{' '}
+                based on that analysis, and its mapping workbook will already carry the record counts, empty
+                columns and findings the analysis measured.
+              </p>
+              <div className="mt-3">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Truck className="h-3.5 w-3.5" />}
+                  onClick={() => navigate('/projects')}
+                >
+                  New migration project
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       )}
     </>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md bg-slate-50 py-2">
-      <div className="text-lg font-semibold tabular-nums text-slate-900">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-slate-500">{label}</div>
-    </div>
   );
 }
