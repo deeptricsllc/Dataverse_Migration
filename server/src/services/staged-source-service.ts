@@ -10,6 +10,14 @@ import {
 import type { AppDb } from '../db/client';
 import { environmentAccess, environments, stagedRows, stagedTables, users } from '../db/schema';
 import { inferTable, ROW_KEY, toTableMetadata, type InferredTable } from '../connectors/staged/infer-schema';
+import {
+  fetchDriveItem,
+  fetchListRows,
+  graphRequester,
+  resolveGraphTarget,
+  resolveListReference,
+  type GraphRequest,
+} from '../connectors/staged/graph';
 import { stagedProvider } from '../connectors/staged/staged-connector';
 import { readXlsx, type XlsxReadSheet } from '../lib/xlsx';
 import { badRequest, notFound } from '../lib/errors';
@@ -41,6 +49,8 @@ export class StagedSourceService {
     private readonly db: AppDb,
     private readonly audit: AuditService,
     private readonly logger: Logger,
+    /** Issues a delegated Microsoft Graph token. Absent when the feature is switched off. */
+    private readonly graphToken?: (userId: string) => Promise<string>,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -209,6 +219,92 @@ export class StagedSourceService {
       'Staged source imported',
     );
     return result;
+  }
+
+  /**
+   * Imports a spreadsheet out of OneDrive or a SharePoint document library.
+   *
+   * The fetch is the only new part: once the bytes are here they go through exactly the same reader,
+   * inference and storage a local upload does, so a file behaves the same however it arrived.
+   */
+  async importFromGraph(
+    ctx: RequestContext,
+    environmentId: string,
+    input: { reference: string },
+    request?: GraphRequest,
+  ): Promise<StagedImportResultDto> {
+    const env = await this.stagedEnvironment(ctx, environmentId);
+    const graph = request ?? (await this.requester(ctx));
+    const target = resolveGraphTarget(input.reference);
+    const item = await fetchDriveItem(graph, target);
+    this.logger.info(
+      { environmentId: env.id, name: item.name, size: item.size },
+      'Fetched a file from Microsoft Graph',
+    );
+    return this.importFile(
+      ctx,
+      environmentId,
+      { filename: item.name, content: item.content },
+      { kind: 'ONEDRIVE', sourceRef: target.sourceRef },
+    );
+  }
+
+  /**
+   * Imports a SharePoint list.
+   *
+   * The list's own column types are deliberately ignored in favour of inferring from the values: a
+   * column declared Text routinely holds numbers and one declared Number routinely holds blanks, so
+   * the values are the better evidence — and the reasoning is then reported the same way it is for a
+   * spreadsheet.
+   */
+  async importFromSharePointList(
+    ctx: RequestContext,
+    environmentId: string,
+    input: { reference: string },
+    request?: GraphRequest,
+  ): Promise<StagedImportResultDto> {
+    const env = await this.stagedEnvironment(ctx, environmentId);
+    const graph = request ?? (await this.requester(ctx));
+    const ref = resolveListReference(input.reference);
+    const list = await fetchListRows(graph, ref, { maxRows: MAX_ROWS_PER_TABLE });
+    if (list.rows.length === 0) {
+      throw badRequest(`The list "${list.displayName}" has no items to import.`);
+    }
+
+    const logicalName = tableNameFor(list.displayName, ref.listId);
+    const inferred = inferTable(logicalName, list.displayName, list.headers, list.rows);
+    await this.store(ctx, env.id, 'SHAREPOINT', input.reference, null, inferred, {
+      headers: list.headers,
+      rows: list.rows,
+    });
+    const table = await this.tableDto(env.id, logicalName);
+    await this.db
+      .update(environments)
+      .set({
+        connectionStatus: 'CONNECTED',
+        connectionMessage: `1 list, ${inferred.rowCount.toLocaleString()} item(s)`,
+      })
+      .where(eq(environments.id, env.id));
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'STAGED_SOURCE_IMPORTED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: env.id,
+      requestId: ctx.requestId,
+      details: { sourceRef: input.reference, kind: 'SHAREPOINT', rows: inferred.rowCount },
+    });
+    return { tables: [table], skipped: [], totalRows: inferred.rowCount };
+  }
+
+  /** A Graph caller for the signed-in user, or a clear refusal when the feature is off. */
+  private async requester(ctx: RequestContext): Promise<GraphRequest> {
+    if (!this.graphToken) {
+      throw badRequest(
+        'Reading from OneDrive and SharePoint is switched off for this deployment. It needs MICROSOFT_FILES_ENABLED and a Microsoft sign-in, because the files are read with your own account.',
+      );
+    }
+    return graphRequester(await this.graphToken(ctx.userId));
   }
 
   /** Writes one inferred table and its rows, replacing whatever was there before. */

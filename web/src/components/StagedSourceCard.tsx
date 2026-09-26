@@ -22,6 +22,9 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [lastImport, setLastImport] = useState<StagedImportResultDto | null>(null);
+  const [reference, setReference] = useState('');
+  const kind = environment.connectionType;
+  const fromGraph = kind === 'ONEDRIVE' || kind === 'SHAREPOINT';
 
   const tables = useQuery({
     queryKey: ['staged-tables', environment.id],
@@ -52,6 +55,22 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
     },
   });
 
+  /** OneDrive and SharePoint are fetched with the signed-in user's own account, not a stored secret. */
+  const importReference = useMutation({
+    mutationFn: () =>
+      post<StagedImportResultDto>(
+        `/api/staged-sources/${environment.id}/${
+          kind === 'SHAREPOINT' ? 'import-sharepoint-list' : 'import-onedrive'
+        }`,
+        { reference: reference.trim() },
+      ),
+    onSuccess: (result) => {
+      setLastImport(result);
+      invalidate();
+      setReference('');
+    },
+  });
+
   const remove = useMutation({
     mutationFn: (logicalName: string) =>
       api<void>('DELETE', `/api/staged-sources/${environment.id}/tables/${encodeURIComponent(logicalName)}`),
@@ -64,6 +83,45 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
       subtitle="A file has no server to query, so its rows are read once and kept here. Re-importing a file replaces it."
       data-testid={`staged-source-${environment.id}`}
     >
+      {fromGraph && (
+        <div className="mb-3 rounded-lg border border-dashed border-slate-300 p-4">
+          <label
+            className="mb-1.5 block text-sm font-medium text-slate-700"
+            htmlFor={`ref-${environment.id}`}
+          >
+            {kind === 'SHAREPOINT' ? 'SharePoint list' : 'OneDrive or SharePoint file'}
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id={`ref-${environment.id}`}
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder={
+                kind === 'SHAREPOINT'
+                  ? 'sites/{site-id}/lists/{list-id}'
+                  : 'Paste the sharing link, or drives/{drive-id}/items/{item-id}'
+              }
+              className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            <Button
+              icon={<Upload className="h-3.5 w-3.5" />}
+              disabled={!reference.trim()}
+              loading={importReference.isPending}
+              data-testid="import-reference"
+              onClick={() => importReference.mutate()}
+            >
+              Import
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            {kind === 'SHAREPOINT'
+              ? 'A list is read with your own account. Its column types are ignored in favour of what the values actually are, the same as for a spreadsheet.'
+              : 'The file is read with your own account, so you can only import what you can already open. Nothing is stored except the rows and where they came from.'}
+          </p>
+          {importReference.error && <ErrorState error={importReference.error} />}
+        </div>
+      )}
+
       <div className="rounded-lg border border-dashed border-slate-300 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <FileSpreadsheet className="h-5 w-5 text-slate-400" />

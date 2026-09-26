@@ -291,7 +291,16 @@ export function ConnectionModal({
             <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               {(
-                ['DATAVERSE', 'SQL_SERVER', 'AZURE_SQL', 'POSTGRES', 'MYSQL', 'FILE'] as ConnectionType[]
+                [
+                  'DATAVERSE',
+                  'SQL_SERVER',
+                  'AZURE_SQL',
+                  'POSTGRES',
+                  'MYSQL',
+                  'FILE',
+                  'ONEDRIVE',
+                  'SHAREPOINT',
+                ] as ConnectionType[]
               ).map((t) => (
                 <label
                   key={t}

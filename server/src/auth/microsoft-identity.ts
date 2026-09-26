@@ -10,6 +10,7 @@ import {
 import { eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config';
+import { GRAPH_READ_SCOPES } from '../connectors/staged/graph';
 import type { AppDb } from '../db/client';
 import { tokenCaches, users } from '../db/schema';
 import { SecretBox } from '../lib/crypto';
@@ -42,6 +43,9 @@ export const discoveryScope = (discoveryUrl: string) =>
   `${discoveryUrl.replace(/\/+$/, '')}/user_impersonation`;
 /** Delegated scope for a specific Dataverse environment (first candidate; see scopeCandidates). */
 export const dataverseScope = (environmentUrl: string) => scopeCandidates(environmentUrl)[0];
+
+/** A delegated Microsoft Graph token, for reading files and lists. */
+export const graphScopes = () => GRAPH_READ_SCOPES;
 export const POWER_PLATFORM_SCOPE = 'https://service.powerapps.com//.default';
 
 export interface SignInResult {
@@ -112,6 +116,9 @@ export class MicrosoftIdentityService {
         'email',
         'offline_access',
         discoveryScope(this.config.DATAVERSE_DISCOVERY_URL),
+        // Only when reading files from OneDrive and SharePoint is switched on. Consent has to be
+        // asked for at sign-in, so a deployment that does not use it never asks.
+        ...(this.config.MICROSOFT_FILES_ENABLED ? GRAPH_READ_SCOPES : []),
       ],
       redirectUri: this.config.redirectUri,
       state: params.state,

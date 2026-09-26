@@ -42,6 +42,14 @@ const schema = z.object({
   ADMIN_EMAILS: z.string().optional(),
 
   DATAVERSE_DISCOVERY_URL: z.string().url().default('https://globaldisco.crm.dynamics.com'),
+  /**
+   * Reading files from OneDrive and SharePoint, and SharePoint lists.
+   *
+   * Off by default on purpose: switching it on adds Files.Read.All and Sites.Read.All to what every
+   * user is asked to consent to at sign-in. That is a decision for whoever runs the tenant, not a
+   * default — and a deployment that does not use it should never ask.
+   */
+  MICROSOFT_FILES_ENABLED: z.coerce.boolean().default(false),
   DATAVERSE_API_VERSION: z.string().default('v9.2'),
   POWER_PLATFORM_ENRICHMENT: bool(false),
   ALLOW_BUSINESS_LOGIC_BYPASS: bool(false),

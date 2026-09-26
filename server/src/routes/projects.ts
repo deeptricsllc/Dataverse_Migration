@@ -328,6 +328,20 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     });
   });
 
+  /** Imports a spreadsheet out of OneDrive or a SharePoint document library. */
+  app.post('/api/staged-sources/:id/import-onedrive', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { reference } = z.object({ reference: z.string().min(1).max(2000) }).parse(req.body);
+    return s.stagedSources.importFromGraph(req.ctx, id, { reference });
+  });
+
+  /** Imports a SharePoint list, given as sites/{site-id}/lists/{list-id}. */
+  app.post('/api/staged-sources/:id/import-sharepoint-list', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { reference } = z.object({ reference: z.string().min(1).max(2000) }).parse(req.body);
+    return s.stagedSources.importFromSharePointList(req.ctx, id, { reference });
+  });
+
   app.delete('/api/staged-sources/:id/tables/:table', async (req, reply) => {
     const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
     await s.stagedSources.removeTable(req.ctx, id, table);

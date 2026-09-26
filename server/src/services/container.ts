@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import { AuthService } from '../auth/auth-service';
-import { MicrosoftIdentityService } from '../auth/microsoft-identity';
+import { graphScopes, MicrosoftIdentityService } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import { ConnectionFactory } from '../dataverse/factory';
@@ -117,7 +117,16 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
   );
   const schedules = new ScheduleService(db, runs, audit, logger);
-  const stagedSources = new StagedSourceService(db, audit, logger);
+  const stagedSources = new StagedSourceService(
+    db,
+    audit,
+    logger,
+    // Only wired when reading from OneDrive and SharePoint is switched on: without it the service
+    // refuses with an explanation rather than failing on a token it was never going to get.
+    config.MICROSOFT_FILES_ENABLED && config.microsoftEnabled
+      ? (userId: string) => identity.getAccessToken(userId, graphScopes())
+      : undefined,
+  );
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
