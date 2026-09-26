@@ -597,11 +597,35 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
   // --- CSV exports -----------------------------------------------------------
   // Everything a team needs to review or fix issues outside the application.
-  const sendCsv = (reply: FastifyReply, name: string, headers: string[], rows: CsvValue[][]) =>
-    reply
+  /**
+   * Sends a CSV, and says so in the file when it is not the whole thing.
+   *
+   * An export that stops at its limit and looks complete is worse than one that refuses: somebody
+   * reconciles against it and concludes the numbers agree. `total` is the count the export was drawn
+   * from, so the note is written only when rows were actually left out — and it goes in the file,
+   * because that is what gets opened, forwarded and archived.
+   */
+  const sendCsv = (
+    reply: FastifyReply,
+    name: string,
+    headers: string[],
+    rows: CsvValue[][],
+    total?: number,
+  ) => {
+    const body =
+      total !== undefined && total > rows.length
+        ? [
+            ...rows,
+            [
+              `TRUNCATED: showing ${rows.length.toLocaleString()} of ${total.toLocaleString()} rows. Narrow the filters and export again for the rest.`,
+            ] as CsvValue[],
+          ]
+        : rows;
+    return reply
       .header('Content-Type', 'text/csv; charset=utf-8')
       .header('Content-Disposition', `attachment; filename="${name}"`)
-      .send(toCsv(headers, rows));
+      .send(toCsv(headers, body));
+  };
 
   app.get('/api/runs/:id/errors.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
@@ -614,7 +638,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items } = await s.runs.errors(req.ctx, id, {
+    const { items, total } = await s.runs.errors(req.ctx, id, {
       ...q,
       includeResolved: q.includeResolved === 'true',
       limit: 50_000,
@@ -649,6 +673,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.resolved,
         e.createdAt,
       ]),
+      total,
     );
   });
 
@@ -661,7 +686,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items } = await s.runs.records(req.ctx, id, { ...q, limit: 100_000, offset: 0 });
+    const { items, total } = await s.runs.records(req.ctx, id, { ...q, limit: 100_000, offset: 0 });
     return sendCsv(
       reply,
       csvFileName(['migration-records', run.planName]),
@@ -675,6 +700,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         m.deferredStatus,
         m.updatedAt,
       ]),
+      total,
     );
   });
 
@@ -682,7 +708,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/plans/:id/lossy-records.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const { key } = z.object({ key: z.string().max(300).optional() }).parse(req.query);
-    const [plan, { items }] = await Promise.all([
+    const [plan, { items, total }] = await Promise.all([
       s.planning.get(req.ctx, id),
       s.transformations.lossyRecords(req.ctx, id, { key, limit: 100_000, offset: 0 }),
     ]);
@@ -707,6 +733,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         r.kind,
         r.loss,
       ]),
+      total,
     );
   });
 

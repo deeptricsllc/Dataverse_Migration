@@ -1,0 +1,2 @@
+ALTER TABLE "preflight_entity_results" ADD COLUMN "records_stored" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "preflight_entity_results" ADD COLUMN "records_truncated" boolean DEFAULT false NOT NULL;

@@ -1317,6 +1317,17 @@ export interface PreflightEntityResultDto extends PreflightTotals {
   matchDescription: string;
   /** True when only part of the table was analyzed (very large tables). */
   sampled: boolean;
+  /**
+   * How many records the drill-down actually holds.
+   *
+   * Separate from the totals on purpose. The totals count every record analysed; the per-record list
+   * is capped per action, so a table can report 47,000 blocked records and store 2,000 of them. That
+   * gap is invisible unless it is stated, and the remediation package — the artefact a migration team
+   * works from — is built from the stored list.
+   */
+  recordsStored: number;
+  /** True when at least one action hit the per-action storage cap. */
+  recordsTruncated: boolean;
 }
 
 export interface FieldChangeDto {

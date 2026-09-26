@@ -134,7 +134,12 @@ describe('credential handling', () => {
     const ciphertext = box.encrypt('hunter2');
     expect(ciphertext).not.toContain('hunter2');
     expect(box.decrypt(ciphertext)).toBe('hunter2');
-    const tampered = `${ciphertext.slice(0, -2)}xx`;
+    // Flip the last character to something it is not. Appending a fixed suffix was a no-op roughly
+    // once every few thousand runs — whenever the ciphertext already ended that way — and a suite that
+    // fails at random is a suite people stop believing.
+    const last = ciphertext.slice(-1);
+    const tampered = `${ciphertext.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`;
+    expect(tampered).not.toBe(ciphertext);
     expect(() => box.decrypt(tampered)).toThrow();
   });
 });

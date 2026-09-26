@@ -753,6 +753,10 @@ export const preflightEntityResults = pgTable(
     displayName: text('display_name').notNull(),
     matchDescription: text('match_description').notNull(),
     sampled: boolean('sampled').notNull().default(false),
+    /** How many records the per-record drill-down actually holds for this table. */
+    recordsStored: integer('records_stored').notNull().default(0),
+    /** True when a per-action storage cap was reached, so the drill-down is a subset. */
+    recordsTruncated: boolean('records_truncated').notNull().default(false),
     totals: jsonb('totals').$type<PreflightTotals>().notNull(),
   },
   (t) => [uniqueIndex('preflight_entity_results_uq').on(t.preflightRunId, t.logicalName)],

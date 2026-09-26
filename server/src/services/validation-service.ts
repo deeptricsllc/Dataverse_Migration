@@ -782,7 +782,17 @@ export class ValidationService {
       brokenReferences: result.brokenReferences,
       checks: result.checks,
     });
+    // The stored list is capped, and a capped list that says nothing about it invites somebody to
+    // conclude they have seen every difference. The check that reports this table carries the note, so
+    // it travels with the result rather than living only in a comment here.
     const capped = diffs.slice(0, MAX_DIFFERENCES_PER_TABLE);
+    if (diffs.length > capped.length) {
+      result.checks.push({
+        check: 'FIELD_VALUES',
+        outcome: 'WARNING',
+        message: `Showing ${capped.length.toLocaleString()} of ${diffs.length.toLocaleString()} differences. The counts are complete; the listed differences are the first ${MAX_DIFFERENCES_PER_TABLE.toLocaleString()}.`,
+      });
+    }
     for (let i = 0; i < capped.length; i += 200) {
       await this.db
         .insert(validationDifferences)

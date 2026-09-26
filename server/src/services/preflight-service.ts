@@ -378,8 +378,18 @@ export class PreflightService {
       if (entry.table === entity.logicalName) entry.examined = totals.analyzed;
     }
 
+    const recordsStored = Object.values(persisted).reduce((n, v) => n + v, 0);
+    // A cap that nobody is told about is the kind of number that gets acted on.
+    const recordsTruncated = Object.entries(persisted).some(
+      ([action, stored]) =>
+        stored >= MAX_PERSISTED_RECORDS_PER_ACTION &&
+        (totals[action.toLowerCase() as 'create'] ?? 0) > stored,
+    );
+
     await this.db.insert(preflightEntityResults).values({
       preflightRunId: pf.id,
+      recordsStored,
+      recordsTruncated,
       logicalName: entity.logicalName,
       displayName: entity.displayName,
       matchDescription,
@@ -557,6 +567,8 @@ export class PreflightService {
         displayName: e.displayName,
         matchDescription: e.matchDescription,
         sampled: e.sampled,
+        recordsStored: e.recordsStored,
+        recordsTruncated: e.recordsTruncated,
         ...e.totals,
       })),
       lossyImpact: row.pf.lossyImpact ?? [],
