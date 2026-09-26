@@ -53,6 +53,8 @@ const schema = z.object({
 
   RUN_WORKER: bool(true),
   WORKER_POLL_MS: z.coerce.number().int().positive().default(1000),
+  /** How often the worker looks for a migration schedule that is due. */
+  SCHEDULER_POLL_MS: z.coerce.number().int().positive().default(30_000),
 });
 
 export type AppConfig = z.infer<typeof schema> & {

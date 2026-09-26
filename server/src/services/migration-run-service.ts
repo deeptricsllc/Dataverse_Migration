@@ -8,6 +8,7 @@ import {
   type MigrationRunListItemDto,
   type RecordMapDto,
   type RollbackPreviewDto,
+  type RunTrigger,
 } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import {
@@ -72,10 +73,27 @@ export class MigrationRunService {
     );
   }
 
+  /**
+   * The plan a schedule is about to be built against, validated the same way a run validates it.
+   * Exposed so the schedule can capture the confirmed environment names at creation time.
+   */
+  async planForSchedule(ctx: RequestContext, planId: string) {
+    return this.planning.get(ctx, planId);
+  }
+
   async start(
     ctx: RequestContext,
     planId: string,
     input: { confirmSourceName: string; confirmTargetName: string; acknowledgeWarnings: boolean },
+    /**
+     * Why this run is starting. A scheduled or triggered run takes the identical path — every gate
+     * below applies — and only records who asked and, for an incremental run, where to read from.
+     */
+    meta: {
+      trigger?: RunTrigger;
+      scheduleId?: string | null;
+      incremental?: { field: string; since: string | null } | null;
+    } = {},
   ): Promise<MigrationRunDto> {
     // Always re-validate against current metadata before writing anything.
     const plan = await this.planning.revalidate(ctx, planId);
@@ -138,6 +156,12 @@ export class MigrationRunService {
         status: 'QUEUED',
         options: plan.options,
         planSnapshot: snapshot,
+        trigger: meta.trigger ?? 'MANUAL',
+        scheduleId: meta.scheduleId ?? null,
+        // Where an incremental run starts reading. Null means "everything", which is also what the
+        // first run of an incremental schedule does.
+        watermark: meta.incremental?.since ?? null,
+        incremental: meta.incremental ?? null,
         executedByUserId: ctx.userId,
       })
       .returning();
@@ -170,6 +194,9 @@ export class MigrationRunService {
       requestId: ctx.requestId,
       details: {
         planId,
+        trigger: meta.trigger ?? 'MANUAL',
+        scheduleId: meta.scheduleId ?? null,
+        incremental: meta.incremental ?? null,
         tables: snapshot.entities.map((e) => e.logicalName),
         conflictStrategy: plan.options.conflictStrategy,
         bypassCustomBusinessLogic: plan.options.bypassCustomBusinessLogic,

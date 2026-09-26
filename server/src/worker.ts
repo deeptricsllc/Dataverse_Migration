@@ -25,9 +25,13 @@ await database.migrate(config.MIGRATIONS_DIR);
 const services = createServices(config, database.db, logger);
 const worker = services.createWorker();
 await worker.start();
+// Migration schedules fire from here too: this is the process that runs work nobody requested.
+const scheduler = services.createScheduler();
+scheduler.start();
 
 async function shutdown(signal: string) {
   logger.info({ signal }, 'Worker shutting down; waiting for in-flight jobs');
+  scheduler.stop();
   await worker.stop();
   await database.close();
   process.exit(0);

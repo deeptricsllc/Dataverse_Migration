@@ -34,6 +34,7 @@ import {
   migrationPlans,
   migrationRuns,
   metadataTables,
+  projects,
   tableCategories,
   users,
 } from '../db/schema';
@@ -214,7 +215,14 @@ export class PlanningService {
 
   async create(
     ctx: RequestContext,
-    input: { name?: string; sourceEnvironmentId: string; targetEnvironmentId: string; tables: string[] },
+    input: {
+      name?: string;
+      sourceEnvironmentId: string;
+      targetEnvironmentId: string;
+      tables: string[];
+      /** The migration project this plan belongs to, when it was created inside one. */
+      projectId?: string | null;
+    },
   ): Promise<MigrationPlanDto> {
     if (input.sourceEnvironmentId === input.targetEnvironmentId)
       throw badRequest('Source and target must be different environments');
@@ -230,6 +238,7 @@ export class PlanningService {
           `${source.displayName} → ${target.displayName} (${new Date().toISOString().slice(0, 10)})`,
         sourceEnvironmentId: source.id,
         targetEnvironmentId: target.id,
+        projectId: input.projectId ?? null,
         comparisonRunId,
         options: DEFAULT_PLAN_OPTIONS,
         createdByUserId: ctx.userId,
@@ -1152,11 +1161,12 @@ export class PlanningService {
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
     const [row] = await this.db
-      .select({ plan: migrationPlans, src, tgt, user: users.displayName })
+      .select({ plan: migrationPlans, src, tgt, user: users.displayName, projectName: projects.name })
       .from(migrationPlans)
       .innerJoin(src, eq(src.id, migrationPlans.sourceEnvironmentId))
       .innerJoin(tgt, eq(tgt.id, migrationPlans.targetEnvironmentId))
       .leftJoin(users, eq(users.id, migrationPlans.createdByUserId))
+      .leftJoin(projects, eq(projects.id, migrationPlans.projectId))
       .where(and(eq(migrationPlans.id, planId), eq(migrationPlans.organizationId, ctx.organizationId)));
     if (!row) throw notFound('Migration plan');
     const entities = await this.db
@@ -1228,6 +1238,8 @@ export class PlanningService {
     return {
       id: row.plan.id,
       name: row.plan.name,
+      projectId: row.plan.projectId,
+      projectName: row.projectName ?? null,
       status: row.plan.status,
       sourceEnvironment: envRef(row.src),
       targetEnvironment: envRef(row.tgt),
@@ -1266,6 +1278,12 @@ export class PlanningService {
     return out;
   }
 
+  /** The plans inside one migration project. */
+  async listForProject(ctx: RequestContext, projectId: string) {
+    const all = await this.list(ctx, 500);
+    return all.filter((p) => p.projectId === projectId);
+  }
+
   async list(ctx: RequestContext, limit = 50) {
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
@@ -1288,6 +1306,7 @@ export class PlanningService {
     return rows.map((r) => ({
       id: r.plan.id,
       name: r.plan.name,
+      projectId: r.plan.projectId,
       status: r.plan.status,
       sourceEnvironment: envRef(r.src),
       targetEnvironment: envRef(r.tgt),

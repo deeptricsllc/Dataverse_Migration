@@ -626,7 +626,11 @@ export interface DataQualityRuleDto {
   /** REGEX_PATTERN: a literal pattern, validated server-side and never user-executed code. */
   pattern?: string | null;
   /** Where the rule came from: the target schema, the mapping, or a person. */
-  origin: 'TARGET_SCHEMA' | 'MAPPING' | 'USER';
+  /**
+   * Where the rule came from. SOURCE_SCHEMA is a constraint the source itself declares, checked
+   * against its own data during analysis — a column declared required that nonetheless holds blanks.
+   */
+  origin: 'TARGET_SCHEMA' | 'SOURCE_SCHEMA' | 'MAPPING' | 'USER';
   severity: 'BLOCKER' | 'WARNING';
 }
 
@@ -935,6 +939,9 @@ export interface AutomationInfo {
 }
 
 export interface MigrationPlanDto {
+  /** The migration project this plan belongs to. Null for plans that predate projects. */
+  projectId: string | null;
+  projectName: string | null;
   id: string;
   name: string;
   status: PlanStatus;
@@ -1405,6 +1412,252 @@ export interface DashboardDto {
   }[];
   lastComparison: ComparisonRunDto | null;
 }
+
+// ---------------------------------------------------------------------------
+// Projects: the container a piece of work belongs to
+// ---------------------------------------------------------------------------
+
+/**
+ * What a project is for. The distinction is real, not cosmetic: an analysis project reads a source
+ * and never has a target, while a migration project writes and therefore carries every safety gate.
+ */
+export const PROJECT_KINDS = ['ANALYSIS', 'MIGRATION'] as const;
+export type ProjectKind = (typeof PROJECT_KINDS)[number];
+
+export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
+  ANALYSIS: 'Data analysis',
+  MIGRATION: 'Data migration',
+};
+
+export const PROJECT_KIND_DESCRIPTIONS: Record<ProjectKind, string> = {
+  ANALYSIS:
+    'Connect to a source and understand it: tables, columns, volumes, data quality and relationships. Read-only — nothing is ever written.',
+  MIGRATION:
+    'Move data into a target. Can start from an analysis project, so the mapping begins from what the source actually contains.',
+};
+
+export type ProjectStatus = 'ACTIVE' | 'ARCHIVED';
+
+export interface ProjectDto {
+  id: string;
+  name: string;
+  kind: ProjectKind;
+  description: string | null;
+  status: ProjectStatus;
+  /** The source being analysed or migrated. Set on both kinds once chosen. */
+  sourceEnvironment: EnvRef | null;
+  /** Migration projects only. */
+  targetEnvironment: EnvRef | null;
+  /** A migration project may be informed by an analysis project's findings. */
+  analysisProject: { id: string; name: string } | null;
+  /** How many analyses (analysis projects) or plans (migration projects) it holds. */
+  itemCount: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Source analysis
+// ---------------------------------------------------------------------------
+
+export type AnalysisStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+export interface AnalysisOptions {
+  /** Tables to analyse. Empty means every migratable table in the source. */
+  tables: string[];
+  /** Records examined per table when not running a full analysis. */
+  sampleSize: number;
+  /** Examine every record, honoured up to the profiling service's own ceiling. */
+  full: boolean;
+}
+
+export interface AnalysisTotalsDto {
+  tables: number;
+  columns: number;
+  records: number;
+  /** True when any table could only report an estimated row count. */
+  recordsApproximate: boolean;
+  examined: number;
+  findings: number;
+  blockers: number;
+  warnings: number;
+  emptyTables: number;
+  /** Tables holding a column whose values are all null or blank. */
+  unusedColumns: number;
+}
+
+export interface AnalysisRunDto {
+  id: string;
+  projectId: string;
+  projectName: string;
+  name: string;
+  environment: EnvRef;
+  status: AnalysisStatus;
+  options: AnalysisOptions;
+  totals: AnalysisTotalsDto;
+  /** EXACT only when every table was read in full against an exact row count. */
+  basis: StatisticBasis | null;
+  progressMessage: string | null;
+  errorMessage: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  tables: AnalysisTableDto[];
+}
+
+export interface AnalysisRunListItemDto {
+  id: string;
+  projectId: string;
+  name: string;
+  environmentName: string;
+  status: AnalysisStatus;
+  basis: StatisticBasis | null;
+  totals: AnalysisTotalsDto;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface AnalysisTableDto {
+  logicalName: string;
+  displayName: string;
+  recordCount: number;
+  recordCountApproximate: boolean;
+  columnCount: number;
+  examined: number;
+  basis: StatisticBasis;
+  blockers: number;
+  warnings: number;
+  /** Where this table sits in a dependency-safe load order. */
+  orderIndex: number;
+  /** Source tables this one points at through a lookup or foreign key. */
+  dependsOn: string[];
+  /** Columns whose values were entirely null or blank in everything examined. */
+  emptyColumns: string[];
+  primaryKeyField: string | null;
+  duplicateKeyCount: number;
+}
+
+/** The full column-level profile of one analysed table, loaded on demand. */
+export interface AnalysisTableDetailDto extends AnalysisTableDto {
+  profile: TableProfileDto;
+  findings: AnalysisFindingDto[];
+}
+
+export interface AnalysisFindingDto {
+  table: string;
+  field: string | null;
+  severity: 'BLOCKER' | 'WARNING';
+  code: string;
+  message: string;
+  affected: number;
+  basis: StatisticBasis;
+  resolution: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// The mapping workbook
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns of the field-mapping sheet, in order. Exported as data because the importer matches
+ * a returned workbook on these labels — someone will reorder them, and that has to keep working.
+ */
+export const MAPPING_SHEET_COLUMNS = [
+  'Source table',
+  'Source field',
+  'Source type',
+  'Required',
+  'Max length',
+  'Records',
+  'Nulls',
+  'Blanks',
+  'Distinct',
+  'Sample value',
+  'Target table',
+  'Target field',
+  'Transformation',
+  'Notes',
+] as const;
+
+/** What an imported workbook would change, before anything is written. */
+export interface MappingImportPreviewDto {
+  /** Rows the workbook contained that name a field this plan has. */
+  matched: number;
+  /** Rows naming a table or field the plan does not contain. */
+  unmatched: { row: number; table: string; field: string; reason: string }[];
+  changes: MappingImportChangeDto[];
+  /** Rows that asked for a target field the target table does not have. */
+  rejected: { row: number; table: string; field: string; reason: string }[];
+  applied: boolean;
+}
+
+export interface MappingImportChangeDto {
+  table: string;
+  field: string;
+  from: string | null;
+  to: string | null;
+  action: 'MAP' | 'REMAP' | 'IGNORE' | 'UNCHANGED';
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled and triggered runs
+// ---------------------------------------------------------------------------
+
+/**
+ * How a scheduled run reads the source.
+ *
+ * FULL re-reads every record; the engine still only writes what differs, so a repeated full run is
+ * idempotent. INCREMENTAL additionally asks the source for records changed since the last run's
+ * high-water mark, which is the only way to keep up with a table that changes continuously.
+ */
+export const SCHEDULE_MODES = ['FULL', 'INCREMENTAL'] as const;
+export type ScheduleMode = (typeof SCHEDULE_MODES)[number];
+
+export interface MigrationScheduleDto {
+  id: string;
+  planId: string;
+  planName: string;
+  name: string;
+  /** Five-field cron expression: minute hour day-of-month month day-of-week. */
+  cron: string;
+  /** IANA zone the expression is interpreted in, so 02:00 means 02:00 locally all year. */
+  timeZone: string;
+  description: string;
+  enabled: boolean;
+  mode: ScheduleMode;
+  /** The column INCREMENTAL compares against, e.g. `modifiedon`. */
+  watermarkField: string | null;
+  /** Highest watermark value a run of this schedule has read. */
+  lastWatermark: string | null;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunId: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+  /** Paused automatically after repeated failures rather than retrying forever. */
+  pausedReason: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduleRunHistoryItemDto {
+  runId: string;
+  status: string;
+  trigger: RunTrigger;
+  startedAt: string | null;
+  completedAt: string | null;
+  created: number;
+  updated: number;
+  failed: number;
+}
+
+/** Why a run started. Recorded on the run so history distinguishes a person from a schedule. */
+export const RUN_TRIGGERS = ['MANUAL', 'SCHEDULED', 'TRIGGERED'] as const;
+export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 
 export interface ApiErrorBody {
   error: { code: string; message: string; requestId?: string; details?: unknown };

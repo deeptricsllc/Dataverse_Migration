@@ -18,6 +18,7 @@ const services = createServices(config, database.db, logger);
 const app = await buildApp(services, { logger });
 
 const worker = config.RUN_WORKER ? services.createWorker() : null;
+const scheduler = config.RUN_WORKER ? services.createScheduler() : null;
 if (!config.RUN_WORKER && database.kind === 'pglite') {
   logger.warn(
     'RUN_WORKER=false with embedded PGlite: jobs will not run (PGlite cannot be shared with a separate worker process).',
@@ -30,6 +31,7 @@ logger.info(
   'Dataverse Migration Platform started',
 );
 if (worker) await worker.start();
+scheduler?.start();
 
 const purge = setInterval(() => void services.auth.purgeExpired().catch(() => undefined), 60 * 60_000);
 
@@ -40,6 +42,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, 'Shutting down');
   clearInterval(purge);
   await app.close();
+  scheduler?.stop();
   await worker?.stop();
   await database.close();
   process.exit(0);

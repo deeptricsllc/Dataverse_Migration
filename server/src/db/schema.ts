@@ -12,6 +12,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type {
+  AnalysisOptions,
+  AnalysisStatus,
+  AnalysisTotalsDto,
   ComparisonSummary,
   DependencyAnalysisDto,
   DependencyEdgeDto,
@@ -44,6 +47,12 @@ import type {
   PrincipalDto,
   PrincipalMatchStatus,
   PrincipalTable,
+  ProjectKind,
+  ProjectStatus,
+  RunTrigger,
+  ScheduleMode,
+  StatisticBasis,
+  TableProfileDto,
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
@@ -260,7 +269,9 @@ export const jobs = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    type: text('type').$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT'>().notNull(),
+    type: text('type')
+      .$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT' | 'ANALYSIS'>()
+      .notNull(),
     targetId: uuid('target_id').notNull(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'>().notNull().default('QUEUED'),
     attempts: integer('attempts').notNull().default(0),
@@ -352,6 +363,8 @@ export const migrationPlans = pgTable(
       .notNull()
       .references(() => environments.id),
     comparisonRunId: uuid('comparison_run_id').references(() => comparisonRuns.id, { onDelete: 'set null' }),
+    /** The migration project this plan belongs to. Null for plans created before projects existed. */
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     options: jsonb('options').$type<PlanOptions>().notNull(),
     issues: jsonb('issues')
       .$type<PlanIssue[]>()
@@ -488,6 +501,17 @@ export const migrationRuns = pgTable(
     planSnapshot: jsonb('plan_snapshot').$type<RunPlanSnapshot>().notNull(),
     /** Aggregate record of what the transformation engine did during this run. */
     transformationMetrics: jsonb('transformation_metrics').$type<TransformationMetricsDto | null>(),
+    /** Why this run started: a person, a schedule, or an explicit trigger. */
+    trigger: text('trigger').$type<RunTrigger>().notNull().default('MANUAL'),
+    /** The schedule that started it, when it was not a person. */
+    scheduleId: uuid('schedule_id'),
+    /**
+     * For an incremental run, the watermark it read up to. The next run of the same schedule starts
+     * from here, so a table that changes continuously does not have to be re-read in full.
+     */
+    watermark: text('watermark'),
+    /** The column an incremental run compares against, and where it started. Null for a full run. */
+    incremental: jsonb('incremental').$type<{ field: string; since: string | null } | null>(),
     currentEntity: text('current_entity'),
     total: integer('total').notNull().default(0),
     processed: integer('processed').notNull().default(0),
@@ -869,6 +893,183 @@ export const auditEvents = pgTable(
 // ---------------------------------------------------------------------------
 // Demo Dataverse storage (only used by DEMO_MODE simulated environments)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+/**
+ * The container a piece of work belongs to. A project is either an analysis of a source or a
+ * migration into a target; the kind decides which columns are meaningful, which is why the
+ * environment references are nullable rather than split across two tables.
+ */
+export const projects = pgTable(
+  'projects',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    kind: text('kind').$type<ProjectKind>().notNull(),
+    description: text('description'),
+    status: text('status').$type<ProjectStatus>().notNull().default('ACTIVE'),
+    sourceEnvironmentId: uuid('source_environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    /** Migration projects only. */
+    targetEnvironmentId: uuid('target_environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * The analysis project a migration project starts from. Self-referential, and deliberately
+     * `set null`: losing the reference must never delete the migration work that used it.
+     */
+    analysisProjectId: uuid('analysis_project_id'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('projects_org_kind_idx').on(t.organizationId, t.kind, t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
+// Source analysis
+// ---------------------------------------------------------------------------
+
+export const analysisRuns = pgTable(
+  'analysis_runs',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id),
+    name: text('name').notNull(),
+    status: text('status').$type<AnalysisStatus>().notNull().default('QUEUED'),
+    options: jsonb('options').$type<AnalysisOptions>().notNull(),
+    totals: jsonb('totals').$type<AnalysisTotalsDto>(),
+    /** EXACT only when every table was read in full against an exact row count. */
+    basis: text('basis').$type<StatisticBasis>(),
+    progressMessage: text('progress_message'),
+    errorMessage: text('error_message'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    startedAt: ts('started_at'),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [index('analysis_runs_project_idx').on(t.projectId, t.createdAt)],
+);
+
+/**
+ * One analysed table. The full column profile is stored because profiling costs a full read of the
+ * source: an analysis nobody can come back to next week is not an analysis.
+ */
+export const analysisTables = pgTable(
+  'analysis_tables',
+  {
+    id: id(),
+    analysisRunId: uuid('analysis_run_id')
+      .notNull()
+      .references(() => analysisRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    displayName: text('display_name').notNull(),
+    recordCount: integer('record_count').notNull().default(0),
+    recordCountApproximate: boolean('record_count_approximate').notNull().default(false),
+    columnCount: integer('column_count').notNull().default(0),
+    examined: integer('examined').notNull().default(0),
+    basis: text('basis').$type<StatisticBasis>().notNull().default('SAMPLED'),
+    blockers: integer('blockers').notNull().default(0),
+    warnings: integer('warnings').notNull().default(0),
+    orderIndex: integer('order_index').notNull().default(0),
+    dependsOn: jsonb('depends_on')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    emptyColumns: jsonb('empty_columns')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    primaryKeyField: text('primary_key_field'),
+    duplicateKeyCount: integer('duplicate_key_count').notNull().default(0),
+    profile: jsonb('profile').$type<TableProfileDto>().notNull(),
+  },
+  (t) => [uniqueIndex('analysis_tables_run_name_idx').on(t.analysisRunId, t.logicalName)],
+);
+
+/** Findings flattened out of the profiles, so they can be listed, filtered and exported. */
+export const analysisFindings = pgTable(
+  'analysis_findings',
+  {
+    id: id(),
+    analysisRunId: uuid('analysis_run_id')
+      .notNull()
+      .references(() => analysisRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    field: text('field'),
+    severity: text('severity').$type<'BLOCKER' | 'WARNING'>().notNull(),
+    code: text('code').notNull(),
+    message: text('message').notNull(),
+    affected: integer('affected').notNull().default(0),
+    basis: text('basis').$type<StatisticBasis>().notNull().default('SAMPLED'),
+    resolution: text('resolution'),
+  },
+  (t) => [index('analysis_findings_run_idx').on(t.analysisRunId, t.severity)],
+);
+
+// ---------------------------------------------------------------------------
+// Scheduled runs
+// ---------------------------------------------------------------------------
+
+/**
+ * A recurring migration.
+ *
+ * The environment names confirmed when the schedule was created are stored on it: a scheduled run
+ * has nobody present to type them, so the schedule re-checks them at fire time and refuses if the
+ * plan has since been pointed somewhere else. That is the same protection the interactive confirm
+ * gives, moved to the moment of creation.
+ */
+export const migrationSchedules = pgTable(
+  'migration_schedules',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => migrationPlans.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    cron: text('cron').notNull(),
+    timeZone: text('time_zone').notNull().default('UTC'),
+    enabled: boolean('enabled').notNull().default(true),
+    mode: text('mode').$type<ScheduleMode>().notNull().default('FULL'),
+    watermarkField: text('watermark_field'),
+    lastWatermark: text('last_watermark'),
+    confirmSourceName: text('confirm_source_name').notNull(),
+    confirmTargetName: text('confirm_target_name').notNull(),
+    nextRunAt: ts('next_run_at'),
+    lastRunAt: ts('last_run_at'),
+    lastRunId: uuid('last_run_id'),
+    lastStatus: text('last_status'),
+    lastError: text('last_error'),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    /** Set when the scheduler stops firing on its own, so the reason survives. */
+    pausedReason: text('paused_reason'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('migration_schedules_due_idx').on(t.enabled, t.nextRunAt),
+    index('migration_schedules_plan_idx').on(t.planId),
+  ],
+);
 
 export const demoRecords = pgTable(
   'demo_records',

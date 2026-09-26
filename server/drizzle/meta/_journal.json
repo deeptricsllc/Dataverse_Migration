@@ -57,6 +57,13 @@
       "when": 1789712933952,
       "tag": "0007_lossy_impact",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790413897231,
+      "tag": "0008_projects_analysis_schedules",
+      "breakpoints": true
     }
   ]
 }

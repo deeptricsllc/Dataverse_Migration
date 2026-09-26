@@ -6,6 +6,7 @@ import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
 import type { Services } from '../services/container';
+import { registerProjectRoutes } from './projects';
 
 const uuid = z.string().uuid();
 /** Dataverse logical name (`account`) or schema-qualified SQL table (`dbo.Customer`). */
@@ -20,6 +21,8 @@ const page = z.object({
 
 export async function registerRoutes(app: FastifyInstance, s: Services) {
   const { config } = s;
+  // Projects, analysis, mapping workbooks and schedules live in their own module.
+  await registerProjectRoutes(app, s);
   const cookieOptions = {
     httpOnly: true,
     sameSite: 'lax' as const,
@@ -217,6 +220,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         sourceEnvironmentId: uuid,
         targetEnvironmentId: uuid,
         tables: z.array(tableName).max(500),
+        /** Set when the plan is created inside a migration project. */
+        projectId: uuid.nullish(),
       })
       .parse(req.body);
     return s.planning.create(req.ctx, body);
