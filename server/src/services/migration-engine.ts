@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
@@ -23,10 +23,12 @@ import {
   migrationRecordMaps,
   migrationRunEntities,
   migrationRuns,
+  migrationSchedules,
 } from '../db/schema';
 import { DataverseError, toDataverseError } from '../dataverse/errors';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { DataverseConnection, WriteOptions } from '../dataverse/types';
+import { newerThanWatermark } from '../dataverse/types';
 import { AppError, errorMessage } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { EnvironmentService } from './environment-service';
@@ -160,6 +162,24 @@ export class MigrationEngine {
     private readonly logger: Logger,
   ) {}
 
+  /**
+   * Moves a schedule's watermark forward.
+   *
+   * Never backwards: a run that started earlier but finished later must not rewind a schedule past
+   * what a later run already covered, or records would be migrated twice.
+   */
+  private async recordScheduleWatermark(scheduleId: string, watermark: string): Promise<void> {
+    await this.db
+      .update(migrationSchedules)
+      .set({ lastWatermark: watermark, updatedAt: new Date() })
+      .where(
+        and(
+          eq(migrationSchedules.id, scheduleId),
+          or(isNull(migrationSchedules.lastWatermark), lt(migrationSchedules.lastWatermark, watermark)),
+        ),
+      );
+  }
+
   async execute(runId: string, heartbeat: () => Promise<void> = async () => {}): Promise<void> {
     const [run] = await this.db.select().from(migrationRuns).where(eq(migrationRuns.id, runId));
     if (!run || !['QUEUED', 'RUNNING'].includes(run.status)) return;
@@ -260,6 +280,8 @@ export class MigrationEngine {
           failures: 0,
           byKind: {},
         },
+        incremental: run.incremental ?? null,
+        watermark: { value: run.watermark ?? null },
         heartbeat,
         lookupCache: new Map(principalMap),
         principalMap,
@@ -315,8 +337,15 @@ export class MigrationEngine {
           completedAt: new Date(),
           updatedAt: new Date(),
           transformationMetrics: ctx.metrics,
+          // Only a run that finished may advance the watermark. A failed run leaves it where it was,
+          // so the records it never processed are read again next time instead of being skipped.
+          watermark: ctx.watermark.value,
         })
         .where(eq(migrationRuns.id, runId));
+      // The schedule starts its next run from here.
+      if (run.scheduleId && ctx.watermark.value) {
+        await this.recordScheduleWatermark(run.scheduleId, ctx.watermark.value);
+      }
       await this.db
         .update(migrationPlans)
         .set({ status: 'EXECUTED' })
@@ -473,8 +502,19 @@ export class MigrationEngine {
       ...auditSourceColumns(ctx.options, entity),
     ];
     const pageSize = Math.max(1, Math.min(ctx.options.batchSize, 500));
+    // An incremental run asks the source for changed records only. The watermark column is read
+    // alongside the mapped ones so the run can report how far it got.
+    const watermarkField = ctx.incremental?.field ?? null;
+    const readColumns =
+      watermarkField && !sourceColumns.includes(watermarkField)
+        ? [...sourceColumns, watermarkField]
+        : sourceColumns;
     try {
-      for await (const page of ctx.sConn.queryRecords(s, sourceColumns, { pageSize })) {
+      for await (const page of ctx.sConn.queryRecords(s, readColumns, {
+        pageSize,
+        since: ctx.incremental?.since ? { field: ctx.incremental.field, value: ctx.incremental.since } : null,
+      })) {
+        if (watermarkField) observeWatermark(ctx.watermark, page, watermarkField);
         await this.checkControl(run.id);
         const pending = page.filter((r) => {
           const outcome = existingMaps.get(r.id);
@@ -1136,6 +1176,23 @@ export class MigrationEngine {
   }
 }
 
+/**
+ * Tracks the highest watermark value a run has read.
+ *
+ * Deliberately a maximum over everything seen rather than "the last record's value": records arrive
+ * in primary-key order, not watermark order, so the last one read is not the newest one.
+ */
+export function observeWatermark(into: { value: string | null }, page: DvRecord[], field: string): void {
+  for (const record of page) {
+    const raw = record.values[field];
+    // A watermark column holds a timestamp or a number. Anything else — a lookup, an array — is not
+    // one, and comparing it would invent an ordering the source does not have.
+    if (raw === null || raw === undefined || typeof raw === 'object' || typeof raw === 'boolean') continue;
+    const text = String(raw);
+    if (into.value === null || newerThanWatermark(text, into.value)) into.value = text;
+  }
+}
+
 interface ExecContext {
   run: RunRow;
   log: Logger;
@@ -1151,6 +1208,17 @@ interface ExecContext {
   sameProvider: boolean;
   /** Aggregate record of what the transformation engine did, written when the run finishes. */
   metrics: TransformationMetricsDto;
+  /**
+   * For an incremental run: the column to compare and the value to read past. Null for a full run,
+   * and also for the first run of an incremental schedule, which has nothing to read past yet.
+   */
+  incremental: { field: string; since: string | null } | null;
+  /**
+   * The highest watermark value seen while reading. Written to the run when it finishes, and only
+   * then: a run that fails must not advance the watermark, or the records it never processed would
+   * be skipped forever.
+   */
+  watermark: { value: string | null };
   heartbeat: () => Promise<void>;
   /** sourceLogicalName:sourceId -> targetId (null = known missing). */
   lookupCache: Map<string, string | null>;

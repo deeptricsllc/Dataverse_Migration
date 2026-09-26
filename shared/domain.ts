@@ -112,6 +112,8 @@ export interface ConnectorCapabilities {
   supportsServerSideLogicDetection: boolean;
   supportsClientGeneratedIds: boolean;
   supportsPrincipals: boolean;
+  /** Can filter a read to records changed since a watermark value, server-side. */
+  supportsIncrementalRead: boolean;
 }
 
 export interface EnvironmentDto {

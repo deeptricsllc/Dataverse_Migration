@@ -21,8 +21,9 @@ import type {
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
-import { DATAVERSE_CAPABILITIES } from '../types';
+import { DATAVERSE_CAPABILITIES, newerThanWatermark } from '../types';
 import {
   DEMO_ORGANIZATION_ID,
   DEMO_SIGNED_IN_USER,
@@ -145,12 +146,11 @@ export class DemoConnection implements DataverseConnection {
     return { id: String(data[t.primaryIdAttribute]), values };
   }
 
-  async *queryRecords(
-    t: TableMetadata,
-    columns: string[],
-    opts: { pageSize: number },
-  ): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(t: TableMetadata, columns: string[], opts: ReadOptions): AsyncGenerator<DvRecord[]> {
     this.table(t.logicalName);
+    if (opts.since && !t.attributes.some((a) => a.logicalName === opts.since!.field)) {
+      throw new Error(`Cannot read incrementally: ${t.logicalName} has no column ${opts.since.field}`);
+    }
     let offset = 0;
     for (;;) {
       await this.simulate();
@@ -162,7 +162,14 @@ export class DemoConnection implements DataverseConnection {
         .limit(opts.pageSize)
         .offset(offset);
       if (rows.length === 0) return;
-      yield rows.map((r) => this.project(t, r.data, columns));
+      // The real connectors filter in the platform; a page is filtered here instead, with the same
+      // comparison, so an incremental schedule behaves the same against the demo source.
+      const page = opts.since
+        ? rows.filter((r) =>
+            newerThanWatermark((r.data as Record<string, unknown>)[opts.since!.field], opts.since!.value),
+          )
+        : rows;
+      if (page.length) yield page.map((r) => this.project(t, r.data, columns));
       if (rows.length < opts.pageSize) return;
       offset += rows.length;
     }

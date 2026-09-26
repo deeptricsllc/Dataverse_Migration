@@ -30,6 +30,7 @@ import type {
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
 import { SQL_CAPABILITIES } from '../types';
 import {
@@ -446,22 +447,30 @@ export class SqlConnector implements MigrationConnector {
   async *queryRecords(
     table: TableMetadata,
     columns: string[],
-    opts: { pageSize: number },
+    opts: ReadOptions,
   ): AsyncGenerator<DvRecord[]> {
     const { list, attrs } = this.selectList(table, columns);
     const pk = quoteIdent(table.primaryIdAttribute);
     const pageSize = Math.max(1, Math.min(opts.pageSize, 5000));
+    // An incremental read adds one predicate on the watermark column. The column name is resolved
+    // against the table's real metadata and then quoted; the value is a bound parameter, never
+    // concatenated — the same rule every other read here follows.
+    const since = opts.since ? this.watermarkColumn(table, opts.since.field) : null;
+    const sinceClause = since ? `${quoteIdent(since)} > @since` : '';
     let last: FieldValue = null;
     for (;;) {
       // Keyset pagination: ORDER BY the primary key and continue after the last one seen, so the
       // cost does not grow with the offset and a large table is never materialized.
-      const text =
-        last === null
-          ? `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)} ORDER BY ${pk}`
-          : `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)} WHERE ${pk} > @afterKey ORDER BY ${pk}`;
+      const where = [sinceClause, last === null ? '' : `${pk} > @afterKey`].filter(Boolean);
+      const text = `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)}${
+        where.length ? ` WHERE ${where.join(' AND ')}` : ''
+      } ORDER BY ${pk}`;
       const rows = await this.query<Record<string, unknown>>(
         text,
-        last === null ? {} : { afterKey: last },
+        {
+          ...(last === null ? {} : { afterKey: last }),
+          ...(since ? { since: opts.since!.value } : {}),
+        },
         `read ${table.logicalName}`,
       );
       if (rows.length === 0) return;
@@ -470,6 +479,15 @@ export class SqlConnector implements MigrationConnector {
       if (rows.length < pageSize) return;
       last = rows[rows.length - 1][table.primaryIdAttribute] as FieldValue;
     }
+  }
+
+  /** The watermark column, confirmed to exist on this table before it reaches a query. */
+  private watermarkColumn(table: TableMetadata, field: string): string {
+    const attr = table.attributes.find((a) => a.logicalName.toLowerCase() === field.toLowerCase());
+    if (!attr) {
+      throw new Error(`Cannot read incrementally: ${table.logicalName} has no column ${field}`);
+    }
+    return attr.logicalName;
   }
 
   async retrieveByIds(table: TableMetadata, ids: string[], columns: string[]): Promise<DvRecord[]> {

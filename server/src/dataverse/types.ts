@@ -13,9 +13,15 @@ export type {
   DataverseConnection,
   DiscoveredEnvironment,
   MigrationConnector,
+  ReadOptions,
   RecordCount,
   WhoAmI,
   WriteOptions,
   WriteRecord,
 } from '../connectors/types';
-export { DATAVERSE_CAPABILITIES, SQL_CAPABILITIES } from '../connectors/types';
+export {
+  DATAVERSE_CAPABILITIES,
+  SQL_CAPABILITIES,
+  WATERMARK_VALUE,
+  newerThanWatermark,
+} from '../connectors/types';

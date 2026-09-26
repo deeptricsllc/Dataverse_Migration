@@ -21,8 +21,9 @@ import type {
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
-import { SQL_CAPABILITIES } from '../types';
+import { SQL_CAPABILITIES, newerThanWatermark } from '../types';
 import { DEMO_SQL_ENVIRONMENT, DEMO_SQL_URL, demoSqlTables } from './demo-fixtures';
 
 /**
@@ -154,12 +155,11 @@ export class DemoSqlConnection implements MigrationConnector {
     return { id: String(data[t.primaryIdAttribute]), values };
   }
 
-  async *queryRecords(
-    t: TableMetadata,
-    columns: string[],
-    opts: { pageSize: number },
-  ): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(t: TableMetadata, columns: string[], opts: ReadOptions): AsyncGenerator<DvRecord[]> {
     this.table(t.logicalName);
+    if (opts.since && !t.attributes.some((a) => a.logicalName === opts.since!.field)) {
+      throw new Error(`Cannot read incrementally: ${t.logicalName} has no column ${opts.since.field}`);
+    }
     // Keyset-style paging over the stored rows: a page at a time, never the whole table.
     let offset = 0;
     for (;;) {
@@ -172,7 +172,12 @@ export class DemoSqlConnection implements MigrationConnector {
         .limit(opts.pageSize)
         .offset(offset);
       if (rows.length === 0) return;
-      yield rows.map((r) => this.project(t, r.data, columns));
+      const page = opts.since
+        ? rows.filter((r) =>
+            newerThanWatermark((r.data as Record<string, unknown>)[opts.since!.field], opts.since!.value),
+          )
+        : rows;
+      if (page.length) yield page.map((r) => this.project(t, r.data, columns));
       if (rows.length < opts.pageSize) return;
       offset += rows.length;
     }

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   SCHEDULE_MODES,
@@ -399,21 +399,6 @@ export class ScheduleService {
       );
       return { kind: 'FAILED', reason };
     }
-  }
-
-  /** Records the watermark a completed incremental run reached, for the next firing to start from. */
-  async recordWatermark(scheduleId: string, watermark: string | null): Promise<void> {
-    if (!watermark) return;
-    await this.db
-      .update(migrationSchedules)
-      .set({ lastWatermark: watermark, updatedAt: new Date() })
-      // Never move a watermark backwards: a late-finishing run must not rewind a later one.
-      .where(
-        and(
-          eq(migrationSchedules.id, scheduleId),
-          or(sql`last_watermark is null`, sql`last_watermark < ${watermark}`),
-        ),
-      );
   }
 
   // ---------------------------------------------------------------------------
