@@ -17,10 +17,25 @@ and keep the preflight.
 
 ## Before you start
 
-- Open the QA deployment and sign in with **Continue with demo account**. No tenant needed.
+- Open the QA deployment. The landing page is the front door now, and **Try the live demo** is on it —
+  no tenant needed, nothing to configure.
 - Confirm the amber **DEMO MODE** banner is visible. Say it out loud once: nothing here touches a real
   system. It buys you credibility for everything after.
 - Have the browser at a width where the tables do not wrap.
+
+---
+
+## 0 · The landing page (30 seconds, optional)
+
+Only if your audience arrived cold. Scroll past the hero to **"The gaps, before you find them."**
+
+> "Before I show you anything — that section is on our public page. Rollback, DELETE synchronisation,
+> what we have not tested against a live server. We would rather you heard the limits from us than
+> found them in week three."
+
+It is a disarming way to open with a technical audience, and it sets up everything that follows: the
+whole product is built on saying what is actually true, including when the answer is "we do not know
+that yet".
 
 ---
 

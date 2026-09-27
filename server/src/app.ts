@@ -25,13 +25,23 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * Routes that answer without a session, as `METHOD path`.
+ *
+ * Method-qualified, not path-qualified. `/api/access-requests` takes a public POST from the landing
+ * page and an operator-only GET that lists everyone who has submitted one; exempting the path would
+ * have made that listing readable by anybody at all.
+ */
 const PUBLIC_ROUTES = new Set([
-  '/api/health',
-  '/api/auth/config',
-  '/api/auth/login',
-  '/api/auth/callback',
-  '/api/auth/demo-login',
-  '/api/auth/session',
+  'GET /api/health',
+  'GET /api/auth/config',
+  'GET /api/auth/login',
+  'GET /api/auth/callback',
+  'POST /api/auth/demo-login',
+  'GET /api/auth/session',
+  // The public sign-up path. The one route an unauthenticated stranger may write to, which is why it
+  // is rate-limited hard, length-bounded in every field and tells the caller nothing back.
+  'POST /api/access-requests',
 ]);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -105,7 +115,8 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
         throw new AppError(403, 'ORIGIN_REJECTED', 'Cross-origin request rejected');
     }
     req.session = await services.auth.resolveSession(req.cookies[SESSION_COOKIE]);
-    if (PUBLIC_ROUTES.has(url)) return;
+    // HEAD is served by the GET handler, so it inherits the GET exemption rather than 401ing.
+    if (PUBLIC_ROUTES.has(`${req.method === 'HEAD' ? 'GET' : req.method} ${url}`)) return;
     if (!req.session) throw new AppError(401, 'UNAUTHENTICATED', 'Authentication required');
     if (!SAFE_METHODS.has(req.method)) {
       const header = req.headers['x-csrf-token'];
@@ -121,6 +132,7 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
       isDemoOrg: u.organization.isDemo,
       displayName: u.displayName,
       requestId: req.id,
+      platformOperator: u.platformOperator,
     };
   });
 

@@ -152,7 +152,9 @@ All options are documented in [.env.example](.env.example). The important ones:
 | `DEMO_MODE`                               | `true` (non-production)                                  | Enable simulated environments + demo sign-in              |
 | `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` | –                                                        | Enable Microsoft sign-in                                  |
 | `ENTRA_TENANT_ID`                         | `organizations`                                          | Multi-tenant or a specific tenant                         |
-| `ALLOWED_TENANT_IDS`, `ADMIN_EMAILS`      | –                                                        | Tenant allow-list and admin bootstrap                     |
+| `ALLOWED_TENANT_IDS`                      | –                                                        | Tenant allow-list. Setting it turns off self sign-up      |
+| `ADMIN_EMAILS`                            | –                                                        | Platform operators: admin bootstrap + inbound requests    |
+| `CONTACT_EMAIL`                           | –                                                        | Shown on the landing page as the way to reach a human     |
 | `DATAVERSE_DISCOVERY_URL`                 | `https://globaldisco.crm.dynamics.com`                   | Global Discovery endpoint (sovereign clouds differ)       |
 | `POWER_PLATFORM_ENRICHMENT`               | `false`                                                  | Environment SKU/region from the Power Platform admin API  |
 | `ALLOW_BUSINESS_LOGIC_BYPASS`             | `false`                                                  | Allow audited plug-in bypass for ADMINs                   |
@@ -230,7 +232,15 @@ The repo ships a `Dockerfile` and `railway.json` (health check `/api/health`). I
 
 - Run behind HTTPS with `NODE_ENV=production`, a strong `SESSION_SECRET` (secret manager), `COOKIE_SECURE=true` and PostgreSQL.
 - Set `DEMO_MODE=false` unless you intentionally offer demos; demo organizations are isolated from real tenants.
-- Restrict sign-in with `ALLOWED_TENANT_IDS` until onboarding flows exist.
+- Restrict sign-in with `ALLOWED_TENANT_IDS` if you do not want self sign-up. Leaving it unset means the
+  first person from any Microsoft tenant creates a workspace and becomes its administrator, which the
+  landing page advertises; setting it turns that offer off and points visitors at the access-request form
+  instead.
+- Set `ADMIN_EMAILS` to whoever operates the deployment. It does two things: those accounts become
+  administrators of their own organization, and only they can read the access requests submitted from the
+  landing page. Nobody else can — including an administrator of a customer organization — because those
+  are other people's contact details rather than any tenant's data. With it unset, requests are still
+  stored, and only a database query will read them.
 - Scale web and worker processes independently. Keep worker concurrency modest: Dataverse service protection limits are per user.
 - Ship JSON logs to your log platform. Logs carry `reqId`, `migrationRunId`, `validationRunId` and `jobId`, never tokens.
 - Back up the database: the identity map and audit trail are the record of what each migration did.

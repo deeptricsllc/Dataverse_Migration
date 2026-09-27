@@ -68,6 +68,7 @@ describe('lossy transformation impact', () => {
       isDemoOrg: true,
       displayName: session.user.displayName ?? 'demo',
       requestId: 'test',
+      platformOperator: false,
     };
     const envs = await api.post<EnvironmentDto[]>('/api/environments/discover');
     dev = envs.find((e) => e.displayName === 'DeepTrics Development')!;

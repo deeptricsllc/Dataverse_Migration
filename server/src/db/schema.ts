@@ -1142,6 +1142,34 @@ export const stagedRows = pgTable(
   ],
 );
 
+/**
+ * Someone asking for access, from the public landing page.
+ *
+ * Deliberately outside the organization tree. Nobody has an organization when they submit this —
+ * that is the point of it — and it belongs to whoever runs the deployment rather than to any tenant.
+ *
+ * One row per email address: a second submission bumps `submissions` and refreshes what they said,
+ * because the same person asking twice is a stronger signal than two rows, and it keeps a form that
+ * anyone on the internet can post from turning into unbounded storage.
+ */
+export const accessRequests = pgTable(
+  'access_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Stored lower-cased and trimmed so the unique index actually means "the same person". */
+    email: text('email').notNull(),
+    name: text('name').notNull(),
+    company: text('company'),
+    useCase: text('use_case'),
+    submissions: integer('submissions').notNull().default(1),
+    handledAt: ts('handled_at'),
+    handledByUserId: uuid('handled_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('access_requests_email_idx').on(t.email)],
+);
+
 export const demoRecords = pgTable(
   'demo_records',
   {

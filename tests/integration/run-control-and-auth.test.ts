@@ -91,6 +91,10 @@ describe('Microsoft sign-in endpoints', () => {
     expect(config.json()).toEqual({
       microsoftEnabled: true,
       demoEnabled: true,
+      // Microsoft is configured and no tenant allow-list is set, so an unknown tenant really can
+      // sign itself up — which is what the landing page offers on the strength of this flag.
+      signUpEnabled: true,
+      contactEmail: null,
       realTenantReadOnly: false,
     });
     const res = await t.app.inject({ method: 'GET', url: '/api/auth/login?returnTo=/compare' });

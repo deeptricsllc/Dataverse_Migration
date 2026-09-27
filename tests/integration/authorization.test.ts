@@ -26,6 +26,7 @@ const ctxWith = (role: 'ADMIN' | 'MEMBER'): RequestContext => ({
   isDemoOrg: false,
   displayName: 'Test',
   requestId: 'r',
+  platformOperator: false,
 });
 
 describe('the policy itself', () => {

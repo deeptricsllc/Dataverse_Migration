@@ -1,7 +1,7 @@
 import type { EnvironmentDto, SessionResponseDto, SessionUser, WorkspaceDto } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, type ReactNode } from 'react';
-import { get, put, setCsrfToken } from './api';
+import { get, post, put, setCsrfToken } from './api';
 
 interface SessionValue {
   user: SessionUser;
@@ -23,6 +23,25 @@ export function useSessionQuery() {
     },
     retry: false,
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Signing in as the demo account.
+ *
+ * Shared rather than duplicated because it is now offered from two places, and the two must agree
+ * about what happens afterwards: the session goes into the cache before the navigation so the app
+ * does not flash the sign-in screen on the way to the dashboard.
+ */
+export function useDemoLogin(returnTo = '/') {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => post<{ user: SessionUser; csrfToken: string }>('/api/auth/demo-login'),
+    onSuccess: (data) => {
+      setCsrfToken(data.csrfToken);
+      qc.setQueryData(['session'], data);
+      window.location.assign(returnTo);
+    },
   });
 }
 

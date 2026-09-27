@@ -16,6 +16,7 @@ import {
   Td,
   Th,
 } from '../components/ui';
+import { AccessRequestsCard } from '../components/AccessRequestsCard';
 import { get, post } from '../lib/api';
 import { fmtDate, humanize } from '../lib/format';
 import { useSession } from '../lib/session';
@@ -132,6 +133,12 @@ export function SettingsPage() {
               </div>
             )}
           </Card>
+        </div>
+      )}
+
+      {user.platformOperator && (
+        <div className="mb-6">
+          <AccessRequestsCard />
         </div>
       )}
 

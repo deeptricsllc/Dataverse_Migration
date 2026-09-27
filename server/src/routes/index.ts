@@ -5,6 +5,7 @@ import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
+import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
 import { registerProjectRoutes } from './projects';
 import { transformationRulesSchema } from './schemas';
@@ -60,6 +61,10 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     microsoftEnabled: config.microsoftEnabled,
     demoEnabled: config.DEMO_MODE,
     realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
+    // A tenant allow-list means an unknown tenant is turned away at the callback, so offering
+    // "sign up with Microsoft" on the landing page would send people into a dead end.
+    signUpEnabled: config.microsoftEnabled && config.allowedTenantIds.length === 0,
+    contactEmail: config.CONTACT_EMAIL ?? null,
   }));
 
   app.get('/api/auth/session', async (req) => {
@@ -128,6 +133,32 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       return { user: resolved!.user, csrfToken: resolved!.csrfToken };
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Access requests: the public sign-up path, and the operator's view of it
+  // ---------------------------------------------------------------------------
+
+  app.post(
+    '/api/access-requests',
+    // Tighter than anything else in the product. It is the only unauthenticated write, so the
+    // limit is what stands between a form on the open internet and a table full of noise.
+    { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } },
+    async (req, reply) => {
+      await s.accessRequests.submit(accessRequestSchema.parse(req.body), req.id);
+      // Always the same answer, whether it was stored, merged into an earlier ask or dropped by the
+      // honeypot. Anything more specific tells a stranger who is already in the table.
+      return reply.code(202).send({ received: true });
+    },
+  );
+
+  app.get('/api/access-requests', async (req) => s.accessRequests.list(req.ctx));
+
+  app.patch('/api/access-requests/:id', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { handled } = z.object({ handled: z.boolean() }).parse(req.body);
+    await s.accessRequests.setHandled(req.ctx, id, handled);
+    return { ok: true };
+  });
 
   app.post('/api/auth/logout', async (req, reply) => {
     const provider = req.session!.user.authProvider;

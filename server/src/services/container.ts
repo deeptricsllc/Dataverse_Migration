@@ -5,6 +5,7 @@ import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import { ConnectionFactory } from '../dataverse/factory';
 import { JobQueue, Worker } from '../jobs/queue';
+import { AccessRequestService } from './access-request-service';
 import { AnalysisService } from './analysis-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
@@ -127,6 +128,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
       ? (userId: string) => identity.getAccessToken(userId, graphScopes())
       : undefined,
   );
+  const accessRequests = new AccessRequestService(db, logger);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
@@ -189,6 +191,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     mappingWorkbooks,
     schedules,
     stagedSources,
+    accessRequests,
     createScheduler,
     diagnostics,
     remediation,

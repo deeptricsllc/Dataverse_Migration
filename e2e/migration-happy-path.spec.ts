@@ -12,10 +12,11 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   });
   page.on('pageerror', (err) => consoleErrors.push(err.message));
 
-  // 1. Login
+  // 1. Login, the way a visitor actually arrives: the root is the public landing page until
+  // somebody is signed in, and the demo starts from there.
   await page.goto('/');
-  await expect(page).toHaveURL(/\/login/);
-  await page.getByRole('button', { name: 'Continue with demo account' }).click();
+  await expect(page.getByRole('heading', { name: /Know exactly what a migration will do/ })).toBeVisible();
+  await page.getByTestId('try-demo-primary').first().click();
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
   await expect(page.getByText('DEMO MODE').first()).toBeVisible();
 

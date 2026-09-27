@@ -357,6 +357,8 @@ export class ScheduleService {
       isDemoOrg: false,
       displayName: `${creator.displayName} (schedule: ${schedule.name})`,
       requestId: `schedule-${schedule.id}`,
+      // A schedule runs migrations; it never has business with deployment-level administration.
+      platformOperator: false,
     };
   }
 

@@ -7,6 +7,7 @@ import { ComparePage } from './pages/ComparePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { EnvironmentsPage } from './pages/EnvironmentsPage';
+import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { MigrationPage } from './pages/MigrationPage';
 import { NewMigrationPage } from './pages/NewMigrationPage';
@@ -21,11 +22,20 @@ import { UserMappingPage } from './pages/UserMappingPage';
 import { ValidationPage } from './pages/ValidationPage';
 import { ValidationReportPage } from './pages/ValidationReportPage';
 
+/**
+ * The root does double duty: the product for anyone signed in, and the public landing page for
+ * everyone else.
+ *
+ * Deliberately not a separate `/app` prefix. Moving every screen's URL to make room for a marketing
+ * page would break every link anybody has already shared, and the only thing that actually differs
+ * is what `/` shows. Any deeper path still redirects to sign-in, carrying where it was going.
+ */
 function Protected() {
   const session = useSessionQuery();
   const location = useLocation();
   if (session.isLoading) return <Spinner label="Loading session…" />;
   if (!session.data) {
+    if (location.pathname === '/') return <LandingPage />;
     return (
       <Navigate to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`} replace />
     );

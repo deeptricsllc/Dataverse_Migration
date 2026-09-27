@@ -82,6 +82,11 @@ export class AuthService {
         role: row.user.role,
         organization: { id: row.org.id, name: row.org.name, isDemo: row.org.isDemo },
         authProvider: row.user.authProvider,
+        // Not stored on the row: ADMIN_EMAILS is deployment configuration, and someone removed from
+        // it should stop being an operator on their next request rather than on their next sign-in.
+        platformOperator: Boolean(
+          row.user.email && this.config.adminEmails.includes(row.user.email.toLowerCase()),
+        ),
       },
     };
   }

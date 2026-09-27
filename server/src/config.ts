@@ -40,6 +40,11 @@ const schema = z.object({
   ENTRA_REDIRECT_URI: z.string().url().optional(),
   ALLOWED_TENANT_IDS: z.string().optional(),
   ADMIN_EMAILS: z.string().optional(),
+  /**
+   * Shown on the public landing page as the way to reach a human. Unset by default: a page that
+   * publishes an address nobody reads is worse than a page that offers only the form.
+   */
+  CONTACT_EMAIL: z.string().email().optional(),
 
   DATAVERSE_DISCOVERY_URL: z.string().url().default('https://globaldisco.crm.dynamics.com'),
   /**

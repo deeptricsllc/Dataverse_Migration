@@ -65,6 +65,7 @@ const ctx = {
   isDemoOrg: false,
   displayName: 'Tester',
   requestId: 'req-1',
+  platformOperator: false,
 };
 
 function service(conn: FakeConnector) {

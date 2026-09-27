@@ -14,6 +14,15 @@ export interface SessionUser {
   role: 'ADMIN' | 'MEMBER';
   organization: { id: string; name: string; isDemo: boolean };
   authProvider: 'microsoft' | 'demo';
+  /**
+   * Whether this user operates the deployment itself, rather than being an administrator inside one
+   * customer organization. Comes from ADMIN_EMAILS.
+   *
+   * The distinction matters for exactly one thing today: inbound access requests are addressed to
+   * whoever runs the platform, and are not any tenant's data. A customer administrator must not be
+   * able to read the names and email addresses of other people who asked for access.
+   */
+  platformOperator: boolean;
 }
 
 export interface AuthConfigDto {
@@ -21,6 +30,41 @@ export interface AuthConfigDto {
   demoEnabled: boolean;
   /** Certification mode: reads are allowed, every Dataverse write is blocked server-side. */
   realTenantReadOnly: boolean;
+  /**
+   * Whether signing in with a Microsoft work account also creates the workspace.
+   *
+   * True when Microsoft sign-in is configured and no tenant allow-list is set: the first person from
+   * a tenant we have not seen becomes its administrator. False when ALLOWED_TENANT_IDS restricts the
+   * deployment, because then an unknown tenant is refused and "sign up" would be a dead end.
+   */
+  signUpEnabled: boolean;
+  /** Where to email a human, when the deployment has been given an address. */
+  contactEmail: string | null;
+}
+
+/** What someone asking for access tells us. Unauthenticated: it is the public sign-up path. */
+export interface AccessRequestInput {
+  name: string;
+  email: string;
+  company?: string;
+  /** Roughly how much data, in the requester's own words. Free text on purpose. */
+  useCase?: string;
+  /** Anti-spam honeypot. A real browser leaves it empty because it is hidden. */
+  website?: string;
+}
+
+export interface AccessRequestDto {
+  id: string;
+  name: string;
+  email: string;
+  company: string | null;
+  useCase: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** How many times this address has asked. A second ask is a stronger signal, not a duplicate row. */
+  submissions: number;
+  handledAt: string | null;
+  handledBy: string | null;
 }
 
 export interface SessionResponseDto {
