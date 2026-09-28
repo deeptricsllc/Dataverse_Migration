@@ -20,6 +20,7 @@ import {
 } from '../connectors/staged/graph';
 import { stagedProvider } from '../connectors/staged/staged-connector';
 import { readXlsx, type XlsxReadSheet } from '../lib/xlsx';
+import { looksLikeXml, readXml, XmlReadError } from '../lib/xml';
 import { badRequest, notFound } from '../lib/errors';
 import { parseCsvRows } from './mapping-workbook-service';
 import type { AuditService } from './audit-service';
@@ -44,9 +45,15 @@ const INSERT_BATCH = 500;
  * snapshots concatenated are not a bigger snapshot — they are a duplicate of everything that did not
  * change.
  */
+/** The one thing this service needs from the metadata cache. */
+export interface MetadataCache {
+  forget(environmentId: string): Promise<void>;
+}
+
 export class StagedSourceService {
   constructor(
     private readonly db: AppDb,
+    private readonly metadata: MetadataCache,
     private readonly audit: AuditService,
     private readonly logger: Logger,
     /** Issues a delegated Microsoft Graph token. Absent when the feature is switched off. */
@@ -192,6 +199,9 @@ export class StagedSourceService {
         `Nothing in ${file.filename} could be read as a table. A sheet needs a header row with at least one row of values beneath it.`,
       );
     }
+    // The shape of this source just changed. Anything cached about it describes the source as it
+    // was a moment ago, which is worse than having nothing cached at all.
+    await this.metadata.forget(env.id);
     await this.db
       .update(environments)
       .set({
@@ -423,6 +433,7 @@ export class StagedSourceService {
     await this.db
       .delete(stagedTables)
       .where(and(eq(stagedTables.environmentId, env.id), eq(stagedTables.logicalName, logicalName)));
+    await this.metadata.forget(env.id);
   }
 
   private async tableDto(environmentId: string, logicalName: string): Promise<StagedTableDto> {
@@ -455,7 +466,15 @@ export class StagedSourceService {
 const kindOf = (connectionType: string): StagedSourceKind =>
   connectionType === 'ONEDRIVE' ? 'ONEDRIVE' : connectionType === 'SHAREPOINT' ? 'SHAREPOINT' : 'UPLOAD';
 
-/** A workbook's sheets, or a delimited file as one. */
+/**
+ * A workbook's sheets, an XML document's records, or a delimited file as one table.
+ *
+ * The order matters. Everything that was not a ZIP used to fall through to the delimited reader,
+ * which reads anything: an XML export came back as a one-column table of XML fragments, and then
+ * profiled, mapped and migrated exactly like a real table. Answering confidently and wrongly is
+ * worse than refusing, so each format is recognised before it is read, and one this importer
+ * cannot read is named rather than mangled.
+ */
 export function readSheets(content: Buffer, filename: string): XlsxReadSheet[] {
   const looksZip = content.length > 4 && content[0] === 0x50 && content[1] === 0x4b;
   if (looksZip) {
@@ -470,11 +489,42 @@ export function readSheets(content: Buffer, filename: string): XlsxReadSheet[] {
   const text = content.toString('utf8');
   if (text.includes('\u0000')) {
     throw badRequest(
-      `${filename} does not look like a CSV or an .xlsx workbook. Save it as one of those and try again.`,
+      `${filename} is not a text file this importer can read. Export it as CSV, .xlsx or XML and try again.`,
+    );
+  }
+  if (looksLikeXml(content)) {
+    try {
+      return readXml(content, filename);
+    } catch (err) {
+      throw badRequest(
+        err instanceof XmlReadError
+          ? err.message
+          : `${filename} could not be read as XML: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+  const unreadable = unreadableFormat(text);
+  if (unreadable) {
+    throw badRequest(
+      `${filename} looks like ${unreadable}, which this importer cannot read as a table. Export it as CSV, .xlsx or XML and try again.`,
     );
   }
   const name = filename.replace(/\.[^.]+$/, '') || 'data';
   return [{ name, rows: parseDelimited(text) }];
+}
+
+/**
+ * Names a text format that is definitely not delimited data.
+ *
+ * Only shapes that are unambiguous. Anything uncertain still goes to the delimited reader, because
+ * refusing a valid CSV because it happens to start with a brace would be its own bug.
+ */
+function unreadableFormat(text: string): string | null {
+  const head = text.replace(/^\uFEFF/, '').trimStart();
+  if (head.startsWith('%PDF-')) return 'a PDF';
+  if (/^<!doctype html/i.test(head) || /^<html[\s>]/i.test(head)) return 'an HTML page';
+  if (head.startsWith('{') || head.startsWith('[')) return 'JSON';
+  return null;
 }
 
 /**

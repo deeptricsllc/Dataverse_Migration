@@ -40,7 +40,7 @@ Migrate → Validate → Reconcile → Schedule.
 | Azure SQL                  | yes  | yes    | Shares the SQL Server connector                                                                                         |
 | PostgreSQL                 | yes  | yes    | **Real PostgreSQL** — PGlite is Postgres compiled to WebAssembly, so `pg_catalog` behaves as on a server                |
 | MySQL / MariaDB            | yes  | yes    | Unit level only; the driver path needs a server (see §8)                                                                |
-| CSV / Excel upload         | yes  | **no** | End to end, including in a browser                                                                                      |
+| CSV / Excel / XML upload   | yes  | **no** | End to end, including in a browser                                                                                      |
 | OneDrive / SharePoint file | yes  | **no** | Unit level only; never run against a real tenant                                                                        |
 | SharePoint list            | yes  | **no** | Unit level only; never run against a real tenant                                                                        |
 

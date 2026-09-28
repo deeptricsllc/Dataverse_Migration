@@ -193,7 +193,7 @@ const SOURCES = [
   { name: 'Azure SQL', write: true, note: 'Shares the SQL Server connector' },
   { name: 'PostgreSQL', write: true, note: 'Verified against real PostgreSQL' },
   { name: 'MySQL / MariaDB', write: true, note: 'Driver path needs your server to verify' },
-  { name: 'CSV / Excel upload', write: false, note: 'Types inferred, with the reason for each' },
+  { name: 'CSV / Excel / XML upload', write: false, note: 'Types inferred, with the reason for each' },
   { name: 'OneDrive / SharePoint file', write: false, note: 'Not yet run against a real tenant' },
   { name: 'SharePoint list', write: false, note: 'Not yet run against a real tenant' },
 ];
@@ -376,7 +376,7 @@ export function LandingPage() {
             <span>PostgreSQL</span>
             <span>MySQL</span>
             <span className="text-slate-500">Reads:</span>
-            <span>CSV &amp; Excel</span>
+            <span>CSV, Excel &amp; XML</span>
             <span>OneDrive</span>
             <span>SharePoint</span>
           </div>

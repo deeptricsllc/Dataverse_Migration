@@ -12,7 +12,7 @@ the important part of the design — not the count.
 | Azure SQL                  | `SQL`       | yes  | yes    | `mssql`, live             |
 | PostgreSQL                 | `SQL`       | yes  | yes    | `pg`, live                |
 | MySQL / MariaDB            | `SQL`       | yes  | yes    | `mysql2`, live            |
-| CSV / Excel upload         | `TABULAR`   | yes  | **no** | Imported, then staged     |
+| CSV / Excel / XML upload   | `TABULAR`   | yes  | **no** | Imported, then staged     |
 | OneDrive / SharePoint file | `TABULAR`   | yes  | **no** | Fetched via Graph, staged |
 | SharePoint list            | `TABULAR`   | yes  | **no** | Fetched via Graph, staged |
 
@@ -25,7 +25,8 @@ otherwise would mean inventing a keyset pagination over something with no key an
 So they are **staged**: read once, stored with their provenance, and served by one connector
 (`StagedConnector`). The consequences are worth being explicit about.
 
-- **The variety lives in the import.** A CSV has one table, a workbook has one per sheet, a list has
+- **The variety lives in the import.** A CSV has one table, a workbook has one per sheet, an XML
+  document has the element that repeats, a list has
   its own shape. Everything after that is identical, which is why there is one connector rather than
   three.
 - **A re-import replaces a table.** A file is a snapshot, and two snapshots concatenated are not a
@@ -37,6 +38,32 @@ So they are **staged**: read once, stored with their provenance, and served by o
 - **They can never be written to.** `STAGED_CAPABILITIES.supportsWrite` is false, the tables are
   marked views so the planner refuses them as targets, no "Set as target" button is rendered, and the
   connector's write methods refuse. Four places, because one of them will be the one somebody changes.
+
+### How an XML document becomes a table
+
+XML has no rows, so the reader has to decide what one is.
+
+- **The element that repeats is the row.** The search runs over the whole document and takes the
+  shallowest repeated group, so `<export><meta/><orders><order/>...` finds `order`. Going deeper
+  would find the line items inside each order and call a line a row, which is a different table
+  than the one that was exported.
+- **Attributes, leaf elements and nested values are all columns.** `ref="ORD-1"` becomes `ref`, and
+  `<shipping><city>` becomes `shipping_city`. The `@` and `.` a path is built from are this
+  reader's notation, not the customer's, so they are normalised into a name the rest of the
+  platform can carry. A CSV header is never rewritten, because that one is the customer's own name
+  for the column.
+- **The columns are the union across records, in first-seen order.** A later record carrying an
+  extra field is ordinary in an export; a record missing one gets null. This is the rule a
+  SharePoint list already follows.
+- **A field that repeats inside one record keeps every value**, joined with `; `. Keeping the last
+  one silently would lose data without saying so.
+- **A document type declaration is refused outright.** A DOCTYPE is how entity expansion and
+  external references get in, and no data extract needs one. Unknown entities are left exactly as
+  written rather than resolved, so there is nothing to point at a local file.
+- **Anything that is not a table is named rather than mangled.** JSON, HTML and PDF uploads are
+  refused with what they look like. Before this, any text that was not a ZIP fell through to the
+  delimited reader, and an XML export came back as a one-column table of markup that then profiled
+  and migrated exactly like real data.
 
 ## 2. Provider families
 
@@ -197,7 +224,7 @@ The contract finds a table with rows by itself, so no fixture is needed, and it 
 | Connector              | Tested against                                                                                                                                                                         |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PostgreSQL             | **Real PostgreSQL** for discovery: PGlite is Postgres compiled to WebAssembly, so `pg_catalog` behaves as it does on a server. The driver path needs `TEST_POSTGRES_URL`               |
-| CSV / Excel            | **End to end**, including the contract suite and the browser journey                                                                                                                   |
+| CSV / Excel / XML      | **End to end**, including the contract suite and the browser journey                                                                                                                   |
 | Dataverse / SQL Server | Demo connectors through the contract suite, plus the existing integration and end-to-end journeys                                                                                      |
 | MySQL                  | **Unit plus the contract suite when a server is supplied.** Quoting, binding, the type vocabulary and catalog-to-metadata are covered outright; the driver path needs `TEST_MYSQL_URL` |
 | OneDrive / SharePoint  | **Unit only.** Link resolution, sharing-link encoding, list-to-rows shaping and the access diagnosis against a stubbed Graph. The live call needs a real tenant                        |

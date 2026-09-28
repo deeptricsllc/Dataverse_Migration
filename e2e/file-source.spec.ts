@@ -56,6 +56,26 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
   await expect(card).toContainText('mixed values, kept as text');
   await expect(card).toContainText('no values to infer from');
 
+  // 4b. An XML export lands as a table too, imported into the same source.
+  await page.getByTestId('staged-file').setInputFiles({
+    name: 'orders.xml',
+    mimeType: 'application/xml',
+    buffer: Buffer.from(
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<orders>',
+        '  <order ref="ORD-1"><customer>Acme Industries</customer><total>1250.75</total></order>',
+        '  <order ref="ORD-2"><customer>Globex</customer><total>99</total></order>',
+        '  <order ref="ORD-3"><customer>Initech</customer><total>480.10</total></order>',
+        '</orders>',
+      ].join('\n'),
+    ),
+  });
+  await expect(page.getByTestId('staged-import-result')).toContainText('3 row(s)');
+  // Real columns from the attribute and the elements, rather than one column of markup.
+  await expect(card).toContainText('orders');
+  await expect(card).toContainText('key: ref');
+
   // 5. It can be a source, and is never offered as a target.
   const fileCard = page.getByTestId('env-card-Customer extracts');
   await expect(fileCard.getByRole('button', { name: 'Set as source' })).toBeVisible();

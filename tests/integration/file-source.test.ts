@@ -16,7 +16,7 @@ import { ApiClient, createTestApp, type TestApp } from '../helpers';
  * arrives with no schema and every value as text; once it is staged, analysis, profiling and mapping
  * treat it like any other source — and, crucially, refuse to treat it as a target.
  */
-describe('CSV and Excel as a source', () => {
+describe('CSV, Excel and XML as a source', () => {
   let t: TestApp;
   let api: ApiClient;
   let worker: ReturnType<TestApp['services']['createWorker']>;
@@ -214,6 +214,136 @@ describe('CSV and Excel as a source', () => {
     expect(after.map((x) => x.logicalName)).not.toContain('regions');
   });
 
+  it('imports an XML extract as a table, and types its columns like any other source', async () => {
+    // XML is how most legacy systems export. Before this it was read as delimited text, which
+    // produced a one-column table of markup that then profiled and migrated like real data.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<orders>
+  <order ref="ORD-1" channel="web">
+    <customer>Acme Industries</customer>
+    <placed>2026-01-04</placed>
+    <total>1250.75</total>
+    <shipping><city>Leeds</city><country>UK</country></shipping>
+  </order>
+  <order ref="ORD-2" channel="phone">
+    <customer>Globex</customer>
+    <placed>2026-02-11</placed>
+    <total>99</total>
+    <shipping><city>Derby</city><country>UK</country></shipping>
+  </order>
+  <order ref="ORD-3" channel="web">
+    <customer>Initech</customer>
+    <placed>2026-03-02</placed>
+    <total>480.10</total>
+    <shipping><city>Hull</city><country>UK</country></shipping>
+  </order>
+</orders>`;
+    const result = await upload('orders.xml', xml);
+    expect(result.tables).toHaveLength(1);
+
+    const [table] = result.tables;
+    expect(table.logicalName).toBe('orders');
+    // The repeating element names the table on screen, so it is obvious what a row is.
+    expect(table.displayName).toBe('order');
+    expect(table.rowCount).toBe(3);
+    const byName = new Map(table.columns.map((c) => [c.name, c]));
+    // Attributes, leaf elements and a nested path each become a column.
+    expect([...byName.keys()]).toEqual(
+      expect.arrayContaining(['ref', 'channel', 'customer', 'placed', 'total', 'shipping_city']),
+    );
+    // Typing is the same inference every other source gets, so the values really did arrive as
+    // values rather than as markup.
+    expect(byName.get('total')!.type).toBe('Decimal');
+    expect(byName.get('placed')!.type).toBe('DateTime');
+    expect(byName.get('customer')!.type).toBe('String');
+    // The attribute that is unique and never empty identifies the row.
+    expect(table.keyColumn).toBe('ref');
+    expect(table.keyIsSynthetic).toBe(false);
+  });
+
+  it('reads XML rows back through the connector with their values intact', async () => {
+    const env = await t.services.environments.getInOrganization(
+      (await api.get<{ user: { organization: { id: string } } }>('/api/auth/session')).user.organization.id,
+      source.id,
+    );
+    const conn = await t.services.connections.connectorFor(env, 'test', {});
+    // Named after the file, the same rule a CSV follows; the record element becomes the display name.
+    const meta = await conn.getTable('orders');
+    const records = [];
+    for await (const page of conn.queryRecords(meta, ['customer', 'shipping_city'], { pageSize: 50 })) {
+      records.push(...page);
+    }
+    expect(records).toHaveLength(3);
+    // The key column arrives as the record's id, the same as it does for a CSV.
+    expect(records[0].id).toBe('ORD-1');
+    // An attribute, a leaf element and a nested element all arrive as ordinary values.
+    expect(records[0].values).toMatchObject({ customer: 'Acme Industries', shipping_city: 'Leeds' });
+    expect(records[2].values.shipping_city).toBe('Hull');
+    await conn.dispose?.();
+  });
+
+  it('analyses an XML extract the same way it analyses a database', async () => {
+    const project = await api.post<ProjectDto>('/api/projects', {
+      name: 'Legacy order extract',
+      kind: 'ANALYSIS',
+      sourceEnvironmentId: source.id,
+    });
+    const run = await api.post<AnalysisRunDto>(`/api/projects/${project.id}/analyses`, {
+      tables: ['orders'],
+      full: true,
+    });
+    await worker.drain(120_000);
+    const done = await api.get<AnalysisRunDto>(`/api/analyses/${run.id}`);
+    expect(done.status, done.errorMessage ?? '').toBe('COMPLETED');
+    const [analysed] = done.tables;
+    expect(analysed.recordCount).toBe(3);
+    // Every record was read, so the figures are exact rather than a floor.
+    expect(analysed.basis).toBe('EXACT');
+  }, 180_000);
+
+  it('refuses an XML file with a document type declaration', async () => {
+    // A DOCTYPE is how entity expansion gets in. No data extract needs one.
+    const bomb = `<?xml version="1.0"?>
+<!DOCTYPE lolz [ <!ENTITY lol "lol"> ]>
+<rows><row><a>&lol;</a></row><row><a>b</a></row></rows>`;
+    const res = await t.app.inject({
+      method: 'POST',
+      url: `/api/staged-sources/${source.id}/import`,
+      payload: { filename: 'bomb.xml', contentBase64: Buffer.from(bomb).toString('base64') } as never,
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/document type declaration/);
+  });
+
+  it('shows a table imported after the source was already used', async () => {
+    // The bug this pins: the table catalogue is cached with a time-to-live, and importing a file
+    // did not drop it. A source that had already been listed or analysed therefore kept answering
+    // with the tables it held at that moment — a newly imported table was invisible, and asking for
+    // it by name came back "none of the requested tables exist in this source".
+    const env = await t.services.environments.getInOrganization(
+      (await api.get<{ user: { organization: { id: string } } }>('/api/auth/session')).user.organization.id,
+      source.id,
+    );
+    const conn = await t.services.connections.connectorFor(env, 'test', {});
+
+    // Warm the cache, the way listing tables or running an analysis does.
+    const before = await t.services.metadata.getCatalog(env.id, conn);
+    expect(before.some((table) => table.logicalName === 'late_arrival')).toBe(false);
+
+    await upload('late_arrival.csv', 'id,name\n1,Acme\n2,Globex');
+
+    const after = await t.services.metadata.getCatalog(env.id, conn);
+    expect(after.some((table) => table.logicalName === 'late_arrival')).toBe(true);
+
+    // And removing a table takes it back out, rather than leaving a catalogue entry that leads to
+    // a table which is no longer there.
+    await api.request('DELETE', `/api/staged-sources/${source.id}/tables/late_arrival`, undefined, 204);
+    const removed = await t.services.metadata.getCatalog(env.id, conn);
+    expect(removed.some((table) => table.logicalName === 'late_arrival')).toBe(false);
+    await conn.dispose?.();
+  });
+
   it('says what it cannot read, rather than importing nonsense', async () => {
     await api.request(
       'POST',
@@ -237,6 +367,18 @@ describe('CSV and Excel as a source', () => {
       },
       400,
     );
+    // Formats that are text but are not tables are named, rather than being read as one column.
+    for (const [filename, body] of [
+      ['data.json', '{"rows":[{"a":1}]}'],
+      ['page.html', '<!DOCTYPE html><html><body>hi</body></html>'],
+    ] as const) {
+      await api.request(
+        'POST',
+        `/api/staged-sources/${source.id}/import`,
+        { filename, contentBase64: Buffer.from(body).toString('base64') },
+        400,
+      );
+    }
   });
 
   it('will not import into a live database connection', async () => {

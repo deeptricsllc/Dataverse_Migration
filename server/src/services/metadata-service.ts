@@ -67,6 +67,21 @@ export class MetadataService {
     private readonly logger: Logger,
   ) {}
 
+  /**
+   * Drops everything cached about an environment's shape.
+   *
+   * A staged source's schema changes when somebody imports a file, and this cache has a
+   * time-to-live rather than a subscription. Without this, a second import stayed invisible until
+   * the cache expired: the table list did not show it, and asking for it by name came back "none of
+   * the requested tables exist in this source". A re-import that changed a column's type was worse,
+   * because the stale entry was not missing but wrong.
+   */
+  async forget(environmentId: string): Promise<void> {
+    await this.db.delete(metadataCatalogs).where(eq(metadataCatalogs.environmentId, environmentId));
+    await this.db.delete(metadataTables).where(eq(metadataTables.environmentId, environmentId));
+    this.logger.info({ environmentId }, 'Cached metadata dropped');
+  }
+
   async getCatalog(
     environmentId: string,
     conn: DataverseConnection,

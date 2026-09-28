@@ -131,6 +131,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   const schedules = new ScheduleService(db, runs, audit, logger);
   const stagedSources = new StagedSourceService(
     db,
+    metadata,
     audit,
     logger,
     // Only wired when reading from OneDrive and SharePoint is switched on: without it the service

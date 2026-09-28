@@ -128,7 +128,7 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
           <input
             ref={fileInput}
             type="file"
-            accept=".csv,.tsv,.txt,.xlsx"
+            accept=".csv,.tsv,.txt,.xlsx,.xml"
             data-testid="staged-file"
             className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
             onChange={(e) => {
@@ -139,8 +139,9 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
           {importFile.isPending && <Spinner label="Reading the file…" />}
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          A CSV (comma, semicolon or tab separated) or an .xlsx workbook. Each sheet becomes a table. Column
-          types are inferred from the values and shown below with the reasoning.
+          A CSV (comma, semicolon or tab separated), an .xlsx workbook, or an XML export. Each sheet becomes a
+          table; in XML the element that repeats becomes the rows, with attributes and nested values as
+          columns. Column types are inferred from the values and shown below with the reasoning.
         </p>
       </div>
 
