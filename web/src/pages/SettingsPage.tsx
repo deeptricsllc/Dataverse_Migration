@@ -171,6 +171,7 @@ export function SettingsPage() {
       <AuditTrailCard
         page={audit.data}
         loading={audit.isLoading}
+        fetching={audit.isFetching}
         error={audit.error}
         filters={filters}
         onFilters={setFilters}
@@ -232,12 +233,15 @@ const DAY_OPTIONS = [
 function AuditTrailCard({
   page,
   loading,
+  fetching,
   error,
   filters,
   onFilters,
 }: {
   page: AuditPageDto | undefined;
   loading: boolean;
+  /** A filter changed and the new page has not arrived. The old one is still on screen. */
+  fetching: boolean;
   error: unknown;
   filters: AuditFilters;
   onFilters: (f: AuditFilters) => void;
@@ -339,7 +343,10 @@ function AuditTrailCard({
         />
       )}
       {page && page.items.length > 0 && (
-        <>
+        // Keeping the previous page visible while the next one loads avoids the list collapsing on
+        // every keystroke, but rows that no longer match the filter are then briefly still there.
+        // Dimming them says so rather than letting it look like the filter did nothing.
+        <div className={fetching ? 'opacity-50 transition-opacity' : undefined} aria-busy={fetching}>
           <Table>
             <thead className="bg-slate-50">
               <tr>
@@ -402,7 +409,7 @@ function AuditTrailCard({
             Showing {page.items.length.toLocaleString()} of {page.total.toLocaleString()} matching event(s)
             {page.total > page.items.length ? ' — narrow the filters to see the rest' : ''}.
           </p>
-        </>
+        </div>
       )}
     </Card>
   );

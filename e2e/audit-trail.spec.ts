@@ -34,8 +34,8 @@ test('the audit trail can be narrowed to the question being asked', async ({ pag
   await trail.getByLabel('Filter by activity').selectOption('ACCESS');
   await expect(categories.first()).toBeVisible();
   // Every row on the page is now the kind that was asked for, and nothing else.
-  expect(await categories.filter({ hasText: 'Connections' }).count()).toBe(0);
-  expect(await categories.filter({ hasText: 'Migration runs' }).count()).toBe(0);
+  await expect(categories.filter({ hasText: 'Connections' })).toHaveCount(0);
+  await expect(categories.filter({ hasText: 'Migration runs' })).toHaveCount(0);
 
   // However much it holds, the footer says how much of it is on screen.
   await expect(trail.getByText(/Showing .* of .* matching event/)).toBeVisible();
