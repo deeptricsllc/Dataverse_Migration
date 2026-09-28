@@ -369,7 +369,10 @@ function AuditTrailCard({
                       <Td className="text-xs">{a.user ?? '—'}</Td>
                       <Td className="text-xs font-medium">
                         {humanize(a.action)}
-                        <div className="text-[10px] font-normal uppercase tracking-wide text-slate-400">
+                        <div
+                          className="text-[10px] font-normal uppercase tracking-wide text-slate-400"
+                          data-testid="audit-category"
+                        >
                           {AUDIT_CATEGORY_LABELS[auditCategory(a.action)]}
                         </div>
                       </Td>
