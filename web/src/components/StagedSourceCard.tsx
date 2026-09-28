@@ -152,6 +152,30 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
           <p className="text-sm text-emerald-700">
             Imported {lastImport.tables.length} table(s), {fmtNumber(lastImport.totalRows)} row(s).
           </p>
+          {lastImport.replaced.length > 0 && (
+            <Callout
+              // Re-importing the same file is ordinary. Rows arriving from a file with a different
+              // name means two files resolved to one table, and the earlier one's rows are gone.
+              tone={
+                lastImport.replaced.some((r) => r.previousSourceRef !== lastImport.tables[0]?.sourceRef)
+                  ? 'warning'
+                  : 'info'
+              }
+              title={`${lastImport.replaced.length} table(s) replaced`}
+            >
+              <ul className="mt-1 space-y-0.5 text-xs">
+                {lastImport.replaced.map((r) => (
+                  <li key={r.logicalName}>
+                    <span className="font-medium">{r.displayName}</span> held {fmtNumber(r.previousRows)}{' '}
+                    row(s) from <span className="font-medium">{r.previousSourceRef}</span>
+                    {r.previousSourceRef === lastImport.tables[0]?.sourceRef
+                      ? '. A file is a snapshot, so those rows were replaced rather than added to.'
+                      : ', a different file. Both files resolve to the same table name, so those rows have been replaced.'}
+                  </li>
+                ))}
+              </ul>
+            </Callout>
+          )}
           {lastImport.skipped.length > 0 && (
             <Callout tone="info" title={`${lastImport.skipped.length} sheet(s) skipped`}>
               <ul className="mt-1 space-y-0.5 text-xs">
@@ -188,8 +212,10 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
                     {fmtNumber(table.rowCount)} row(s) · {table.columnCount} column(s) ·{' '}
                     {STAGED_SOURCE_LABELS[table.kind]} · from{' '}
                     <span className="font-mono">{table.sourceRef}</span>
-                    {table.sheetName && <> (sheet {table.sheetName})</>} · imported{' '}
-                    {fmtRelative(table.importedAt)}
+                    {table.sheetName && (
+                      <> ({table.sheetName.startsWith('<') ? table.sheetName : `sheet ${table.sheetName}`})</>
+                    )}{' '}
+                    · imported {fmtRelative(table.importedAt)}
                     {table.importedBy ? ` by ${table.importedBy}` : ''}
                   </p>
                   <p className="mt-1 text-xs">

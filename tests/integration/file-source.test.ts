@@ -243,8 +243,9 @@ describe('CSV, Excel and XML as a source', () => {
 
     const [table] = result.tables;
     expect(table.logicalName).toBe('orders');
-    // The repeating element names the table on screen, so it is obvious what a row is.
-    expect(table.displayName).toBe('order');
+    // Named after the file, like a CSV. The element that became the rows is shown beside it.
+    expect(table.displayName).toBe('orders');
+    expect(table.sheetName).toBe('<order> elements');
     expect(table.rowCount).toBe(3);
     const byName = new Map(table.columns.map((c) => [c.name, c]));
     // Attributes, leaf elements and a nested path each become a column.
@@ -314,6 +315,46 @@ describe('CSV, Excel and XML as a source', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toMatch(/document type declaration/);
+  });
+
+  it('says what an import overwrote, and flags when a different file took the name', async () => {
+    // The table name is its identity: importing over it deletes the rows that were there. That is
+    // right for a snapshot and wrong to do silently, and the dangerous case is two different files
+    // resolving to one name.
+    const first = await upload('monthly.csv', 'id,name\n1,Acme\n2,Globex\n3,Initech');
+    expect(first.replaced).toEqual([]);
+    expect(first.tables[0].rowCount).toBe(3);
+
+    // The same file again: ordinary, and still reported.
+    const again = await upload('monthly.csv', 'id,name\n1,Acme');
+    expect(again.replaced).toHaveLength(1);
+    expect(again.replaced[0]).toMatchObject({
+      logicalName: 'monthly',
+      previousRows: 3,
+      previousSourceRef: 'monthly.csv',
+    });
+
+    // A different file whose name normalises to the same table. The rows from the first are gone,
+    // and the result names the file they came from.
+    const collision = await upload('Monthly.CSV', 'id,name\n9,Umbrella');
+    expect(collision.replaced).toHaveLength(1);
+    expect(collision.replaced[0].previousSourceRef).toBe('monthly.csv');
+    expect(collision.replaced[0].previousSourceRef).not.toBe('Monthly.CSV');
+  });
+
+  it('names an XML table after the file, not after the record element', async () => {
+    // Deliberate. Every monthly orders export holds <order>, so naming the table after the element
+    // would make two unrelated extracts overwrite each other. The element is shown beside the
+    // table instead, because which element became the rows is the one non-obvious decision here.
+    const xml = '<orders><order ref="A"><n>1</n></order><order ref="B"><n>2</n></order></orders>';
+    const jan = await upload('orders-jan.xml', xml);
+    const feb = await upload('orders-feb.xml', xml);
+    expect(jan.tables[0].logicalName).toBe('orders_jan');
+    expect(feb.tables[0].logicalName).toBe('orders_feb');
+    // Neither replaced the other.
+    expect(feb.replaced).toEqual([]);
+    expect(jan.tables[0].displayName).toBe('orders-jan');
+    expect(jan.tables[0].sheetName).toBe('<order> elements');
   });
 
   it('shows a table imported after the source was already used', async () => {

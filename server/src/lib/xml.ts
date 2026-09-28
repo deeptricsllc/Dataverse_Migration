@@ -17,8 +17,16 @@
 export type XmlCell = string | null;
 
 export interface XmlTable {
-  /** The repeating element's name, which is what the table is called. */
+  /** The repeating element's name. */
   name: string;
+  /**
+   * Which part of the file these rows came from, shown beside the table.
+   *
+   * The table itself is named after the file, because the name is its identity and importing over
+   * it replaces its rows: every monthly orders export holds `<order>`, so naming tables after the
+   * element would make unrelated extracts overwrite one another.
+   */
+  part: string;
   /** Header row first, then one row per record. */
   rows: XmlCell[][];
 }
@@ -362,7 +370,7 @@ export function readXml(content: Buffer, filename: string): XmlTable[] {
   for (const fields of flattened) {
     rows.push(paths.map((p) => fields.get(p) ?? null));
   }
-  return [{ name: found.name, rows }];
+  return [{ name: found.name, part: `<${found.name}> elements`, rows }];
 }
 
 /**

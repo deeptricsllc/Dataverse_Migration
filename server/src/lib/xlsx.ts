@@ -30,6 +30,11 @@ export interface XlsxSheet {
 export interface XlsxReadSheet {
   name: string;
   rows: (string | number | boolean | null)[][];
+  /**
+   * Which part of the file these rows came from, when that is not a sheet. An XML reader sets it
+   * to the element that repeated; a workbook leaves it unset because the sheet name says it.
+   */
+  part?: string;
 }
 
 // ---------------------------------------------------------------------------

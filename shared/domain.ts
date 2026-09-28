@@ -2068,6 +2068,20 @@ export interface StagedImportResultDto {
   /** Sheets that were skipped, and why — an empty tab is normal and should not look like a failure. */
   skipped: { name: string; reason: string }[];
   totalRows: number;
+  /**
+   * Tables this import overwrote.
+   *
+   * A table's name is its identity here: importing over it deletes the rows that were there, which
+   * is right for a snapshot and wrong to do silently. Re-importing the same file is the ordinary
+   * case; `previousSourceRef` differing from the file just imported means two different files
+   * resolved to one name, and the earlier one's rows are now gone.
+   */
+  replaced: {
+    logicalName: string;
+    displayName: string;
+    previousRows: number;
+    previousSourceRef: string;
+  }[];
 }
 
 export interface ApiErrorBody {

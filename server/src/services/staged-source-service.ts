@@ -149,7 +149,7 @@ export class StagedSourceService {
     const sourceRef = (opts.sourceRef ?? file.filename).slice(0, 300);
     const sheets = readSheets(file.content, file.filename);
 
-    const result: StagedImportResultDto = { tables: [], skipped: [], totalRows: 0 };
+    const result: StagedImportResultDto = { tables: [], skipped: [], totalRows: 0, replaced: [] };
     for (const sheet of sheets) {
       const prepared = prepareSheet(sheet);
       if (!prepared) {
@@ -174,10 +174,26 @@ export class StagedSourceService {
         continue;
       }
 
+      // The file names the table, not the sheet or the XML record element. The name is this
+      // table's identity: importing over it replaces its rows. Element names collide across
+      // exports — every monthly orders file holds <order> — so naming a table after one would make
+      // two unrelated extracts overwrite each other. A file name is the thing that is already
+      // distinct, and already means something to the person who uploaded it.
       const logicalName = tableNameFor(sheets.length > 1 ? sheet.name : file.filename, sheet.name);
+      const existing = await this.existingTable(env.id, logicalName);
+      if (existing) {
+        result.replaced.push({
+          logicalName,
+          displayName: existing.displayName,
+          previousRows: existing.rowCount,
+          previousSourceRef: existing.sourceRef,
+        });
+      }
       const inferred = inferTable(
         logicalName,
-        displayNameFor(sheet.name, file.filename),
+        // A workbook sheet names its own table; a single-table file is named after the file, so
+        // `orders.xml` does not become a table called "order".
+        displayNameFor(sheets.length > 1 ? sheet.name : '', file.filename),
         prepared.headers,
         prepared.rows,
       );
@@ -186,7 +202,8 @@ export class StagedSourceService {
         env.id,
         kind,
         sourceRef,
-        sheets.length > 1 ? sheet.name : null,
+        // Which part of the file the rows came from: a sheet, or the element that repeated.
+        sheets.length > 1 ? sheet.name : (sheet.part ?? null),
         inferred,
         prepared,
       );
@@ -304,7 +321,9 @@ export class StagedSourceService {
       requestId: ctx.requestId,
       details: { sourceRef: input.reference, kind: 'SHAREPOINT', rows: inferred.rowCount },
     });
-    return { tables: [table], skipped: [], totalRows: inferred.rowCount };
+    // A list import writes one table under a name taken from the list, and replaces it on a
+    // re-import exactly as a file does.
+    return { tables: [table], skipped: [], totalRows: inferred.rowCount, replaced: [] };
   }
 
   /** A Graph caller for the signed-in user, or a clear refusal when the feature is off. */
@@ -434,6 +453,19 @@ export class StagedSourceService {
       .delete(stagedTables)
       .where(and(eq(stagedTables.environmentId, env.id), eq(stagedTables.logicalName, logicalName)));
     await this.metadata.forget(env.id);
+  }
+
+  /** What is already stored under this name, so an import can say what it is about to overwrite. */
+  private async existingTable(environmentId: string, logicalName: string) {
+    const [row] = await this.db
+      .select({
+        displayName: stagedTables.displayName,
+        rowCount: stagedTables.rowCount,
+        sourceRef: stagedTables.sourceRef,
+      })
+      .from(stagedTables)
+      .where(and(eq(stagedTables.environmentId, environmentId), eq(stagedTables.logicalName, logicalName)));
+    return row ?? null;
   }
 
   private async tableDto(environmentId: string, logicalName: string): Promise<StagedTableDto> {
