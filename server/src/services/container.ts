@@ -7,6 +7,7 @@ import { ConnectionFactory } from '../dataverse/factory';
 import { JobQueue, Worker } from '../jobs/queue';
 import { AccessRequestService } from './access-request-service';
 import { AnalysisService } from './analysis-service';
+import { DataComparisonService } from './data-comparison-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
 import { EnvironmentService } from './environment-service';
@@ -107,6 +108,16 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
+  const dataComparisons = new DataComparisonService(
+    db,
+    projectsSvc,
+    environments,
+    metadata,
+    connections,
+    queue,
+    audit,
+    logger,
+  );
   const dataQuality = new DataQualityService(db, profiling, environments, metadata, connections, logger);
   const mappingWorkbooks = new MappingWorkbookService(
     db,
@@ -160,6 +171,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
         VALIDATION: (job, s) => validation.execute(job.targetId, s.heartbeat),
         PREFLIGHT: (job, s) => preflight.execute(job.targetId, s.heartbeat),
         ANALYSIS: (job, s) => analysis.execute(job.targetId, s.heartbeat),
+        DATA_COMPARISON: (job, s) => dataComparisons.execute(job.targetId, s.heartbeat),
       },
       logger.child({ component: 'worker' }),
       { pollMs: config.WORKER_POLL_MS, concurrency: 2, staleMs: 90_000 },
@@ -188,6 +200,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     dataQuality,
     projects: projectsSvc,
     analysis,
+    dataComparisons,
     mappingWorkbooks,
     schedules,
     stagedSources,

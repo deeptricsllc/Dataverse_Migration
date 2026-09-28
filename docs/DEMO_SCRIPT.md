@@ -148,6 +148,29 @@ Then the parts people ask about:
 
 ---
 
+## 4b · Comparison, for the people who are not migrating anything (2 min)
+
+Worth its own beat, because it sells on its own — an organization with no migration in flight still
+has two systems that are supposed to agree.
+
+**Projects → New project → Comparison & validation.** Point it at two connections.
+
+> "No target, no plan, no migration. Two datasets and one question: do they agree?"
+
+Run it. The setup proposes which tables pair with which and what identifies a record; confirm and go.
+
+Then the result: matched, different, only on A, only on B — and the field-level detail with the key
+of every record that differs.
+
+> "This is the monthly reconciliation somebody currently does in Excel. It is also what you run a
+> year after a migration, when somebody asks whether the two systems have drifted."
+
+_If they ask what happens with a bad key:_ show it. Pick a column that is empty on one side — the run
+comes back FAILED saying nothing was compared and naming the key. _"A tool that returns zeroes and
+lets you read them as a pass is worse than one that refuses."_
+
+---
+
 ## 5 · Keep it correct (2 min)
 
 On the plan's review step, **add a schedule**.

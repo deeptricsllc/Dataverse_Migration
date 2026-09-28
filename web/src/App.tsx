@@ -4,6 +4,7 @@ import { Spinner } from './components/ui';
 import { SessionProvider, useSessionQuery } from './lib/session';
 import { AnalysisPage } from './pages/AnalysisPage';
 import { ComparePage } from './pages/ComparePage';
+import { ComparisonPage } from './pages/ComparisonPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { EnvironmentsPage } from './pages/EnvironmentsPage';
@@ -56,6 +57,7 @@ export function App() {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:projectId" element={<ProjectPage />} />
         <Route path="analyses/:analysisId" element={<AnalysisPage />} />
+        <Route path="data-comparisons/:comparisonId" element={<ComparisonPage />} />
         <Route path="environments" element={<EnvironmentsPage />} />
         <Route path="compare" element={<ComparePage />} />
         <Route path="compare/:comparisonId" element={<ComparePage />} />

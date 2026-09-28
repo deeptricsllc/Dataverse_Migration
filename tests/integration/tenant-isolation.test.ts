@@ -35,6 +35,8 @@ describe('tenant isolation across every route', () => {
     planId: '',
     scheduleId: '',
     stagedId: '',
+    comparisonProjectId: '',
+    comparisonId: '',
   };
 
   beforeAll(async () => {
@@ -83,6 +85,29 @@ describe('tenant isolation across every route', () => {
       confirmTargetName: qa.displayName,
     });
     owned.scheduleId = schedule.id;
+
+    const comparisonProject = await owner.post<ProjectDto>('/api/projects', {
+      name: 'Owner reconciliation',
+      kind: 'COMPARISON',
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: qa.id,
+    });
+    owned.comparisonProjectId = comparisonProject.id;
+    const comparison = await owner.post<{ id: string }>(
+      `/api/projects/${comparisonProject.id}/data-comparisons`,
+      {
+        pairs: [
+          {
+            leftTable: 'account',
+            rightTable: 'account',
+            key: [{ left: 'accountid', right: 'accountid' }],
+            fields: [{ left: 'name', right: 'name' }],
+          },
+        ],
+      },
+    );
+    owned.comparisonId = comparison.id;
+    await worker.drain(180_000);
 
     const staged = await owner.post<EnvironmentDto>(
       '/api/staged-sources',
@@ -184,6 +209,36 @@ describe('tenant isolation across every route', () => {
       404,
     );
     await intruder.get(`/api/plans/${owned.planId}/mapping.xlsx`, 404);
+  });
+
+  it('cannot read another organization comparison, its differences or its exports', async () => {
+    // A comparison result is a record-by-record account of somebody's data: the key of every row
+    // that differs, and the values on both sides. There is no weaker version of this to leak.
+    await intruder.get(`/api/projects/${owned.comparisonProjectId}/data-comparisons`, 404);
+    await intruder.get(`/api/projects/${owned.comparisonProjectId}/data-comparison-suggestions`, 404);
+    await intruder.get(`/api/data-comparisons/${owned.comparisonId}`, 404);
+    await intruder.get(`/api/data-comparisons/${owned.comparisonId}/differences`, 404);
+    await intruder.get(`/api/data-comparisons/${owned.comparisonId}/differences.csv`, 404);
+    await intruder.get(`/api/data-comparisons/${owned.comparisonId}/summary.csv`, 404);
+    await intruder.request(
+      'POST',
+      `/api/projects/${owned.comparisonProjectId}/data-comparisons`,
+      {
+        pairs: [
+          {
+            leftTable: 'account',
+            rightTable: 'account',
+            key: [{ left: 'accountid', right: 'accountid' }],
+            fields: [],
+          },
+        ],
+      },
+      404,
+    );
+    // The owner's own result is still readable, so these 404s mean "not yours" and nothing else.
+    expect((await owner.get<{ id: string }>(`/api/data-comparisons/${owned.comparisonId}`)).id).toBe(
+      owned.comparisonId,
+    );
   });
 
   it('cannot see or fire another organization schedule', async () => {

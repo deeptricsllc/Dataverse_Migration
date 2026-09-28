@@ -2,7 +2,7 @@ import { and, count, desc, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { PROJECT_KINDS, type ProjectDto, type ProjectKind, type ProjectStatus } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
-import { analysisRuns, environments, migrationPlans, projects, users } from '../db/schema';
+import { analysisRuns, dataComparisons, environments, migrationPlans, projects, users } from '../db/schema';
 import { badRequest, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
@@ -13,10 +13,17 @@ import type { EnvironmentService } from './environment-service';
  * Projects: the container everything else hangs off.
  *
  * The kind is not a label. An analysis project has a source and no target, and nothing it can do
- * writes anywhere; a migration project has both and carries every safety gate. Keeping that
- * distinction in one place means a screen can never offer a write action on work that was only ever
- * meant to look.
+ * writes anywhere; a migration project has both and carries every safety gate; a comparison project
+ * has two sides and writes to neither. Keeping that distinction in one place means a screen can
+ * never offer a write action on work that was only ever meant to look.
  */
+/**
+ * Kinds that have a second environment. A comparison's two sides are both read-only, so unlike a
+ * migration it is allowed to point both at the same connection: comparing two tables inside one
+ * database — a staging table against the live one — is an ordinary thing to want.
+ */
+const TWO_SIDED: ReadonlySet<ProjectKind> = new Set<ProjectKind>(['MIGRATION', 'COMPARISON']);
+
 export class ProjectService {
   constructor(
     private readonly db: AppDb,
@@ -80,12 +87,13 @@ export class ProjectService {
     if (!name) throw badRequest('A project needs a name');
 
     const source = await this.resolveEnvironment(ctx, input.sourceEnvironmentId);
-    const target =
-      input.kind === 'MIGRATION' ? await this.resolveEnvironment(ctx, input.targetEnvironmentId) : null;
+    const target = TWO_SIDED.has(input.kind)
+      ? await this.resolveEnvironment(ctx, input.targetEnvironmentId)
+      : null;
     if (input.kind === 'ANALYSIS' && input.targetEnvironmentId) {
       throw badRequest('An analysis project has no target: it only ever reads the source');
     }
-    if (source && target && source.id === target.id) {
+    if (source && target && source.id === target.id && input.kind !== 'COMPARISON') {
       throw badRequest('The source and target cannot be the same environment');
     }
     const analysisProjectId = await this.resolveAnalysisReference(ctx, input.kind, input.analysisProjectId);
@@ -155,7 +163,7 @@ export class ProjectService {
     }
     const source = next.sourceEnvironmentId ?? existing.sourceEnvironmentId;
     const target = next.targetEnvironmentId ?? existing.targetEnvironmentId;
-    if (source && target && source === target) {
+    if (source && target && source === target && existing.kind !== 'COMPARISON') {
       throw badRequest('The source and target cannot be the same environment');
     }
     if (patch.analysisProjectId !== undefined) {
@@ -222,7 +230,11 @@ export class ProjectService {
       .select({ n: count() })
       .from(migrationPlans)
       .where(eq(migrationPlans.projectId, projectId));
-    if (Number(analyses?.n ?? 0) > 0 || Number(plans?.n ?? 0) > 0) {
+    const [comparisons] = await this.db
+      .select({ n: count() })
+      .from(dataComparisons)
+      .where(eq(dataComparisons.projectId, projectId));
+    if (Number(analyses?.n ?? 0) > 0 || Number(plans?.n ?? 0) > 0 || Number(comparisons?.n ?? 0) > 0) {
       throw badRequest(
         'This project already has work in it. Create a new project rather than repointing this one, so its results keep describing the system they came from.',
       );
@@ -269,8 +281,13 @@ export class ProjectService {
       .from(migrationPlans)
       .where(inArray(migrationPlans.projectId, ids))
       .groupBy(migrationPlans.projectId);
+    const comparisonCounts = await this.db
+      .select({ projectId: dataComparisons.projectId, n: count() })
+      .from(dataComparisons)
+      .where(inArray(dataComparisons.projectId, ids))
+      .groupBy(dataComparisons.projectId);
     const counts = new Map<string, number>();
-    for (const row of [...analysisCounts, ...planCounts]) {
+    for (const row of [...analysisCounts, ...planCounts, ...comparisonCounts]) {
       if (row.projectId) counts.set(row.projectId, Number(row.n));
     }
 

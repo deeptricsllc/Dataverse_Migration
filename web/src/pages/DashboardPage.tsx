@@ -196,7 +196,11 @@ export function DashboardPage() {
                           </Link>
                         </Td>
                         <Td>
-                          <Pill tone={p.kind === 'ANALYSIS' ? 'violet' : 'blue'}>
+                          <Pill
+                            tone={
+                              p.kind === 'ANALYSIS' ? 'violet' : p.kind === 'COMPARISON' ? 'amber' : 'blue'
+                            }
+                          >
                             {PROJECT_KIND_LABELS[p.kind]}
                           </Pill>
                         </Td>

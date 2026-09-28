@@ -9,6 +9,7 @@ import type { TableSummary } from '@shared/metadata';
 import { Archive, ArrowRight, FileSpreadsheet, Microscope, Play, Plus, Truck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ComparisonProject } from '../components/ComparisonProject';
 import { get, post } from '../lib/api';
 import { fmtDate, fmtNumber, fmtRelative } from '../lib/format';
 import {
@@ -34,9 +35,12 @@ import {
 /** How often to re-check a running analysis. */
 const POLL_MS = 2000;
 
+const KIND_TONES = { ANALYSIS: 'violet', MIGRATION: 'blue', COMPARISON: 'amber' } as const;
+
 /**
  * One project. An analysis project shows its analyses; a migration project shows its plans and the
- * analysis it was built on. The page never offers a write action on analysis work.
+ * analysis it was built on; a comparison project shows its reconciliation runs. The page never
+ * offers a write action on work that only ever reads.
  */
 export function ProjectPage() {
   const { projectId = '' } = useParams();
@@ -56,7 +60,7 @@ export function ProjectPage() {
         title={p.name}
         description={
           <span className="flex flex-wrap items-center gap-2">
-            <Pill tone={p.kind === 'ANALYSIS' ? 'violet' : 'blue'}>{PROJECT_KIND_LABELS[p.kind]}</Pill>
+            <Pill tone={KIND_TONES[p.kind]}>{PROJECT_KIND_LABELS[p.kind]}</Pill>
             {p.status === 'ARCHIVED' && <Pill tone="slate">archived</Pill>}
             <span className="text-slate-500">
               {p.sourceEnvironment?.displayName ?? 'no source'}
@@ -72,13 +76,15 @@ export function ProjectPage() {
         }
       />
 
-      {!p.sourceEnvironment && (
+      {!p.sourceEnvironment && p.kind !== 'COMPARISON' && (
         <Callout tone="warning" title="This project has no source yet">
           Choose the system it works on from the Connections page, then come back.
         </Callout>
       )}
 
-      {p.kind === 'ANALYSIS' ? <AnalysisProject project={p} /> : <MigrationProject project={p} />}
+      {p.kind === 'ANALYSIS' && <AnalysisProject project={p} />}
+      {p.kind === 'MIGRATION' && <MigrationProject project={p} />}
+      {p.kind === 'COMPARISON' && <ComparisonProject project={p} />}
 
       <ArchiveCard project={p} />
     </div>

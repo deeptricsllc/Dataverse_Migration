@@ -1532,12 +1532,13 @@ export interface DashboardDto {
  * What a project is for. The distinction is real, not cosmetic: an analysis project reads a source
  * and never has a target, while a migration project writes and therefore carries every safety gate.
  */
-export const PROJECT_KINDS = ['ANALYSIS', 'MIGRATION'] as const;
+export const PROJECT_KINDS = ['ANALYSIS', 'MIGRATION', 'COMPARISON'] as const;
 export type ProjectKind = (typeof PROJECT_KINDS)[number];
 
 export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
   ANALYSIS: 'Data analysis',
   MIGRATION: 'Data migration',
+  COMPARISON: 'Comparison & validation',
 };
 
 export const PROJECT_KIND_DESCRIPTIONS: Record<ProjectKind, string> = {
@@ -1545,6 +1546,8 @@ export const PROJECT_KIND_DESCRIPTIONS: Record<ProjectKind, string> = {
     'Connect to a source and understand it: tables, columns, volumes, data quality and relationships. Read-only — nothing is ever written.',
   MIGRATION:
     'Move data into a target. Can start from an analysis project, so the mapping begins from what the source actually contains.',
+  COMPARISON:
+    'Compare two datasets record by record: what matches, what differs field by field, what exists on only one side. Read-only on both sides — it never writes anywhere.',
 };
 
 export type ProjectStatus = 'ACTIVE' | 'ARCHIVED';
@@ -1566,6 +1569,147 @@ export interface ProjectDto {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Data comparison: two datasets, reconciled record by record
+// ---------------------------------------------------------------------------
+
+/**
+ * Deliberately not called "comparison" on its own: this product already has one of those, and it
+ * compares *schemas* between two environments. This compares the data — the rows, field by field —
+ * and the two answer different questions. `DataComparison` everywhere keeps them apart.
+ */
+export type DataComparisonStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+/**
+ * How a record on one side relates to the other side.
+ *
+ * `DUPLICATE_KEY` is not a comparison result so much as a reason the comparison cannot be trusted
+ * for those records: if a key appears twice, no honest answer exists to "which one does it match?",
+ * so they are reported rather than silently paired with the first.
+ */
+export type ComparisonDifferenceType =
+  'VALUE_DIFFERS' | 'ONLY_IN_LEFT' | 'ONLY_IN_RIGHT' | 'DUPLICATE_KEY' | 'BLANK_KEY';
+
+/** One column on each side, paired. The names differ between systems more often than not. */
+export interface ComparisonFieldPairDto {
+  left: string;
+  right: string;
+}
+
+export interface ComparisonTablePairDto {
+  leftTable: string;
+  rightTable: string;
+  /** The columns that identify the same real-world record on each side. At least one. */
+  key: ComparisonFieldPairDto[];
+  /** Columns compared field by field. Empty means keys only: existence, not content. */
+  fields: ComparisonFieldPairDto[];
+}
+
+export interface DataComparisonOptions {
+  pairs: ComparisonTablePairDto[];
+}
+
+/**
+ * The numbers, arranged so that no record can go missing without the arithmetic showing it:
+ *
+ *     matched + different + onlyInLeft  === leftRecords  - leftExcluded
+ *     matched + different + onlyInRight === rightRecords - rightExcluded
+ *
+ * That identity is asserted by a test. A reconciliation tool whose own totals do not reconcile has
+ * no business telling anyone their data does not.
+ */
+export interface ComparisonTotalsDto {
+  /** Records read from each side, after the per-side cap. */
+  leftRecords: number;
+  rightRecords: number;
+  /** Records set aside because their key was empty or not unique, and so cannot be paired. */
+  leftExcluded: number;
+  rightExcluded: number;
+  /** Left records paired with a right record and equal on every compared field. */
+  matched: number;
+  /** Paired, but at least one compared field differs. */
+  different: number;
+  onlyInLeft: number;
+  onlyInRight: number;
+  /** Excluded records, by reason. Both sides summed, for display. */
+  duplicateKeys: number;
+  blankKeys: number;
+  /** Individual field differences across every compared record. */
+  fieldDifferences: number;
+}
+
+export interface DataComparisonTableResultDto extends ComparisonTotalsDto {
+  leftTable: string;
+  rightTable: string;
+  displayName: string;
+  outcome: ValidationOutcome;
+  /** Exact row counts from each side, independent of how many were read. */
+  leftCount: number | null;
+  rightCount: number | null;
+  /** True when the per-side cap stopped the read before the end of the table. */
+  leftTruncated: boolean;
+  rightTruncated: boolean;
+  /** Columns compared, and the ones that exist on one side only — the "missing fields" answer. */
+  comparedFields: ComparisonFieldPairDto[];
+  fieldsOnlyInLeft: string[];
+  fieldsOnlyInRight: string[];
+  checks: ValidationCheckDto[];
+}
+
+export interface DataComparisonDto {
+  id: string;
+  projectId: string;
+  name: string;
+  status: DataComparisonStatus;
+  leftEnvironment: EnvRef | null;
+  rightEnvironment: EnvRef | null;
+  options: DataComparisonOptions;
+  totals: ComparisonTotalsDto;
+  outcome: ValidationOutcome;
+  tables: DataComparisonTableResultDto[];
+  progressMessage: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface DataComparisonListItemDto {
+  id: string;
+  name: string;
+  status: DataComparisonStatus;
+  outcome: ValidationOutcome;
+  totals: ComparisonTotalsDto;
+  tableCount: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ComparisonDifferenceDto {
+  leftTable: string;
+  /** The key value this difference is about, rendered as the user chose the key. */
+  keyValue: string;
+  differenceType: ComparisonDifferenceType;
+  /** Null for a whole-record difference (only on one side, duplicate key). */
+  field: string | null;
+  leftValue: string | null;
+  rightValue: string | null;
+}
+
+/** What the setup screen proposes, so a comparison is a confirmation rather than data entry. */
+export interface ComparisonSuggestionDto {
+  leftTable: string;
+  rightTable: string;
+  displayName: string;
+  key: ComparisonFieldPairDto[];
+  fields: ComparisonFieldPairDto[];
+  /** Why this pairing was proposed, and what a person should check about it. */
+  rationale: string;
+  /** False when no usable key could be proposed: the pair needs a person to choose one. */
+  keyProposed: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -11,14 +11,19 @@ claimed here is covered by a test; anything not tested is marked as such.
 
 ## 1 · What it is
 
-A data analysis and migration platform. Work lives in a **project**, and a project is one of two
+A data analysis and migration platform. Work lives in a **project**, and a project is one of three
 kinds:
 
-|                 | Data analysis                                                    | Data migration                       |
-| --------------- | ---------------------------------------------------------------- | ------------------------------------ |
-| Reads a source  | yes                                                              | yes                                  |
-| Writes anywhere | **no — enforced**                                                | yes, behind every gate below         |
-| Purpose         | Understand what is actually in a system before deciding anything | Map it, prove it, move it, verify it |
+|                 | Data analysis                                                    | Data migration                       | Comparison & validation                                          |
+| --------------- | ---------------------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
+| Systems         | one                                                              | two: source and target               | two, either of which may be the same connection                  |
+| Writes anywhere | **no — enforced**                                                | yes, behind every gate below         | **no — enforced on both sides**                                  |
+| Purpose         | Understand what is actually in a system before deciding anything | Map it, prove it, move it, verify it | Do these two datasets agree, record by record and field by field |
+
+A comparison project stands alone: it needs no migration, no plan and no prior analysis. It matches
+records on a key you choose, then reports what agrees, what differs field by field, what exists on
+only one side, and which columns exist on one side only. It is the same question validation asks
+after a migration — asked of any two datasets, on any schedule, as its own piece of work.
 
 A migration project can be built from an analysis project, so the mapping starts from measured facts
 rather than assumptions.
@@ -67,6 +72,12 @@ scan instead.
 capped per action per table, and the preflight screen shows a "list capped" badge with the real
 figures, the remediation package carries a row explaining it, validation reports it as a check, and
 every CSV that hit its row limit ends with a line stating how many rows of how many it contains.
+
+**A comparison that compared nothing is never reported as agreement.** Its totals are arranged so
+that `matched + different + onlyInLeft = leftRecords - leftExcluded` on each side, checked before
+any result is stored; a record cannot go missing between reading and reporting without the
+arithmetic showing it. A key that turns out not to identify records is a failure with a message
+naming the key, not a page of zeroes that reads as "all clear".
 
 **A run reports what actually happened.** A whole table can fail without a single record failing.
 Every such signal feeds one decision, so a run that lost a table is never stamped COMPLETED, the plan

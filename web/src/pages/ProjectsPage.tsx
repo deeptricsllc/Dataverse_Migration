@@ -7,7 +7,7 @@ import {
   type ProjectKind,
 } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, FolderPlus, Microscope, Truck } from 'lucide-react';
+import { ArrowRight, FolderPlus, Microscope, Scale, Truck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
@@ -35,7 +35,8 @@ import {
  *
  * The first question is which kind, because the answer changes everything after it. An analysis
  * project reads a source and has nowhere to write; a migration project writes and carries every
- * safety gate. The form asks that first and then only asks for what that kind actually needs.
+ * safety gate; a comparison project reads two systems and writes to neither. The form asks that
+ * first and then only asks for what that kind actually needs.
  */
 export function ProjectsPage() {
   /**
@@ -61,12 +62,13 @@ export function ProjectsPage() {
 
   const analysis = (projects.data ?? []).filter((p) => p.kind === 'ANALYSIS');
   const migration = (projects.data ?? []).filter((p) => p.kind === 'MIGRATION');
+  const comparison = (projects.data ?? []).filter((p) => p.kind === 'COMPARISON');
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Projects"
-        description="Analyse a source to understand it, or migrate data into a target. A migration can start from an analysis."
+        description="Analyse a source to understand it, migrate data into a target, or compare two systems record by record."
         actions={
           <div className="flex items-center gap-3">
             <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
@@ -114,6 +116,15 @@ export function ProjectsPage() {
           icon={<Truck className="h-4 w-4 text-blue-600" />}
           projects={migration}
           countLabel="plans"
+        />
+      )}
+      {comparison.length > 0 && (
+        <ProjectTable
+          title="Comparison & validation"
+          subtitle="Reconciles two datasets record by record: what matches, what differs, what is on one side only. Read-only on both sides."
+          icon={<Scale className="h-4 w-4 text-amber-600" />}
+          projects={comparison}
+          countLabel="comparisons"
         />
       )}
 
@@ -217,7 +228,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         kind,
         description: description || null,
         sourceEnvironmentId: sourceId || null,
-        targetEnvironmentId: kind === 'MIGRATION' && targetId ? targetId : null,
+        targetEnvironmentId: kind !== 'ANALYSIS' && targetId ? targetId : null,
         analysisProjectId: kind === 'MIGRATION' && analysisProjectId ? analysisProjectId : null,
       }),
     onSuccess: (project) => {
@@ -232,7 +243,13 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
     { value: '', label: 'Choose…' },
     ...connected.map((e) => ({ value: e.id, label: e.displayName })),
   ];
-  const ready = name.trim() && sourceId && (kind === 'ANALYSIS' || targetId) && sourceId !== targetId;
+  const ready =
+    name.trim() &&
+    sourceId &&
+    (kind === 'ANALYSIS' || targetId) &&
+    // A comparison may point both sides at one connection: comparing two tables inside a single
+    // database is an ordinary thing to want, and nothing it does writes.
+    (kind === 'COMPARISON' || sourceId !== targetId);
 
   return (
     <Modal
@@ -284,7 +301,13 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             value={name}
             data-testid="project-name"
-            placeholder={kind === 'ANALYSIS' ? 'Understand the legacy CRM' : 'Legacy CRM into Dataverse'}
+            placeholder={
+              kind === 'ANALYSIS'
+                ? 'Understand the legacy CRM'
+                : kind === 'COMPARISON'
+                  ? 'Monthly reconciliation: CRM against the warehouse'
+                  : 'Legacy CRM into Dataverse'
+            }
             onChange={(e) => setName(e.target.value)}
           />
         </div>
@@ -310,12 +333,30 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         )}
 
         <Select
-          label="Source"
+          label={kind === 'COMPARISON' ? 'Side A' : 'Source'}
           value={sourceId}
           onChange={setSourceId}
           options={envOptions}
           className="w-full"
         />
+        {kind === 'COMPARISON' && (
+          <>
+            <Select
+              label="Side B"
+              value={targetId}
+              onChange={setTargetId}
+              options={envOptions}
+              className="w-full"
+            />
+            <p className="flex items-start gap-2 text-xs text-slate-500">
+              <Pill tone="teal">read-only</Pill>
+              <span>
+                Both sides are only ever read. The two may be the same connection — comparing a staging table
+                against the live one inside one database is a comparison too.
+              </span>
+            </p>
+          </>
+        )}
         {kind === 'MIGRATION' && (
           <>
             <Select

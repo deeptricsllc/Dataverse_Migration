@@ -49,6 +49,10 @@ import type {
   PrincipalTable,
   ProjectKind,
   ProjectStatus,
+  ComparisonDifferenceType,
+  ComparisonTotalsDto,
+  DataComparisonOptions,
+  DataComparisonStatus,
   StagedColumnDto,
   StagedSourceKind,
   RunTrigger,
@@ -272,7 +276,7 @@ export const jobs = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
     type: text('type')
-      .$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT' | 'ANALYSIS'>()
+      .$type<'COMPARISON' | 'DATA_COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT' | 'ANALYSIS'>()
       .notNull(),
     targetId: uuid('target_id').notNull(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'>().notNull().default('QUEUED'),
@@ -1140,6 +1144,97 @@ export const stagedRows = pgTable(
     primaryKey({ columns: [t.environmentId, t.logicalName, t.recordId] }),
     index('staged_rows_order_idx').on(t.environmentId, t.logicalName, t.ordinal),
   ],
+);
+
+/**
+ * A data comparison: two datasets reconciled record by record.
+ *
+ * Separate from `comparisons`, which diffs schemas. This one answers "does the data agree?", and
+ * the two are different enough that sharing a table would have meant a row where half the columns
+ * are always null.
+ *
+ * Left and right rather than source and target, deliberately. Neither side is written to, and
+ * calling one of them a target would imply otherwise.
+ */
+export const dataComparisons = pgTable(
+  'data_comparisons',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    leftEnvironmentId: uuid('left_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    rightEnvironmentId: uuid('right_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    status: text('status').$type<DataComparisonStatus>().notNull().default('QUEUED'),
+    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull().default('PASS'),
+    options: jsonb('options').$type<DataComparisonOptions>().notNull(),
+    totals: jsonb('totals').$type<ComparisonTotalsDto>(),
+    progressMessage: text('progress_message'),
+    errorMessage: text('error_message'),
+    startedAt: ts('started_at'),
+    completedAt: ts('completed_at'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('data_comparisons_project_idx').on(t.projectId, t.createdAt),
+    index('data_comparisons_org_idx').on(t.organizationId),
+  ],
+);
+
+export const dataComparisonTables = pgTable(
+  'data_comparison_tables',
+  {
+    id: id(),
+    dataComparisonId: uuid('data_comparison_id')
+      .notNull()
+      .references(() => dataComparisons.id, { onDelete: 'cascade' }),
+    leftTable: text('left_table').notNull(),
+    rightTable: text('right_table').notNull(),
+    displayName: text('display_name').notNull(),
+    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
+    /** Exact counts from each side, which is not the same as how many were read. */
+    leftCount: integer('left_count'),
+    rightCount: integer('right_count'),
+    leftTruncated: boolean('left_truncated').notNull().default(false),
+    rightTruncated: boolean('right_truncated').notNull().default(false),
+    totals: jsonb('totals').$type<ComparisonTotalsDto>().notNull(),
+    comparedFields: jsonb('compared_fields').$type<{ left: string; right: string }[]>().notNull(),
+    fieldsOnlyInLeft: jsonb('fields_only_in_left').$type<string[]>().notNull(),
+    fieldsOnlyInRight: jsonb('fields_only_in_right').$type<string[]>().notNull(),
+    checks: jsonb('checks').$type<unknown[]>().notNull(),
+  },
+  (t) => [index('data_comparison_tables_run_idx').on(t.dataComparisonId)],
+);
+
+/**
+ * The per-record detail. Capped per table like every other drill-down in this product, and the
+ * table's own checks say so when the cap was reached.
+ */
+export const dataComparisonDifferences = pgTable(
+  'data_comparison_differences',
+  {
+    id: id(),
+    dataComparisonId: uuid('data_comparison_id')
+      .notNull()
+      .references(() => dataComparisons.id, { onDelete: 'cascade' }),
+    leftTable: text('left_table').notNull(),
+    keyValue: text('key_value').notNull(),
+    differenceType: text('difference_type').$type<ComparisonDifferenceType>().notNull(),
+    field: text('field'),
+    leftValue: text('left_value'),
+    rightValue: text('right_value'),
+  },
+  (t) => [index('data_comparison_differences_run_idx').on(t.dataComparisonId, t.leftTable)],
 );
 
 /**

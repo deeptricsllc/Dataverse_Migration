@@ -7,6 +7,8 @@ import type { Services } from '../services/container';
 const uuid = z.string().uuid();
 const idParams = z.object({ id: uuid });
 const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
+/** A SQL column or Dataverse attribute name, matching the other route module's rule. */
+const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 
 /**
  * Big enough for a mapping workbook or a source extract, small enough that nothing else fits.
@@ -33,11 +35,24 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     name: string,
     headers: string[],
     rows: (string | number | null)[][],
-  ) =>
-    reply
+    total?: number,
+  ) => {
+    // A capped export that does not say it is capped is the one that gets worked from as if it
+    // were complete. Same wording as the other route module, on purpose.
+    const body =
+      total !== undefined && total > rows.length
+        ? [
+            ...rows,
+            [
+              `TRUNCATED: showing ${rows.length.toLocaleString()} of ${total.toLocaleString()} rows. Narrow the filters and export again for the rest.`,
+            ],
+          ]
+        : rows;
+    return reply
       .header('Content-Type', 'text/csv; charset=utf-8')
       .header('Content-Disposition', `attachment; filename="${name}"`)
-      .send(toCsv(headers, rows));
+      .send(toCsv(headers, body));
+  };
 
   const sendWorkbook = (reply: FastifyReply, file: { filename: string; buffer: Buffer }) =>
     reply
@@ -123,6 +138,129 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.body ?? {});
     return s.analysis.create(req.ctx, id, body);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Comparison & validation: two datasets, reconciled
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/projects/:id/data-comparisons', async (req) =>
+    s.dataComparisons.list(req.ctx, idParams.parse(req.params).id),
+  );
+
+  /** Reads both catalogues and proposes pairings. Expensive, and a person clicks it once. */
+  app.get('/api/projects/:id/data-comparison-suggestions', VERY_EXPENSIVE, async (req) =>
+    s.dataComparisons.suggest(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.post('/api/projects/:id/data-comparisons', VERY_EXPENSIVE, async (req) => {
+    const { id } = idParams.parse(req.params);
+    const fieldPair = z.object({ left: fieldName, right: fieldName });
+    const body = z
+      .object({
+        name: z.string().max(200).optional(),
+        pairs: z
+          .array(
+            z.object({
+              leftTable: tableName,
+              rightTable: tableName,
+              key: z.array(fieldPair).min(1).max(5),
+              fields: z.array(fieldPair).max(300).optional(),
+            }),
+          )
+          .min(1)
+          .max(50),
+      })
+      .parse(req.body ?? {});
+    return s.dataComparisons.create(req.ctx, id, {
+      name: body.name,
+      pairs: body.pairs.map((p) => ({ ...p, fields: p.fields ?? [] })),
+    });
+  });
+
+  app.get('/api/data-comparisons/:id', async (req) =>
+    s.dataComparisons.get(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.get('/api/data-comparisons/:id/differences', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        table: tableName.optional(),
+        type: z
+          .enum(['VALUE_DIFFERS', 'ONLY_IN_LEFT', 'ONLY_IN_RIGHT', 'DUPLICATE_KEY', 'BLANK_KEY'])
+          .optional(),
+        limit: z.coerce.number().int().min(1).max(1000).default(200),
+        offset: z.coerce.number().int().min(0).default(0),
+      })
+      .parse(req.query ?? {});
+    return s.dataComparisons.differences(req.ctx, id, q);
+  });
+
+  app.get('/api/data-comparisons/:id/differences.csv', EXPENSIVE, async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        table: tableName.optional(),
+        type: z
+          .enum(['VALUE_DIFFERS', 'ONLY_IN_LEFT', 'ONLY_IN_RIGHT', 'DUPLICATE_KEY', 'BLANK_KEY'])
+          .optional(),
+      })
+      .parse(req.query ?? {});
+    const run = await s.dataComparisons.get(req.ctx, id);
+    const { rows, total } = await s.dataComparisons.differences(req.ctx, id, { ...q, limit: 1000 });
+    return sendCsv(
+      reply,
+      csvFileName(['comparison', run.name]),
+      ['Table', 'Key', 'Difference', 'Field', 'Left value', 'Right value'],
+      rows.map((r) => [r.leftTable, r.keyValue, r.differenceType, r.field, r.leftValue, r.rightValue]),
+      total,
+    );
+  });
+
+  app.get('/api/data-comparisons/:id/summary.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.dataComparisons.get(req.ctx, id);
+    return sendCsv(
+      reply,
+      csvFileName(['comparison-summary', run.name]),
+      [
+        'Left table',
+        'Right table',
+        'Outcome',
+        'Left rows',
+        'Right rows',
+        'Matched',
+        'Different',
+        'Only on the left',
+        'Only on the right',
+        'Duplicate keys',
+        'Blank keys',
+        'Field differences',
+        'Columns compared',
+        'Columns only on the left',
+        'Columns only on the right',
+        'Read was capped',
+      ],
+      run.tables.map((t) => [
+        t.leftTable,
+        t.rightTable,
+        t.outcome,
+        t.leftCount,
+        t.rightCount,
+        t.matched,
+        t.different,
+        t.onlyInLeft,
+        t.onlyInRight,
+        t.duplicateKeys,
+        t.blankKeys,
+        t.fieldDifferences,
+        t.comparedFields.length,
+        t.fieldsOnlyInLeft.join(' '),
+        t.fieldsOnlyInRight.join(' '),
+        t.leftTruncated || t.rightTruncated ? 'yes' : 'no',
+      ]),
+    );
   });
 
   app.get('/api/analyses/:id', async (req) => s.analysis.get(req.ctx, idParams.parse(req.params).id));
