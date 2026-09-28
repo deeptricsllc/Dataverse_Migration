@@ -176,12 +176,14 @@ export function WorkspaceHeader() {
 export function Layout() {
   const { user, realTenantReadOnly } = useSession();
   const location = useLocation();
-  // Project, analysis and settings pages state their own source and target, so the global
-  // source→target strip would only repeat or contradict them.
+  // Project, analysis, comparison and settings pages state their own source and target, so the
+  // global source→target strip would only repeat or contradict them. A comparison page is the clear
+  // case: it names the two systems it reconciled, and the strip above it would name two others.
   const showWorkspace =
     !['/', '/settings'].includes(location.pathname) &&
     !location.pathname.startsWith('/projects') &&
-    !location.pathname.startsWith('/analyses');
+    !location.pathname.startsWith('/analyses') &&
+    !location.pathname.startsWith('/data-comparisons');
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 flex-none flex-col border-r border-slate-200 bg-slate-900 text-slate-300 md:flex">

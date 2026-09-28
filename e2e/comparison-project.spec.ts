@@ -48,6 +48,10 @@ test('compare two systems and read the result', async ({ page }) => {
   await expect(page.getByTestId('comparison-totals')).toBeVisible({ timeout: 180_000 });
   await expect(page.getByTestId('comparison-tables')).toBeVisible();
 
+  // The page names the two systems it reconciled. The global source-to-target strip is for
+  // migrations and would name two different ones directly above it, so it must not be here.
+  await expect(page.getByTestId('workspace-source')).toHaveCount(0);
+
   // The result says what was compared, and the differences are listed with their key.
   const differences = page.getByTestId('comparison-differences');
   await expect(differences).toBeVisible();
