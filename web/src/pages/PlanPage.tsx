@@ -1,4 +1,4 @@
-import { CONNECTION_TYPE_LABELS } from '@shared/domain';
+import { CONNECTION_TYPE_LABELS, needsTypedConfirmation } from '@shared/domain';
 import type {
   AuditPolicy,
   ConflictStrategy,
@@ -1148,7 +1148,15 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
         </Callout>
       )}
 
-      <div className="flex flex-wrap items-center justify-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      {/*
+        Sticky, because the review step is long and the two actions it exists to reach were at the
+        bottom of it. Scrolling past everything you were asked to review in order to act on it is a
+        good way to make people stop reviewing.
+      */}
+      <div
+        className="sticky bottom-0 z-20 -mx-6 flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-white/95 px-6 py-3 shadow-[0_-4px_12px_-6px_rgba(15,23,42,0.25)] backdrop-blur"
+        data-testid="execute-bar"
+      >
         {plan.blockerCount > 0 ? (
           <span className="text-sm text-red-700">
             Resolve {plan.blockerCount} blocker(s) before executing.
@@ -1210,18 +1218,22 @@ function ExecuteModal({
       ? impact
       : null;
   const isProduction = plan.targetEnvironment.environmentClass === 'PRODUCTION';
+  // Typing the name is reserved for a target where a mistake is expensive. Asking for it on every
+  // run into a sandbox teaches people to type it without reading it.
+  const mustType = needsTypedConfirmation(plan.targetEnvironment);
   const execute = useMutation({
     mutationFn: () =>
       post<MigrationRunDto>(`/api/plans/${plan.id}/execute`, {
         confirmSourceName: plan.sourceEnvironment.displayName,
-        confirmTargetName: typed,
+        confirmTargetName: mustType ? typed : plan.targetEnvironment.displayName,
+        confirmed: true,
         acknowledgeWarnings: ack,
       }),
     onSuccess: onStarted,
   });
   const totalSource = plan.entities.reduce((n, e) => n + (e.sourceCount ?? 0), 0);
   const canRun =
-    typed.trim() === plan.targetEnvironment.displayName &&
+    (!mustType || typed.trim() === plan.targetEnvironment.displayName) &&
     (plan.warningCount === 0 || ack) &&
     (!substitutions || ackIdentity);
   return (
@@ -1334,18 +1346,29 @@ function ExecuteModal({
             I reviewed the {plan.warningCount} warning(s) in this plan and want to proceed.
           </label>
         )}
-        <div>
-          <label htmlFor="confirm-target" className="block text-xs font-medium text-slate-600">
-            Type the target environment name <strong>{plan.targetEnvironment.displayName}</strong> to confirm
-          </label>
-          <input
-            id="confirm-target"
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            autoComplete="off"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
-        </div>
+        {mustType ? (
+          <div>
+            <label htmlFor="confirm-target" className="block text-xs font-medium text-slate-600">
+              {isProduction
+                ? 'This is a production environment. Type its name'
+                : 'This environment is not classified as non-production, so it is treated as production. Type its name'}{' '}
+              <strong>{plan.targetEnvironment.displayName}</strong> to confirm
+            </label>
+            <input
+              id="confirm-target"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              data-testid="confirm-target"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">
+            {plan.targetEnvironment.displayName} is a non-production environment, so the button below is the
+            confirmation. Writing to production asks you to type its name.
+          </p>
+        )}
         {execute.error && <ErrorState error={execute.error} />}
       </div>
     </Modal>

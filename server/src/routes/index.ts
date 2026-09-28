@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { SQL_CONNECTION_TYPES } from '../../../shared/domain';
+import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
@@ -399,8 +399,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.post('/api/plans/:id/execute', async (req) => {
     const body = z
       .object({
-        confirmSourceName: z.string().max(300),
-        confirmTargetName: z.string().max(300),
+        // Optional here, required by the service for a production or unclassified target. The
+        // rule lives there because it is a property of the target, not of the request shape.
+        confirmSourceName: z.string().max(300).optional(),
+        confirmTargetName: z.string().max(300).optional(),
+        confirmed: z.boolean().optional(),
         acknowledgeWarnings: z.boolean(),
       })
       .parse(req.body);
@@ -1167,10 +1170,21 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/dashboard', async (req) => s.insights.dashboard(req.ctx));
   app.get('/api/audit', async (req) => {
-    const { limit } = z
-      .object({ limit: z.coerce.number().int().min(1).max(500).default(100) })
+    const q = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        category: z.enum(AUDIT_CATEGORIES).optional(),
+        outcome: z.enum(['SUCCESS', 'FAILURE', 'REQUESTED']).optional(),
+        user: z.string().max(200).optional(),
+        search: z.string().max(200).optional(),
+        /** Days back from now. Absent means everything the scan covers. */
+        days: z.coerce.number().int().min(1).max(365).optional(),
+      })
       .parse(req.query);
-    return s.audit.list(req.ctx.organizationId, limit);
+    return s.audit.list(req.ctx.organizationId, {
+      ...q,
+      since: q.days ? new Date(Date.now() - q.days * 86_400_000) : undefined,
+    });
   });
   app.get('/api/settings', async (req) => ({
     organization: req.session!.user.organization,

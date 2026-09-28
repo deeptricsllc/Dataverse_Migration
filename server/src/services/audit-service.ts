@@ -1,9 +1,17 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { AuditEventDto } from '../../../shared/domain';
+import {
+  auditCategory,
+  type AuditCategory,
+  type AuditEventDto,
+  type AuditPageDto,
+} from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { auditEvents, environments, users } from '../db/schema';
 import { alias } from 'drizzle-orm/pg-core';
+
+/** How many recent events are considered when filtering. Beyond this, narrow the period. */
+const MAX_SCANNED = 2000;
 
 export type AuditAction =
   | 'AUTH_SIGN_IN'
@@ -102,19 +110,57 @@ export class AuditService {
     }
   }
 
-  async list(organizationId: string, limit = 100): Promise<AuditEventDto[]> {
+  /**
+   * The trail, filtered.
+   *
+   * An audit trail nobody can search is an audit trail nobody reads, and one nobody reads is
+   * decoration. The category is computed from the action rather than stored, so filtering by it
+   * happens here over the matching set rather than in SQL over a column that does not exist.
+   */
+  async list(
+    organizationId: string,
+    opts: {
+      limit?: number;
+      category?: AuditCategory;
+      outcome?: 'SUCCESS' | 'FAILURE' | 'REQUESTED';
+      user?: string;
+      search?: string;
+      since?: Date;
+    } = {},
+  ): Promise<AuditPageDto> {
+    const limit = Math.min(opts.limit ?? 100, 500);
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
+    const where = [eq(auditEvents.organizationId, organizationId)];
+    if (opts.outcome) where.push(eq(auditEvents.outcome, opts.outcome));
+    if (opts.since) where.push(gte(auditEvents.createdAt, opts.since));
+
+    // Bounded before anything is filtered in memory: a trail with a year of history in it must not
+    // be loaded whole to answer a filtered question.
     const rows = await this.db
       .select({ e: auditEvents, user: users.displayName, src: src.displayName, tgt: tgt.displayName })
       .from(auditEvents)
       .leftJoin(users, eq(users.id, auditEvents.userId))
       .leftJoin(src, and(eq(src.id, auditEvents.sourceEnvironmentId), eq(src.organizationId, organizationId)))
       .leftJoin(tgt, and(eq(tgt.id, auditEvents.targetEnvironmentId), eq(tgt.organizationId, organizationId)))
-      .where(eq(auditEvents.organizationId, organizationId))
+      .where(and(...where))
       .orderBy(desc(auditEvents.createdAt))
-      .limit(Math.min(limit, 500));
-    return rows.map((r) => ({
+      .limit(MAX_SCANNED);
+
+    const needle = opts.search?.trim().toLowerCase();
+    const matching = rows.filter((r) => {
+      if (opts.category && auditCategory(r.e.action) !== opts.category) return false;
+      if (opts.user && r.user !== opts.user) return false;
+      if (needle) {
+        const hay = [r.e.action, r.user, r.src, r.tgt, JSON.stringify(r.e.details ?? {})]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    });
+
+    const toDto = (r: (typeof rows)[number]): AuditEventDto => ({
       id: r.e.id,
       action: r.e.action,
       outcome: r.e.outcome,
@@ -124,6 +170,12 @@ export class AuditService {
       runId: r.e.runId,
       details: r.e.details,
       createdAt: r.e.createdAt.toISOString(),
-    }));
+    });
+
+    return {
+      items: matching.slice(0, limit).map(toDto),
+      total: matching.length,
+      users: [...new Set(rows.map((r) => r.user).filter((u): u is string => Boolean(u)))].sort(),
+    };
   }
 }

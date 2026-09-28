@@ -310,7 +310,7 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
 
   it('records an audit trail and dashboard data', async () => {
     const audit = await api.get('/api/audit');
-    const actions = new Set(audit.map((a: { action: string }) => a.action));
+    const actions = new Set(audit.items.map((a: { action: string }) => a.action));
     for (const a of [
       'AUTH_SIGN_IN',
       'ENVIRONMENTS_DISCOVERED',

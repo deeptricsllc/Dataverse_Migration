@@ -1,4 +1,5 @@
 import {
+  needsTypedConfirmation,
   SCHEDULE_MODES,
   type MigrationPlanDto,
   type MigrationScheduleDto,
@@ -282,7 +283,8 @@ function NewScheduleModal({
         mode,
         watermarkField: mode === 'INCREMENTAL' ? watermarkField : null,
         confirmSourceName: plan.sourceEnvironment.displayName,
-        confirmTargetName: confirmTarget,
+        confirmTargetName: mustType ? confirmTarget : plan.targetEnvironment.displayName,
+        confirmed: true,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['schedules', plan.id] });
@@ -290,7 +292,9 @@ function NewScheduleModal({
     },
   });
 
-  const confirmed = confirmTarget.trim() === plan.targetEnvironment.displayName;
+  // Same rule as a manual execution: the name is typed for production, clicked for a sandbox.
+  const mustType = needsTypedConfirmation(plan.targetEnvironment);
+  const confirmed = !mustType || confirmTarget.trim() === plan.targetEnvironment.displayName;
 
   return (
     <Modal
@@ -394,19 +398,27 @@ function NewScheduleModal({
           </div>
         )}
 
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="confirm-target">
-            Type the target name to confirm:{' '}
-            <code className="font-mono">{plan.targetEnvironment.displayName}</code>
-          </label>
-          <input
-            id="confirm-target"
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            value={confirmTarget}
-            data-testid="confirm-schedule-target"
-            onChange={(e) => setConfirmTarget(e.target.value)}
-          />
-        </div>
+        {mustType ? (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="confirm-target">
+              This schedule writes to a production environment. Type its name to confirm:{' '}
+              <code className="font-mono">{plan.targetEnvironment.displayName}</code>
+            </label>
+            <input
+              id="confirm-target"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              value={confirmTarget}
+              data-testid="confirm-schedule-target"
+              onChange={(e) => setConfirmTarget(e.target.value)}
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">
+            This schedule writes to <strong>{plan.targetEnvironment.displayName}</strong>, a non-production
+            environment. Creating it is the confirmation; a schedule that writes to production asks you to
+            type the name.
+          </p>
+        )}
         {create.error && <ErrorState error={create.error} />}
       </div>
     </Modal>

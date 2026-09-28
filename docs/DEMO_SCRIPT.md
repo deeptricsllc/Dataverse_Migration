@@ -126,8 +126,14 @@ trail."_
 
 ## 4 · Run it, then prove it (3 min)
 
-**Execute.** Type the target name to confirm — _"we make you type it; a dropdown is too easy"_ — then
-watch it run: live progress, per-table counts, transformations applied.
+**Execute.** The button names the environment it is about to write to, and that click is the
+confirmation — for a sandbox. Say the next part out loud, because it is the point:
+
+> "If that target were production, or an environment we could not classify, this dialog would make
+> you type its name. We reserve that for where a mistake is expensive. Asking for it on every run
+> into a sandbox just teaches people to type it without reading it."
+
+Then watch it run: live progress, per-table counts, transformations applied.
 
 When it finishes: **Validate.**
 

@@ -90,8 +90,8 @@ describe('a finished run reports what actually happened', () => {
       ).toBe(true);
     }
 
-    const audit = await api.get<{ action: string; outcome: string }[]>('/api/audit?limit=200');
-    const completed = audit.find((e) => e.action === 'MIGRATION_COMPLETED');
+    const audit = await api.get<{ items: { action: string; outcome: string }[] }>('/api/audit?limit=200');
+    const completed = audit.items.find((e) => e.action === 'MIGRATION_COMPLETED');
     expect(completed, 'the run was audited').toBeTruthy();
     // The audit trail is what somebody reads months later; it cannot say SUCCESS for a run that lost
     // a table.

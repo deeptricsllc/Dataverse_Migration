@@ -245,6 +245,91 @@ export function classifyEnvironment(environmentType: string | null | undefined):
   return 'UNKNOWN';
 }
 
+/**
+ * Whether writing here should make somebody type the environment's name.
+ *
+ * Typing the target name is a good gate and a bad habit. Asking for it on every run — including the
+ * fiftieth run into a sandbox that exists to be written to — trains people to type the name without
+ * reading it, which is precisely the reflex you do not want on the one occasion the name is not the
+ * one they expected. So the friction scales with the consequence: production, or anything we could
+ * not classify, asks for the name; a sandbox asks for a deliberate click on a button that says
+ * where it is about to write.
+ *
+ * This is a human safeguard, not a security control. Authorization is what stops a member writing
+ * to production at all (see `requireAdminForProductionTarget`); this is what stops somebody who is
+ * allowed to do it from doing it by accident.
+ */
+export function needsTypedConfirmation(target: { environmentClass: EnvironmentClass }): boolean {
+  return target.environmentClass !== 'NON_PRODUCTION';
+}
+
+/**
+ * Audit events, grouped into the handful of things a person actually looks for.
+ *
+ * Derived from the action name rather than stored, because the alternative is a column on a table
+ * with years of history in it and a migration that would have to guess at the old rows. The mapping
+ * lives here so the API and the screen cannot drift apart.
+ */
+export const AUDIT_CATEGORIES = [
+  'ACCESS',
+  'CONNECTIONS',
+  'ANALYSIS',
+  'PLANNING',
+  'MIGRATION',
+  'VERIFICATION',
+  'SCHEDULES',
+  'ADMIN',
+] as const;
+export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
+
+export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
+  ACCESS: 'Sign-in',
+  CONNECTIONS: 'Connections',
+  ANALYSIS: 'Analysis & profiling',
+  PLANNING: 'Plans & mapping',
+  MIGRATION: 'Migration runs',
+  VERIFICATION: 'Validation & comparison',
+  SCHEDULES: 'Schedules',
+  ADMIN: 'Administration',
+};
+
+export function auditCategory(action: string): AuditCategory {
+  if (action.startsWith('AUTH_')) return 'ACCESS';
+  if (action.startsWith('CONNECTION_') || action.startsWith('ENVIRONMENT') || action === 'WORKSPACE_SELECTED')
+    return 'CONNECTIONS';
+  if (action.startsWith('ANALYSIS_') || action === 'DATA_PROFILED' || action.startsWith('PROJECT_'))
+    return 'ANALYSIS';
+  if (
+    action.startsWith('MIGRATION_PLAN') ||
+    action.startsWith('MAPPING_') ||
+    action.startsWith('OBJECT_MAPPING') ||
+    action.startsWith('CHOICE_MAPPING') ||
+    action.startsWith('TRANSFORMATION') ||
+    action.startsWith('PREFLIGHT_') ||
+    action.startsWith('LOSSY_') ||
+    action === 'TABLE_CATEGORY_CHANGED' ||
+    action === 'PRINCIPAL_MAPPING_CHANGED'
+  )
+    return 'PLANNING';
+  if (action.startsWith('MIGRATION_')) return 'MIGRATION';
+  if (
+    action.startsWith('VALIDATION_') ||
+    action.startsWith('COMPARISON_') ||
+    action.startsWith('DATA_COMPARISON_')
+  )
+    return 'VERIFICATION';
+  if (action.startsWith('SCHEDULE_')) return 'SCHEDULES';
+  return 'ADMIN';
+}
+
+export interface AuditPageDto {
+  items: AuditEventDto[];
+  /** Matching the filters, before the page limit — so a capped list can say it is capped. */
+  total: number;
+  /** Everyone who appears in this organization's trail, for the filter. */
+  users: string[];
+}
+
 export interface WorkspaceDto {
   source: EnvironmentDto | null;
   target: EnvironmentDto | null;

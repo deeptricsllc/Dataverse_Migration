@@ -131,7 +131,6 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   const ack = dialog.getByTestId('ack-warnings');
   if (await ack.isVisible().catch(() => false)) await ack.check();
-  await dialog.getByLabel(/Type the target environment name/).fill('DeepTrics QA');
   await dialog.getByRole('button', { name: /Write data to DeepTrics QA/ }).click();
 
   await expect(page).toHaveURL(/\/runs\//);

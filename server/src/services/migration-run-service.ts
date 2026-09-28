@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
+  needsTypedConfirmation,
   type MigrationErrorDto,
   type MigrationRunDto,
   type MigrationRunListItemDto,
@@ -97,7 +98,13 @@ export class MigrationRunService {
   async start(
     ctx: RequestContext,
     planId: string,
-    input: { confirmSourceName: string; confirmTargetName: string; acknowledgeWarnings: boolean },
+    input: {
+      confirmSourceName?: string;
+      confirmTargetName?: string;
+      /** Explicit confirmation, for a target where typing the name is not required. */
+      confirmed?: boolean;
+      acknowledgeWarnings: boolean;
+    },
     /**
      * Why this run is starting. A scheduled or triggered run takes the identical path — every gate
      * below applies — and only records who asked and, for an incremental run, where to read from.
@@ -119,11 +126,19 @@ export class MigrationRunService {
         plan.issues.filter((i) => i.severity === 'BLOCKER'),
       );
     }
-    if (
-      input.confirmSourceName.trim() !== plan.sourceEnvironment.displayName ||
-      input.confirmTargetName.trim() !== plan.targetEnvironment.displayName
-    ) {
-      throw badRequest('Environment confirmation does not match the plan source and target names');
+    // The gate scales with the consequence: see `needsTypedConfirmation`. Production still means
+    // typing the name; a sandbox means an explicit, deliberate click that named the target.
+    const typedMatches =
+      input.confirmSourceName?.trim() === plan.sourceEnvironment.displayName &&
+      input.confirmTargetName?.trim() === plan.targetEnvironment.displayName;
+    if (needsTypedConfirmation(plan.targetEnvironment)) {
+      if (!typedMatches) {
+        throw badRequest(
+          `${plan.targetEnvironment.displayName} is a production environment, or one this deployment could not classify. Type its name exactly to confirm.`,
+        );
+      }
+    } else if (!typedMatches && input.confirmed !== true) {
+      throw badRequest('Confirm the target environment before executing');
     }
     if (plan.warningCount > 0 && !input.acknowledgeWarnings) {
       throw badRequest(`Acknowledge the ${plan.warningCount} warning(s) before executing`);

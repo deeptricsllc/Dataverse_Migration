@@ -1,10 +1,16 @@
-import type { DifferenceType, ValidationDifferenceDto, ValidationRunDto } from '@shared/domain';
+import type {
+  DifferenceType,
+  ValidationDifferenceDto,
+  ValidationRunDto,
+  ValidationSummary,
+} from '@shared/domain';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WizardSteps } from '../components/WizardSteps';
 import {
+  Callout,
   Card,
   EmptyState,
   ErrorState,
@@ -24,6 +30,112 @@ import { fmtDate, fmtNumber, humanize } from '../lib/format';
 import { Pager } from './RunDetailPage';
 
 const PAGE = 50;
+
+const OUTCOME_LABELS: Record<string, string> = {
+  PASS: 'All checks passed',
+  WARNING: 'Passed with warnings',
+  FAIL: 'Checks failed',
+};
+
+/**
+ * What the report means, in words, before any table of numbers.
+ *
+ * The tiles are accurate and were being misread: "source rows 30, target rows 144" invites the
+ * conclusion that something went badly wrong, when it only means the target already held data. A
+ * report that has to be interpreted correctly to be useful is a report that will be interpreted
+ * incorrectly, so the plain reading goes first and the numbers back it up.
+ */
+function Verdict({
+  summary,
+  outcome,
+  migrationRunId,
+}: {
+  summary: ValidationSummary;
+  outcome: string | null;
+  migrationRunId: string | null;
+}) {
+  const s = summary;
+  const checked = s.matchedRecords + s.missingRecords + s.differentRecords;
+  const clean = s.missingRecords === 0 && s.differentRecords === 0 && s.brokenReferences === 0;
+  const tone = outcome === 'FAIL' ? 'danger' : outcome === 'WARNING' ? 'warning' : 'success';
+
+  const lines: ReactNode[] = [];
+  lines.push(
+    <>
+      <strong>{fmtNumber(checked)}</strong> record(s) were checked across{' '}
+      <strong>{fmtNumber(s.tablesValidated)}</strong> table(s), comparing the target against the source rather
+      than re-reading the migration&apos;s own work.
+    </>,
+  );
+  if (s.matchedRecords > 0) {
+    lines.push(
+      <>
+        <strong className="text-emerald-700">{fmtNumber(s.matchedRecords)}</strong> match the source on every
+        field that was compared.
+      </>,
+    );
+  }
+  if (s.missingRecords > 0) {
+    lines.push(
+      <>
+        <strong className="text-red-700">{fmtNumber(s.missingRecords)}</strong> were expected in the target
+        and are not there — they did not migrate
+        {migrationRunId ? (
+          <>
+            {' '}
+            (
+            <Link to={`/runs/${migrationRunId}`} className="font-medium text-brand-700 hover:underline">
+              see the run for why
+            </Link>
+            )
+          </>
+        ) : null}
+        .
+      </>,
+    );
+  }
+  if (s.differentRecords > 0) {
+    lines.push(
+      <>
+        <strong className="text-amber-700">{fmtNumber(s.differentRecords)}</strong> exist on both sides but
+        hold a different value in at least one field. Each one is listed below.
+      </>,
+    );
+  }
+  if (s.brokenReferences > 0) {
+    lines.push(
+      <>
+        <strong className="text-red-700">{fmtNumber(s.brokenReferences)}</strong> lookup value(s) point at a
+        record that does not exist in the target.
+      </>,
+    );
+  }
+  if (clean && checked > 0) {
+    lines.push(<>Nothing is missing, nothing differs, and every reference resolves.</>);
+  }
+  if (s.targetRows > s.sourceRows) {
+    lines.push(
+      <>
+        The target holds <strong>{fmtNumber(s.targetRows)}</strong> row(s) against the source&apos;s{' '}
+        <strong>{fmtNumber(s.sourceRows)}</strong>. That is expected: it already contained data before this
+        migration, and validation only checks the records this run was responsible for.
+      </>,
+    );
+  }
+
+  // Callout takes no test id of its own, and a wrapper is cheaper than widening its props.
+  return (
+    <div data-testid="validation-verdict">
+      <Callout tone={tone} title={outcome ? (OUTCOME_LABELS[outcome] ?? outcome) : 'Validation complete'}>
+        <ul className="space-y-1.5">
+          {lines.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      </Callout>
+    </div>
+  );
+}
 
 export function ValidationReportPage() {
   const { validationId } = useParams();
@@ -80,10 +192,17 @@ export function ValidationReportPage() {
           </>
         }
         actions={
-          <>
+          /*
+            One badge, not two. "Completed" and "Fail" side by side read as a contradiction: the
+            first is the state of the job, the second the verdict on the data, and nobody should
+            have to know that to read the page. While it is running the state is the news; once it
+            has finished, the verdict is.
+          */
+          done && v.outcome ? (
+            <StatusBadge status={v.outcome} label={OUTCOME_LABELS[v.outcome]} className="text-sm" />
+          ) : (
             <StatusBadge status={v.status} />
-            {v.outcome && <StatusBadge status={v.outcome} className="text-sm" />}
-          </>
+          )
         }
       />
       {['QUEUED', 'RUNNING'].includes(v.status) && (
@@ -97,20 +216,38 @@ export function ValidationReportPage() {
 
       {done && s && (
         <div className="space-y-5">
+          <Verdict summary={s} outcome={v.outcome} migrationRunId={v.migrationRunId} />
+
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
             <Stat
               label="Tables"
               value={s.tablesValidated}
               hint={`${s.pass} pass · ${s.warning} warn · ${s.fail} fail`}
             />
-            <Stat label="Source rows" value={fmtNumber(s.sourceRows)} />
-            <Stat label="Target rows" value={fmtNumber(s.targetRows)} />
-            <Stat label="Migrated" value={fmtNumber(s.migratedRows)} />
-            <Stat label="Matched" tone="green" value={fmtNumber(s.matchedRecords)} />
+            <Stat label="Source rows" value={fmtNumber(s.sourceRows)} hint="In the source tables" />
+            <Stat
+              label="Target rows"
+              value={fmtNumber(s.targetRows)}
+              hint={
+                s.targetRows > s.sourceRows ? 'Includes records that were already there' : 'In the target'
+              }
+            />
+            <Stat
+              label="Migrated"
+              value={fmtNumber(s.migratedRows)}
+              hint="Written by the run being validated"
+            />
+            <Stat
+              label="Matched"
+              tone="green"
+              value={fmtNumber(s.matchedRecords)}
+              hint="Identical on both sides"
+            />
             <Stat
               label="Missing"
               tone={s.missingRecords ? 'red' : 'default'}
               value={fmtNumber(s.missingRecords)}
+              hint="Expected in the target, not found"
               onClick={() => {
                 setType('MISSING_IN_TARGET');
                 setPage(0);
@@ -120,6 +257,7 @@ export function ValidationReportPage() {
               label="Different"
               tone={s.differentRecords ? 'amber' : 'default'}
               value={fmtNumber(s.differentRecords)}
+              hint="Present, but a field value differs"
               onClick={() => {
                 setType('VALUE_MISMATCH');
                 setPage(0);
@@ -129,6 +267,7 @@ export function ValidationReportPage() {
               label="Broken refs"
               tone={s.brokenReferences ? 'red' : 'default'}
               value={fmtNumber(s.brokenReferences)}
+              hint="Lookups pointing at a record that is not there"
               onClick={() => {
                 setType('BROKEN_REFERENCE');
                 setPage(0);

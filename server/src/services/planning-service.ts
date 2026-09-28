@@ -254,7 +254,9 @@ export class PlanningService {
       targetEnvironmentId: target.id,
       runId: plan.id,
       requestId: ctx.requestId,
-      details: { tables: input.tables },
+      // The name as well as the tables: an entry that cannot say which plan it was about is hard
+      // to find months later, and the trail is now searchable by what it holds.
+      details: { name: plan.name, tables: input.tables },
     });
     return this.get(ctx, plan.id);
   }

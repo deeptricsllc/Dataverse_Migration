@@ -514,8 +514,9 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
           .regex(/^[A-Za-z0-9_ #$@.]{1,128}$/)
           .nullish(),
         enabled: z.boolean().optional(),
-        confirmSourceName: z.string().min(1).max(300),
-        confirmTargetName: z.string().min(1).max(300),
+        confirmSourceName: z.string().max(300).optional(),
+        confirmTargetName: z.string().max(300).optional(),
+        confirmed: z.boolean().optional(),
       })
       .parse(req.body);
     return s.schedules.create(req.ctx, id, body);

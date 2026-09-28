@@ -95,6 +95,11 @@ with the migration engine so the two cannot diverge.
 configured business key. Two candidate matches is a conflict, not a choice. Two source records
 claiming one target is refused.
 
+**Confirmation scales with the consequence.** Writing to production, or to an environment this
+deployment could not classify, requires the target's name to be typed exactly. A non-production
+target requires a deliberate click on a button that names it. The reasoning is that a gate asked for
+uniformly stops being read — and the same rule governs creating a schedule, which writes unattended.
+
 **Data loss requires a named acknowledgement.** Each lossy rule is accepted individually by key;
 adding another afterwards invalidates the acceptance and asks again. Recorded in the audit trail with
 who and when.

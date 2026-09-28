@@ -142,6 +142,11 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Export preflight CSV' })).toBeVisible();
   await page.goBack();
 
+  // The two actions this step exists to reach stay on screen while the review is read: they used
+  // to be at the bottom of a long page, so acting on the review meant scrolling past it.
+  await page.mouse.wheel(0, -5000);
+  await expect(page.getByTestId('execute-bar')).toBeInViewport();
+
   await page.getByRole('button', { name: 'Execute migration' }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   await expect(dialog.getByText('DeepTrics Development').first()).toBeVisible();
@@ -151,7 +156,10 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await dialog.getByTestId('ack-warnings').check();
   const identityAck = dialog.getByTestId('ack-identity');
   if (await identityAck.isVisible().catch(() => false)) await identityAck.check();
-  await dialog.getByLabel(/Type the target environment name/).fill('DeepTrics QA');
+  // QA is a sandbox, so the button that names the target is the confirmation. Typing the name is
+  // reserved for production, where it is still required.
+  await expect(dialog.getByTestId('confirm-target')).toHaveCount(0);
+  await expect(dialog.getByText(/non-production environment, so the button below/)).toBeVisible();
   await runButton.click();
 
   // 8. Monitor
@@ -169,6 +177,18 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await page.getByRole('button', { name: 'Validate' }).click();
   await expect(page).toHaveURL(/\/validation\//);
   await expect(page.getByRole('heading', { name: 'Results by table' })).toBeVisible({ timeout: 120_000 });
+
+  // One verdict, not two badges that appear to contradict each other: "Completed" (the job) beside
+  // "Fail" (the data) read as a bug in the report rather than a finding about the data.
+  await expect(page.getByText('Completed', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/All checks passed|Passed with warnings|Checks failed/).first()).toBeVisible();
+
+  // And the numbers are explained in words before the tiles, including why the target holds more
+  // rows than the source.
+  const verdict = page.getByTestId('validation-verdict');
+  await expect(verdict).toBeVisible();
+  await expect(verdict).toContainText(/record\(s\) were checked/);
+
   await page.getByTestId('validation-entity-account').click();
   await expect(page.getByText('Record existence')).toBeVisible();
   await page.getByRole('button', { name: 'Inspect differences for Account' }).click();

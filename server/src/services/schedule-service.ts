@@ -1,6 +1,7 @@
 import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
+  needsTypedConfirmation,
   SCHEDULE_MODES,
   type PlanIssue,
   type MigrationScheduleDto,
@@ -103,8 +104,10 @@ export class ScheduleService {
       mode?: ScheduleMode;
       watermarkField?: string | null;
       enabled?: boolean;
-      confirmSourceName: string;
-      confirmTargetName: string;
+      confirmSourceName?: string;
+      confirmTargetName?: string;
+      /** Explicit confirmation, for a target where typing the name is not required. */
+      confirmed?: boolean;
     },
   ): Promise<MigrationScheduleDto> {
     // A schedule keeps writing when nobody is watching, so creating one is a standing grant rather
@@ -116,13 +119,20 @@ export class ScheduleService {
     const invalid = cronError(cron, timeZone);
     if (invalid) throw badRequest(invalid);
 
-    // The names are confirmed here, at the one moment a person is present, and re-checked at every
+    // The target is confirmed here, at the one moment a person is present, and re-checked at every
     // firing. Repointing the plan afterwards therefore stops the schedule instead of surprising it.
-    if (
-      input.confirmSourceName.trim() !== plan.sourceEnvironment.displayName ||
-      input.confirmTargetName.trim() !== plan.targetEnvironment.displayName
-    ) {
-      throw badRequest('Environment confirmation does not match the plan source and target names');
+    // How heavy that confirmation is scales with the target, exactly as it does for a manual run.
+    const typedMatches =
+      input.confirmSourceName?.trim() === plan.sourceEnvironment.displayName &&
+      input.confirmTargetName?.trim() === plan.targetEnvironment.displayName;
+    if (needsTypedConfirmation(plan.targetEnvironment)) {
+      if (!typedMatches) {
+        throw badRequest(
+          `${plan.targetEnvironment.displayName} is a production environment, or one this deployment could not classify. Type its name exactly to confirm this schedule.`,
+        );
+      }
+    } else if (!typedMatches && input.confirmed !== true) {
+      throw badRequest('Confirm the target environment before creating the schedule');
     }
     const mode = input.mode ?? 'FULL';
     if (!SCHEDULE_MODES.includes(mode)) throw badRequest('Unknown schedule mode');
@@ -140,6 +150,7 @@ export class ScheduleService {
         mode,
         watermarkField,
         confirmSourceName: plan.sourceEnvironment.displayName,
+        // Stored as the plan saw it now, so a later repointing is detectable at firing time.
         confirmTargetName: plan.targetEnvironment.displayName,
         // What the person creating this schedule could see. Anything new later stops it.
         acknowledgedWarnings: warningCodes(plan),
