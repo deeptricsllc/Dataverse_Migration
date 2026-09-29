@@ -18,6 +18,7 @@ import {
   Card,
   Checkbox,
   EmptyState,
+  Field,
   ErrorState,
   Modal,
   PageHeader,
@@ -199,6 +200,47 @@ function ProjectTable({
   );
 }
 
+/** A way to create the thing the picker is asking for, without losing this form's place. */
+function AddConnectionLink() {
+  return (
+    <Link
+      to="/environments?new=1"
+      className="text-xs font-medium text-brand-700 hover:underline"
+      data-testid="add-connection-link"
+    >
+      Add a connection
+    </Link>
+  );
+}
+
+/**
+ * What the two connection pickers mean, per kind.
+ *
+ * They used to be two unlabelled "Choose…" boxes, because `Select` puts its label in `aria-label`
+ * and nothing else. Which one was the source and which the target was guesswork.
+ */
+const SIDES: Record<
+  ProjectKind,
+  { source: string; sourceHint: string; target?: string; targetHint?: string }
+> = {
+  ANALYSIS: {
+    source: 'Source',
+    sourceHint: 'The system this project reads. It is never written to.',
+  },
+  MIGRATION: {
+    source: 'Source',
+    sourceHint: 'Where the data is read from.',
+    target: 'Target',
+    targetHint: 'Where the data will be written. You confirm this again before anything runs.',
+  },
+  COMPARISON: {
+    source: 'Side A',
+    sourceHint: 'The first of the two datasets to reconcile. Read only.',
+    target: 'Side B',
+    targetHint: 'The second. It may be the same connection as side A.',
+  },
+};
+
 /** The kind is chosen first, because it decides which of the remaining questions are even asked. */
 function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
@@ -240,7 +282,10 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
 
   const connected = (environments.data ?? []).filter((e) => e.connectionStatus !== 'FAILED');
   const envOptions = [
-    { value: '', label: 'Choose…' },
+    {
+      value: '',
+      label: connected.length ? 'Choose a connection…' : 'No connections yet — add one first',
+    },
     ...connected.map((e) => ({ value: e.id, label: e.displayName })),
   ];
   const ready =
@@ -328,26 +373,42 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         {environments.isLoading && <Spinner label="Loading connections…" />}
         {environments.data && connected.length === 0 && (
           <Callout tone="warning" title="No connections yet">
-            Add a connection first — a project analyses or migrates a system it can reach.
+            A project works on a system it can reach, so add one first: a Dataverse environment, a SQL Server,
+            Azure SQL, PostgreSQL or MySQL database, or a CSV, Excel or XML file to upload.{' '}
+            <Link to="/environments?new=1" className="font-medium text-brand-700 underline">
+              Add a connection
+            </Link>
+            , then come back.
           </Callout>
         )}
 
-        <Select
-          label={kind === 'COMPARISON' ? 'Side A' : 'Source'}
-          value={sourceId}
-          onChange={setSourceId}
-          options={envOptions}
-          className="w-full"
-        />
+        <Field
+          label={SIDES[kind].source}
+          htmlFor="project-source"
+          hint={SIDES[kind].sourceHint}
+          action={<AddConnectionLink />}
+        >
+          <Select
+            id="project-source"
+            label={SIDES[kind].source}
+            value={sourceId}
+            onChange={setSourceId}
+            options={envOptions}
+            className="w-full"
+          />
+        </Field>
         {kind === 'COMPARISON' && (
           <>
-            <Select
-              label="Side B"
-              value={targetId}
-              onChange={setTargetId}
-              options={envOptions}
-              className="w-full"
-            />
+            <Field label={SIDES[kind].target!} htmlFor="project-target" hint={SIDES[kind].targetHint}>
+              <Select
+                id="project-target"
+                label={SIDES[kind].target!}
+                value={targetId}
+                onChange={setTargetId}
+                options={envOptions}
+                className="w-full"
+              />
+            </Field>
             <p className="flex items-start gap-2 text-xs text-slate-500">
               <Pill tone="teal">read-only</Pill>
               <span>
@@ -359,32 +420,40 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         )}
         {kind === 'MIGRATION' && (
           <>
-            <Select
-              label="Target"
-              value={targetId}
-              onChange={setTargetId}
-              options={envOptions}
-              className="w-full"
-            />
+            <Field label={SIDES[kind].target!} htmlFor="project-target" hint={SIDES[kind].targetHint}>
+              <Select
+                id="project-target"
+                label={SIDES[kind].target!}
+                value={targetId}
+                onChange={setTargetId}
+                options={envOptions}
+                className="w-full"
+              />
+            </Field>
             {sourceId && sourceId === targetId && (
               <p className="text-xs text-red-600">The source and target have to be different.</p>
             )}
-            <div>
+            <Field
+              label="Based on analysis"
+              htmlFor="project-analysis"
+              optional
+              hint="Start from an analysis project, and the mapping workbook carries the statistics and findings it measured instead of blank columns."
+            >
               <Select
+                id="project-analysis"
                 label="Based on analysis"
                 value={analysisProjectId}
                 onChange={setAnalysisProjectId}
                 options={[
-                  { value: '', label: 'None' },
+                  {
+                    value: '',
+                    label: analysisProjects.data?.length ? 'None' : 'None — no analysis projects yet',
+                  },
                   ...(analysisProjects.data ?? []).map((p) => ({ value: p.id, label: p.name })),
                 ]}
                 className="w-full"
               />
-              <p className="mt-1.5 text-xs text-slate-500">
-                Optional. The mapping workbook then carries the source statistics and findings that analysis
-                measured, instead of blank columns.
-              </p>
-            </div>
+            </Field>
           </>
         )}
         {kind === 'ANALYSIS' && (

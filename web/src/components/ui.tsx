@@ -397,11 +397,55 @@ export function SearchInput({
   );
 }
 
+/**
+ * A labelled form field.
+ *
+ * `Select` puts its label in `aria-label` and nothing else, which is right for the filter dropdowns
+ * that sit in a toolbar beside a heading that already says what they filter. In a form it is wrong,
+ * and wrong invisibly: the New Project dialog rendered three "Choose…" boxes with no visible clue
+ * which was the source and which the target. Worse, the browser tests passed, because
+ * `getByLabel` matches an accessible name that no sighted person can see.
+ *
+ * So forms use this, and get a real `<label>`, optional help underneath, and the id wiring that
+ * makes clicking the label focus the control.
+ */
+export function Field({
+  label,
+  htmlFor,
+  hint,
+  optional,
+  action,
+  children,
+}: {
+  label: ReactNode;
+  htmlFor: string;
+  /** One line saying what this is for, in the reader's terms rather than the schema's. */
+  hint?: ReactNode;
+  optional?: boolean;
+  /** A control on the label's row, such as a link to create the thing being chosen. */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <label className="block text-sm font-medium text-slate-700" htmlFor={htmlFor}>
+          {label} {optional && <span className="font-normal text-slate-400">(optional)</span>}
+        </label>
+        {action}
+      </div>
+      {children}
+      {hint && <p className="mt-1.5 text-xs text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
 export function Select({
   value,
   onChange,
   options,
   label,
+  id,
   className,
   disabled,
 }: {
@@ -409,11 +453,14 @@ export function Select({
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
   label: string;
+  /** Set when a `Field` supplies the visible label, so the label points at this control. */
+  id?: string;
   className?: string;
   disabled?: boolean;
 }) {
   return (
     <select
+      id={id}
       aria-label={label}
       value={value}
       disabled={disabled}

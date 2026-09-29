@@ -27,7 +27,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import { StagedSourceCard } from '../components/StagedSourceCard';
 import { WizardSteps } from '../components/WizardSteps';
@@ -212,7 +212,22 @@ export function EnvironmentsPage() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [kindFilter, setKindFilter] = useState('ALL');
   const [editing, setEditing] = useState<EnvironmentDto | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  /**
+   * `?new=1` opens the form on arrival, so "add a connection" from somewhere else lands on the form
+   * rather than on the list with the button still to find. A URL rather than router state, because
+   * it survives a reload and can be linked to.
+   */
+  const [params, setParams] = useSearchParams();
+  const [formOpen, setFormOpen] = useState(params.get('new') === '1');
+  /** Closing also drops `?new=1`, so a reload does not reopen the form. */
+  const closeForm = () => {
+    setFormOpen(false);
+    if (params.get('new')) {
+      const next = new URLSearchParams(params);
+      next.delete('new');
+      setParams(next, { replace: true });
+    }
+  };
   const [deleting, setDeleting] = useState<EnvironmentDto | null>(null);
 
   const envs = useQuery({
@@ -579,10 +594,10 @@ export function EnvironmentsPage() {
         <ConnectionModal
           connection={editing}
           discovering={discover.isPending}
-          onClose={() => setFormOpen(false)}
+          onClose={closeForm}
           onDiscover={() => discover.mutate()}
           onSaved={() => {
-            setFormOpen(false);
+            closeForm();
             void qc.invalidateQueries({ queryKey: ['environments'] });
           }}
         />
