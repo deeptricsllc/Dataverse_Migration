@@ -30,6 +30,7 @@ import type { ConnectionFactory } from '../dataverse/factory';
 import type { DataverseConnection, WriteOptions } from '../dataverse/types';
 import { newerThanWatermark } from '../dataverse/types';
 import { AppError, errorMessage } from '../lib/errors';
+import type { AlertEvent } from './alert-service';
 import type { AuditService } from './audit-service';
 import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
@@ -151,6 +152,11 @@ function toRecordError(err: unknown, operation: RecordOperation): RecordError {
  * target records by id). Lookups on circular dependencies are deferred.
  * PASS 2 sets deferred lookups on the records created in PASS 1.
  */
+/** The one thing this service needs from the alerting path. */
+interface Alerts {
+  notify(event: AlertEvent): Promise<void>;
+}
+
 export class MigrationEngine {
   constructor(
     private readonly db: AppDb,
@@ -160,6 +166,7 @@ export class MigrationEngine {
     private readonly principals: PrincipalService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
+    private readonly alerts: Alerts,
   ) {}
 
   /**
@@ -391,6 +398,18 @@ export class MigrationEngine {
         .set({ status: withErrors ? 'PLANNED' : 'EXECUTED' })
         .where(eq(migrationPlans.id, run.planId));
       this.metadata.invalidateCounts(target.id);
+      // A run that lost records or tables is exactly what somebody needs to hear about, and the
+      // person who started it may have gone home. A clean run announces nothing.
+      if (withErrors) {
+        await this.alerts.notify({
+          kind: 'RUN_ENDED_BADLY',
+          runId,
+          target: target.displayName,
+          status,
+          failed: final.failed,
+          error: null,
+        });
+      }
       await this.audit.record({
         organizationId: run.organizationId,
         userId: run.executedByUserId,

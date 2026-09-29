@@ -154,6 +154,22 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/access-requests', async (req) => s.accessRequests.list(req.ctx));
 
+  /**
+   * Sends a test alert, and says what happened.
+   *
+   * A webhook that is silently misconfigured is worse than none, because the deployment looks
+   * covered. This is how an operator finds out before an incident does.
+   */
+  app.post('/api/alerts/test', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('Sending a test alert is for the operators of this deployment.');
+    }
+    if (!s.alerts.configured) {
+      return { ok: false, reason: 'No ALERT_WEBHOOK_URL is configured, so nothing is announced.' };
+    }
+    return s.alerts.deliver({ kind: 'TEST', requestedBy: req.ctx.displayName });
+  });
+
   app.patch('/api/access-requests/:id', async (req) => {
     const { id } = idParams.parse(req.params);
     const { handled } = z.object({ handled: z.boolean() }).parse(req.body);

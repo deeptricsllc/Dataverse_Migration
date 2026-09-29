@@ -6,6 +6,7 @@ import type { AppDb } from '../db/client';
 import { ConnectionFactory } from '../dataverse/factory';
 import { JobQueue, Worker } from '../jobs/queue';
 import { AccessRequestService } from './access-request-service';
+import { AlertService } from './alert-service';
 import { AnalysisService } from './analysis-service';
 import { DataComparisonService } from './data-comparison-service';
 import { AuditService } from './audit-service';
@@ -34,6 +35,9 @@ export type Services = ReturnType<typeof createServices>;
 
 export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   const audit = new AuditService(db, logger);
+  // Declared early: several services take it, and a webhook that announces what happened has to
+  // exist before the things that happen.
+  const alerts = new AlertService(config, logger.child({ component: 'alerts' }));
   const identity = new MicrosoftIdentityService(config, db, logger);
   const auth = new AuthService(config, db, identity, audit, logger);
   const connections = new ConnectionFactory(config, db, logger, identity);
@@ -72,7 +76,16 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
-  const engine = new MigrationEngine(db, environments, metadata, connections, principals, audit, logger);
+  const engine = new MigrationEngine(
+    db,
+    environments,
+    metadata,
+    connections,
+    principals,
+    audit,
+    logger,
+    alerts,
+  );
   const validation = new ValidationService(db, environments, metadata, connections, queue, audit, logger);
   const preflight = new PreflightService(
     db,
@@ -128,7 +141,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
-  const schedules = new ScheduleService(db, runs, audit, logger);
+  const schedules = new ScheduleService(db, runs, audit, logger, alerts);
   const stagedSources = new StagedSourceService(
     db,
     metadata,
@@ -140,7 +153,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
       ? (userId: string) => identity.getAccessToken(userId, graphScopes())
       : undefined,
   );
-  const accessRequests = new AccessRequestService(db, logger);
+  const accessRequests = new AccessRequestService(db, logger, alerts);
   const remediation = new RemediationService(planning, comparisons, principals, preflight);
   const insights = new InsightsService(
     db,
@@ -206,6 +219,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     schedules,
     stagedSources,
     accessRequests,
+    alerts,
     createScheduler,
     diagnostics,
     remediation,

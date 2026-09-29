@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { EnvironmentsPage } from './pages/EnvironmentsPage';
 import { LandingPage } from './pages/LandingPage';
+import { PrivacyPage, TermsPage } from './pages/LegalPage';
 import { LoginPage } from './pages/LoginPage';
 import { MigrationPage } from './pages/MigrationPage';
 import { NewMigrationPage } from './pages/NewMigrationPage';
@@ -52,6 +53,9 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public, whether or not anyone is signed in: a privacy notice behind a login is no notice. */}
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route element={<Protected />}>
         <Route index element={<DashboardPage />} />
         <Route path="projects" element={<ProjectsPage />} />

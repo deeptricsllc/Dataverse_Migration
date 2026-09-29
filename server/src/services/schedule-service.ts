@@ -12,6 +12,7 @@ import {
 import type { AppDb } from '../db/client';
 import { migrationPlans, migrationRuns, migrationSchedules, users } from '../db/schema';
 import { cronError, describeCron, nextCronTime } from '../lib/cron';
+import type { AlertEvent } from './alert-service';
 import { AppError, badRequest, errorMessage, notFound } from '../lib/errors';
 import { requireAdmin } from './authorization';
 import type { AuditService } from './audit-service';
@@ -59,12 +60,18 @@ const DEFAULT_WATERMARK = 'modifiedon';
  * keyboard that a scheduler cannot is confirm the environment names, so those are captured when the
  * schedule is created and re-checked every time it fires.
  */
+/** The one thing this service needs from the alerting path. */
+interface Alerts {
+  notify(event: AlertEvent): Promise<void>;
+}
+
 export class ScheduleService {
   constructor(
     private readonly db: AppDb,
     private readonly runs: MigrationRunService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
+    private readonly alerts: Alerts,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -489,6 +496,18 @@ export class ScheduleService {
         { scheduleId: schedule.id, failures, pause },
         `Scheduled migration failed: ${reason}`,
       );
+      // A schedule that has given up is the case nobody finds on their own: it stops appearing in
+      // the runs list precisely because it is no longer running.
+      if (pause) {
+        await this.alerts.notify({
+          kind: 'SCHEDULE_PAUSED',
+          scheduleName: schedule.name,
+          planName: schedule.name,
+          target: schedule.confirmTargetName,
+          failures,
+          lastError: reason,
+        });
+      }
       return { kind: 'FAILED', reason };
     }
   }

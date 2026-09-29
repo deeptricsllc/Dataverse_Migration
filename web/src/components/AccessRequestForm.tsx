@@ -133,7 +133,11 @@ export function AccessRequestForm({ compact = false }: { compact?: boolean }) {
         {submit.isPending ? 'Sending…' : 'Request access'}
       </button>
       <p className="text-xs text-slate-500">
-        We use this only to reply to you. No newsletter, and nothing is shared with anyone else.
+        We use this only to reply to you. No newsletter, and nothing is shared with anyone else. See our{' '}
+        <a href="/privacy" className="underline hover:text-slate-300">
+          privacy notice
+        </a>
+        .
       </p>
     </form>
   );

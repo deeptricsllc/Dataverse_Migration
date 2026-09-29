@@ -155,6 +155,7 @@ All options are documented in [.env.example](.env.example). The important ones:
 | `ALLOWED_TENANT_IDS`                      | –                                                        | Tenant allow-list. Setting it turns off self sign-up      |
 | `ADMIN_EMAILS`                            | –                                                        | Platform operators: admin bootstrap + inbound requests    |
 | `CONTACT_EMAIL`                           | –                                                        | Shown on the landing page as the way to reach a human     |
+| `ALERT_WEBHOOK_URL`                       | –                                                        | Announces paused schedules, bad runs and access requests  |
 | `DATAVERSE_DISCOVERY_URL`                 | `https://globaldisco.crm.dynamics.com`                   | Global Discovery endpoint (sovereign clouds differ)       |
 | `POWER_PLATFORM_ENRICHMENT`               | `false`                                                  | Environment SKU/region from the Power Platform admin API  |
 | `ALLOW_BUSINESS_LOGIC_BYPASS`             | `false`                                                  | Allow audited plug-in bypass for ADMINs                   |

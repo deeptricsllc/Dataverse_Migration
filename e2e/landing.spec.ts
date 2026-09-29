@@ -36,6 +36,20 @@ test('an anonymous visitor gets the product, not a sign-in box', async ({ page }
   expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
 });
 
+test('the privacy notice and terms are public and reachable', async ({ page }) => {
+  // A privacy notice behind a sign-in is no notice, and the form that collects names links to it.
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Privacy', exact: true }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await expect(page.getByRole('heading', { name: 'Privacy notice' })).toBeVisible();
+  // The claim the whole governance section rests on.
+  await expect(page.getByText(/not sent to any AI model/)).toBeVisible();
+
+  await page.getByRole('link', { name: 'Terms of use' }).click();
+  await expect(page).toHaveURL(/\/terms$/);
+  await expect(page.getByRole('heading', { name: 'Terms of use' })).toBeVisible();
+});
+
 test('requesting access reaches the server and says so', async ({ page }) => {
   await page.goto('/');
   const form = page.getByTestId('access-request-form');

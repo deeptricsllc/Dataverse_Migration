@@ -5,7 +5,13 @@ import type { AccessRequestDto } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { accessRequests, users } from '../db/schema';
 import { forbidden, notFound } from '../lib/errors';
+import type { AlertEvent } from './alert-service';
 import type { RequestContext } from './context';
+
+/** The one thing this service needs from the alerting path. */
+interface Alerts {
+  notify(event: AlertEvent): Promise<void>;
+}
 
 /**
  * The public sign-up path.
@@ -44,6 +50,7 @@ export class AccessRequestService {
   constructor(
     private readonly db: AppDb,
     private readonly logger: Logger,
+    private readonly alerts: Alerts,
   ) {}
 
   /**
@@ -84,6 +91,14 @@ export class AccessRequestService {
         },
       });
     this.logger.info({ requestId, company: input.company ?? null }, 'Access request received');
+    // Somebody has to hear about this, or it sits in a table nobody thought to open.
+    await this.alerts.notify({
+      kind: 'ACCESS_REQUEST',
+      name: input.name,
+      email,
+      company: input.company || null,
+      useCase: input.useCase || null,
+    });
   }
 
   /**

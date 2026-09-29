@@ -45,6 +45,13 @@ const schema = z.object({
    * publishes an address nobody reads is worse than a page that offers only the form.
    */
   CONTACT_EMAIL: z.string().email().optional(),
+  /**
+   * Where consequential events are announced: a schedule that paused itself, a run that ended
+   * badly, somebody asking for access. Any endpoint that accepts a JSON POST — a Slack or Teams
+   * incoming webhook, a queue, a function. Unset means those events are recorded and not announced,
+   * which is right for a demo and wrong for a deployment with users on it.
+   */
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
 
   DATAVERSE_DISCOVERY_URL: z.string().url().default('https://globaldisco.crm.dynamics.com'),
   /**

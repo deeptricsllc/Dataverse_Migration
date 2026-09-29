@@ -774,6 +774,12 @@ export function LandingPage() {
             <a className="hover:text-white" href="#request">
               Request access
             </a>
+            <Link className="hover:text-white" to="/privacy">
+              Privacy
+            </Link>
+            <Link className="hover:text-white" to="/terms">
+              Terms
+            </Link>
             <Link className="hover:text-white" to="/login">
               Sign in
             </Link>
