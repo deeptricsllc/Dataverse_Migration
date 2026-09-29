@@ -104,7 +104,17 @@ export class AuthService {
   // Demo sign-in
   // ---------------------------------------------------------------------------
 
-  async demoSignIn(requestId: string): Promise<string> {
+  /**
+   * Signing in to the shared demo organization.
+   *
+   * A name is optional and matters more than it looks. Without one every visitor is literally the
+   * same account, which is right for an anonymous demo and wrong for a user-acceptance test: half
+   * of what testers are asked to evaluate is the audit trail, and a trail where every entry says
+   * "Demo User" cannot answer the question it exists to answer. Giving a name creates a separate
+   * person inside the same organization, so testers still see each other's work — which is the
+   * point of testing together — while who did what stays legible.
+   */
+  async demoSignIn(requestId: string, displayName?: string): Promise<string> {
     if (!this.config.DEMO_MODE) throw new AppError(404, 'NOT_FOUND', 'Demo mode is disabled');
     let [org] = await this.db
       .select()
@@ -118,20 +128,29 @@ export class AuthService {
       );
     if (!org)
       [org] = await this.db.insert(organizations).values({ name: DEMO_ORG_NAME, isDemo: true }).returning();
+    // A name identifies the person for the whole life of the demo organization, so it is
+    // normalised: "Priya Raman", "priya raman" and " Priya  Raman " are one tester, not three.
+    const name = (displayName ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const slug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const externalId = slug ? `demo-user:${slug}` : 'demo-user';
     const [user] = await this.db
       .insert(users)
       .values({
         organizationId: org.id,
-        externalId: 'demo-user',
+        externalId,
         authProvider: 'demo',
-        email: 'demo.user@deeptrics.demo',
-        displayName: 'Demo User',
+        email: slug ? `${slug}@deeptrics.demo` : 'demo.user@deeptrics.demo',
+        displayName: name || 'Demo User',
         role: 'ADMIN',
         lastLoginAt: new Date(),
       })
       .onConflictDoUpdate({
         target: [users.organizationId, users.externalId],
-        set: { lastLoginAt: new Date() },
+        // The name can be corrected by signing in again with it spelled properly.
+        set: { lastLoginAt: new Date(), displayName: name || 'Demo User' },
       })
       .returning();
     await seedDemoData(this.db, { logger: this.logger });

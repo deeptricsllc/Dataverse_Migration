@@ -12,9 +12,12 @@ test('the audit trail can be narrowed to the question being asked', async ({ pag
   page.on('console', (msg) => msg.type() === 'error' && problems.push(msg.text()));
   page.on('pageerror', (err) => problems.push(err.message));
 
+  // Sign in as a named tester, which is how a UAT group is asked to sign in: everyone shares one
+  // workspace, and the name is what keeps their work and their audit entries apart.
   await page.goto('/login');
+  await page.getByTestId('demo-name').fill('Priya Raman');
   await page.getByRole('button', { name: 'Continue with demo account' }).click();
-  await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Welcome, Priya/ })).toBeVisible();
   // Some activity to look at.
   await page.goto('/environments');
   await expect(page.getByTestId('env-card-DeepTrics QA')).toBeVisible({ timeout: 60_000 });
@@ -25,6 +28,10 @@ test('the audit trail can be narrowed to the question being asked', async ({ pag
 
   // Events are grouped by day rather than run together.
   await expect(trail.getByText(/\d+ events?$/).first()).toBeVisible();
+
+  // The trail knows who this is, rather than calling everybody Demo User. Scoped to a table cell:
+  // the name also appears in the hidden options of the user filter.
+  await expect(trail.getByRole('cell', { name: 'Priya Raman' }).first()).toBeVisible();
 
   // Narrowing to one kind of activity really narrows it. Asserted by what is on the page rather
   // than by counting rows: against a trail with months of history in it, both the filtered and

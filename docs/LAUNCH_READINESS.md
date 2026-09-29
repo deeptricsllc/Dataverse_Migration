@@ -201,7 +201,7 @@ authentication modes are declared and not implemented.
 
 ## 9 · Verification
 
-Run `npm run verify`: format, lint, typecheck, 471 tests across 39 files, build, and 6 end-to-end
+Run `npm run verify`: format, lint, typecheck, 546 tests across 46 files, build, and 13 end-to-end
 browser journeys.
 
 What the tests are for, beyond coverage:
@@ -216,6 +216,9 @@ What the tests are for, beyond coverage:
 - **Upload safety** — that a zip bomb and a spreadsheet claiming two billion rows are both refused
   from a file small enough to pass every size check.
 - **Every screen** visited in a browser with a failure on any console error or bad response.
+- **Confirmation gates**, pinning both what production still demands and what a sandbox no longer does.
+- **Reader safety**, including an XML document type declaration refused and a file format named
+  rather than parsed as something it is not.
 
 ## 10 · What a pilot needs from you
 

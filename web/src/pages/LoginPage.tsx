@@ -1,6 +1,7 @@
 import type { AuthConfigDto } from '@shared/domain';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Boxes, Check, FlaskConical, Lock } from 'lucide-react';
+import { useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { Callout, ErrorState, Spinner } from '../components/ui';
 import { get } from '../lib/api';
@@ -35,6 +36,7 @@ export function LoginPage() {
     queryFn: () => get<AuthConfigDto>('/api/auth/config'),
   });
   const demo = useDemoLogin(returnTo);
+  const [name, setName] = useState('');
 
   if (session.data) return <Navigate to={returnTo} replace />;
 
@@ -126,9 +128,30 @@ export function LoginPage() {
                         <span className="h-px flex-1 bg-slate-200" /> or{' '}
                         <span className="h-px flex-1 bg-slate-200" />
                       </div>
+                      <div>
+                        <label
+                          className="mb-1.5 block text-xs font-medium text-slate-600"
+                          htmlFor="demo-name"
+                        >
+                          Your name <span className="font-normal text-slate-400">(optional)</span>
+                        </label>
+                        <input
+                          id="demo-name"
+                          value={name}
+                          data-testid="demo-name"
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="Priya Raman"
+                          autoComplete="name"
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                          Everyone shares one demo workspace. A name keeps your work, and the audit trail,
+                          apart from everyone else testing today.
+                        </p>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => demo.mutate()}
+                        onClick={() => demo.mutate(name.trim() || undefined)}
                         disabled={demo.isPending}
                         className="flex w-full items-center justify-center gap-2 rounded-md bg-amber-400 px-4 py-2.5 text-sm font-semibold text-amber-950 shadow-sm hover:bg-amber-300 disabled:opacity-60"
                       >

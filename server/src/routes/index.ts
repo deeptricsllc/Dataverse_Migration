@@ -126,7 +126,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     '/api/auth/demo-login',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
     async (req, reply) => {
-      const userId = await s.auth.demoSignIn(req.id);
+      const { name } = z.object({ name: z.string().max(80).optional() }).parse(req.body ?? {});
+      const userId = await s.auth.demoSignIn(req.id, name);
       const session = await s.auth.createSession(userId, req.headers['user-agent']);
       reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
       const resolved = await s.auth.resolveSession(session.token);

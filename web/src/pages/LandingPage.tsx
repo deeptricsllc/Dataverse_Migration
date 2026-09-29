@@ -261,7 +261,7 @@ export function LandingPage() {
       <button
         type="button"
         data-testid={`try-demo-${variant}`}
-        onClick={() => demo.mutate()}
+        onClick={() => demo.mutate(undefined)}
         disabled={demo.isPending}
         className={
           variant === 'primary'

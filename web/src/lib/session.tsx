@@ -36,7 +36,9 @@ export function useSessionQuery() {
 export function useDemoLogin(returnTo = '/') {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => post<{ user: SessionUser; csrfToken: string }>('/api/auth/demo-login'),
+    /** An optional name, so several people testing together stay distinguishable in the trail. */
+    mutationFn: (name?: string) =>
+      post<{ user: SessionUser; csrfToken: string }>('/api/auth/demo-login', name ? { name } : {}),
     onSuccess: (data) => {
       setCsrfToken(data.csrfToken);
       qc.setQueryData(['session'], data);
