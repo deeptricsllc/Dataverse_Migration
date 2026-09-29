@@ -65,5 +65,5 @@ test('the form offers a way out to create a connection', async ({ page }) => {
   // Lands on the connections page with the form already open, rather than on the list with the
   // button still to find.
   await expect(page).toHaveURL(/\/environments\?new=1/);
-  await expect(page.getByRole('radio', { name: /CSV \/ Excel file/ })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ })).toBeVisible();
 });

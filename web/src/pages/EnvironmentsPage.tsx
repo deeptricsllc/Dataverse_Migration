@@ -229,6 +229,14 @@ export function EnvironmentsPage() {
     }
   };
   const [deleting, setDeleting] = useState<EnvironmentDto | null>(null);
+  /**
+   * The file source just created, so the page can take you to its import control.
+   *
+   * Creating one used to close the dialog and leave you at the top of the connections page, with
+   * the file picker in a section below every other connection. The source existed and there was
+   * nothing on screen to suggest what to do next.
+   */
+  const [createdStagedId, setCreatedStagedId] = useState<string | null>(null);
 
   const envs = useQuery({
     queryKey: ['environments'],
@@ -271,6 +279,14 @@ export function EnvironmentsPage() {
   const list = useMemo(() => envs.data ?? [], [envs.data]);
   /** File sources get their own section: what matters about them is their data, not their settings. */
   const staged = useMemo(() => list.filter((e) => isStagedConnection(e.connectionType)), [list]);
+
+  useEffect(() => {
+    if (!createdStagedId) return;
+    const card = document.querySelector(`[data-testid="staged-source-${createdStagedId}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
+  }, [createdStagedId, list]);
   const types = useMemo(
     () => ['ALL', ...new Set(list.map((e) => e.environmentType).filter((t): t is string => Boolean(t)))],
     [list],
@@ -281,6 +297,9 @@ export function EnvironmentsPage() {
   );
   const filtered = list.filter(
     (e) =>
+      // File sources have their own section below, with the import control. Showing them here as
+      // well produced a second card whose every row was "—".
+      !isStagedConnection(e.connectionType) &&
       (typeFilter === 'ALL' || e.environmentType === typeFilter) &&
       (kindFilter === 'ALL' || e.connectionType === kindFilter) &&
       `${e.displayName} ${e.url} ${e.uniqueName ?? ''} ${e.sql?.database ?? ''}`
@@ -585,7 +604,13 @@ export function EnvironmentsPage() {
         <div className="mt-8 space-y-4">
           <h2 className="text-sm font-semibold text-slate-700">File sources</h2>
           {staged.map((env) => (
-            <StagedSourceCard key={env.id} environment={env} />
+            <StagedSourceCard
+              key={env.id}
+              environment={env}
+              justCreated={env.id === createdStagedId}
+              isSource={workspace.source?.id === env.id}
+              onSetSource={() => void select('source', env)}
+            />
           ))}
         </div>
       )}
@@ -596,8 +621,9 @@ export function EnvironmentsPage() {
           discovering={discover.isPending}
           onClose={closeForm}
           onDiscover={() => discover.mutate()}
-          onSaved={() => {
+          onSaved={(saved) => {
             closeForm();
+            if (isStagedConnection(saved.connectionType)) setCreatedStagedId(saved.id);
             void qc.invalidateQueries({ queryKey: ['environments'] });
           }}
         />

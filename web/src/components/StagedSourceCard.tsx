@@ -1,4 +1,5 @@
 import {
+  CONNECTION_TYPE_LABELS,
   STAGED_SOURCE_LABELS,
   type EnvironmentDto,
   type StagedImportResultDto,
@@ -9,7 +10,7 @@ import { FileSpreadsheet, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
-import { Button, Callout, Card, Disclosure, ErrorState, Pill, Spinner, Table, Td, Th } from './ui';
+import { Button, Callout, Card, cx, Disclosure, ErrorState, Pill, Spinner, Table, Td, Th } from './ui';
 
 /**
  * The imported tables belonging to a file source, and how to add more.
@@ -18,7 +19,25 @@ import { Button, Callout, Card, Disclosure, ErrorState, Pill, Spinner, Table, Td
  * was guessed should be inspectable. Somebody who sees "kept as text — the day and month order is
  * ambiguous" knows what to do about it; somebody who just sees "text" does not.
  */
-export function StagedSourceCard({ environment }: { environment: EnvironmentDto }) {
+export function StagedSourceCard({
+  environment,
+  justCreated = false,
+  isSource = false,
+  onSetSource,
+}: {
+  environment: EnvironmentDto;
+  /** Just created from the Add connection dialog, so it says what to do rather than sitting empty. */
+  justCreated?: boolean;
+  /** Already chosen as the workspace source. */
+  isSource?: boolean;
+  /**
+   * Choose this file source as the source to work from.
+   *
+   * It lives here because a file source now has exactly one card. It used to have two — this one,
+   * and an ordinary connection card whose every row was "—" but which carried this button.
+   */
+  onSetSource?: () => void;
+}) {
   const qc = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [lastImport, setLastImport] = useState<StagedImportResultDto | null>(null);
@@ -79,9 +98,27 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
 
   return (
     <Card
-      title="Imported data"
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          {environment.displayName}
+          <Pill tone="slate">{CONNECTION_TYPE_LABELS[environment.connectionType]}</Pill>
+        </span>
+      }
       subtitle="A file has no server to query, so its rows are read once and kept here. Re-importing a file replaces it."
       data-testid={`staged-source-${environment.id}`}
+      actions={
+        onSetSource ? (
+          <Button
+            size="sm"
+            variant={isSource ? 'primary' : 'secondary'}
+            disabled={isSource}
+            onClick={onSetSource}
+            data-testid={`staged-set-source-${environment.id}`}
+          >
+            {isSource ? 'Source' : 'Set as source'}
+          </Button>
+        ) : undefined
+      }
     >
       {fromGraph && (
         <div className="mb-3 rounded-lg border border-dashed border-slate-300 p-4">
@@ -122,7 +159,22 @@ export function StagedSourceCard({ environment }: { environment: EnvironmentDto 
         </div>
       )}
 
-      <div className="rounded-lg border border-dashed border-slate-300 p-4">
+      {/*
+        Just created from the Add connection dialog: the source exists and holds nothing, so the
+        next step is named here rather than left to be worked out.
+      */}
+      <div
+        className={cx(
+          'rounded-lg border border-dashed p-4',
+          justCreated ? 'border-brand-400 bg-brand-50' : 'border-slate-300',
+        )}
+      >
+        {justCreated && (
+          <p className="mb-3 text-sm font-medium text-brand-900">
+            Connection created. Choose the file to import — it stays on this connection and you can add more
+            later.
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <FileSpreadsheet className="h-5 w-5 text-slate-400" />
           <input

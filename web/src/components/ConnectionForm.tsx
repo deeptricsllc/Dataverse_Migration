@@ -26,7 +26,7 @@ const TYPE_HINTS: Record<ConnectionType, string> = {
   AZURE_SQL: 'Azure SQL Database or Managed Instance.',
   POSTGRES: 'PostgreSQL 12 or later — self-hosted or managed (RDS, Cloud SQL, Neon, Supabase).',
   MYSQL: 'MySQL 8 or MariaDB 10.5 or later.',
-  FILE: 'Upload a CSV or Excel file. Read-only — a file is never a migration target.',
+  FILE: 'Upload a file from this computer: CSV, Excel or XML. Read-only — a file is never a migration target.',
   ONEDRIVE: 'A spreadsheet in OneDrive or a SharePoint document library. Read-only.',
   SHAREPOINT: 'A SharePoint list. Read-only.',
 };
@@ -251,7 +251,7 @@ export function ConnectionModal({
               data-testid="create-staged-source"
               onClick={() => createStaged.mutate()}
             >
-              Create source
+              Create and choose a file
             </Button>
           </>
         ) : isSql ? (

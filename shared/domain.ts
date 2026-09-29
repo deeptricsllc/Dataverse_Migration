@@ -132,7 +132,7 @@ export const CONNECTION_TYPE_LABELS: Record<ConnectionType, string> = {
   AZURE_SQL: 'Azure SQL',
   POSTGRES: 'PostgreSQL',
   MYSQL: 'MySQL',
-  FILE: 'CSV / Excel file',
+  FILE: 'CSV / Excel / XML file',
   ONEDRIVE: 'OneDrive / SharePoint file',
   SHAREPOINT: 'SharePoint list',
 };

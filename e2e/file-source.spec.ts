@@ -20,11 +20,19 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
   await page.goto('/environments');
   await expect(page.getByTestId('env-card-DeepTrics QA')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('add-connection').click();
-  await page.getByRole('radio', { name: /CSV \/ Excel file/ }).check();
+  await page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ }).check();
   await expect(page.getByText(/there is no host, port or password/)).toBeVisible();
   await expect(page.getByLabel('Server / host')).toHaveCount(0);
   await page.getByLabel('Name').fill('Customer extracts');
   await page.getByTestId('create-staged-source').click();
+
+  // 1b. Creating the connection lands on the thing you now have to do. It used to close the
+  // dialog and leave you at the top of the connections page, with the file picker in a section
+  // below every other connection and nothing on screen suggesting it existed.
+  await expect(page.getByText(/Connection created\. Choose the file to import/)).toBeVisible();
+  await expect(page.getByTestId('staged-file')).toBeVisible();
+  // And a file source is not also listed as an ordinary connection card with every row empty.
+  await expect(page.getByTestId(`env-card-${'Customer extracts'}`)).toHaveCount(0);
 
   // 2. The card appears, saying it has nothing yet.
   const card = page.getByTestId(/^staged-source-/);
@@ -76,12 +84,13 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
   await expect(card).toContainText('orders');
   await expect(card).toContainText('key: ref');
 
-  // 5. It can be a source, and is never offered as a target.
-  const fileCard = page.getByTestId('env-card-Customer extracts');
+  // 5. It can be a source, and is never offered as a target. The action lives on the file source's
+  // own card, which is the only card it has now.
+  const fileCard = page.getByTestId(/^staged-source-/);
   await expect(fileCard.getByRole('button', { name: 'Set as source' })).toBeVisible();
   await expect(fileCard.getByRole('button', { name: /Set as target|^Target$/ })).toHaveCount(0);
   // Capabilities say so too, rather than the button merely being absent.
-  await expect(fileCard).toContainText('CSV / Excel file');
+  await expect(fileCard).toContainText('CSV / Excel / XML file');
 
   // 6. Analyse it as an ordinary source.
   await page.goto('/projects');
