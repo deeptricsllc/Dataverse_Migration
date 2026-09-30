@@ -1,6 +1,6 @@
 import { buildApp } from './app';
 import { loadConfig } from './config';
-import { createDatabase } from './db/client';
+import { createDatabase, migrateWhenReachable } from './db/client';
 import { createLogger } from './logger';
 import { createServices } from './services/container';
 
@@ -10,8 +10,11 @@ const logger = createLogger(config.LOG_LEVEL, config.LOG_PRETTY);
 const database = await createDatabase({
   databaseUrl: config.DATABASE_URL,
   pgliteDataDir: config.PGLITE_DATA_DIR,
+  onPoolError: (error) => logger.error({ err: error }, 'Idle database connection failed'),
 });
-await database.migrate(config.MIGRATIONS_DIR);
+await migrateWhenReachable(database, config.MIGRATIONS_DIR, {
+  onWait: (info) => logger.warn(info, 'Database not reachable yet, waiting'),
+});
 logger.info({ database: database.kind }, 'Database ready (migrations applied)');
 
 const services = createServices(config, database.db, logger);
