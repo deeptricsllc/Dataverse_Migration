@@ -1,4 +1,5 @@
 import type {
+  ErdDto,
   AnalysisFindingDto,
   AnalysisRunDto,
   AnalysisTableDetailDto,
@@ -8,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FileSpreadsheet } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ErdDiagram } from '../components/ErdDiagram';
 import { get } from '../lib/api';
 import { fmtDate, fmtDuration, fmtNumber, pct } from '../lib/format';
 import {
@@ -29,7 +31,7 @@ import {
   Th,
 } from '../components/ui';
 
-type Tab = 'tables' | 'findings';
+type Tab = 'tables' | 'findings' | 'erd';
 
 /**
  * What one analysis found.
@@ -38,6 +40,17 @@ type Tab = 'tables' | 'findings';
  * these numbers" — so every count says whether it was measured exactly or estimated from a sample,
  * and the drill-down goes all the way to one column's real statistics.
  */
+/** The diagram, fetched only when somebody opens the tab: it reads table metadata. */
+function ErdTab({ analysisId }: { analysisId: string }) {
+  const erd = useQuery({
+    queryKey: ['erd', analysisId],
+    queryFn: () => get<ErdDto>(`/api/analyses/${analysisId}/erd`),
+  });
+  if (erd.isLoading) return <Spinner label="Reading the relationships…" />;
+  if (erd.error) return <ErrorState error={erd.error} onRetry={() => erd.refetch()} />;
+  return erd.data ? <ErdDiagram erd={erd.data} /> : null;
+}
+
 export function AnalysisPage() {
   const { analysisId = '' } = useParams();
   const [tab, setTab] = useState<Tab>('tables');
@@ -143,11 +156,13 @@ export function AnalysisPage() {
             tabs={[
               { value: 'tables', label: `Tables (${a.totals.tables})` },
               { value: 'findings', label: `Findings (${a.totals.findings})` },
+              { value: 'erd', label: 'Relationships' },
             ]}
           />
 
           {tab === 'tables' && <TablesTab run={a} openTable={openTable} onOpen={setOpenTable} />}
           {tab === 'findings' && <FindingsTab analysisId={a.id} />}
+          {tab === 'erd' && <ErdTab analysisId={a.id} />}
         </>
       )}
     </div>

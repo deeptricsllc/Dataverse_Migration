@@ -11,6 +11,9 @@ import {
   type DataQualityRuleDto,
   type StatisticBasis,
   type TableProfileDto,
+  type ErdDto,
+  type ErdEdgeDto,
+  type ErdNodeDto,
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
@@ -272,6 +275,87 @@ export class AnalysisService {
   // ---------------------------------------------------------------------------
   // Reading it back
   // ---------------------------------------------------------------------------
+
+  /**
+   * The analysed tables as an entity relationship diagram.
+   *
+   * Built from the same `analyzeDependencies` the run itself used, rather than from a second reading
+   * of the relationships: the diagram and the load order are one answer, and drawing them from
+   * different code is how they would come to disagree.
+   */
+  async erd(ctx: RequestContext, runId: string): Promise<ErdDto> {
+    const run = await this.get(ctx, runId);
+    if (run.status !== 'COMPLETED') {
+      throw badRequest('This analysis has not finished, so there is nothing to draw yet.');
+    }
+    const names = run.tables.map((t) => t.logicalName);
+    if (names.length === 0) return { nodes: [], edges: [], externalReferences: [] };
+
+    const env = await this.environmentsSvc.getAccessible(ctx, run.environment.id);
+    const conn = await this.connections.connectorFor(env, ctx.userId, { analysisRunId: runId });
+    try {
+      const metaByName = await this.metadata.getTables(env.id, conn, names);
+      const metas = [...metaByName.values()];
+      const inScope = new Set(metas.map((m) => m.logicalName));
+      const analysis = analyzeDependencies({ tables: metas, targetTables: inScope });
+
+      const cycleOf = new Map(analysis.nodes.map((n) => [n.logicalName, n.cycleGroup]));
+      const edges: ErdEdgeDto[] = [];
+      const externalReferences: ErdDto['externalReferences'] = [];
+      for (const node of analysis.nodes) {
+        for (const edge of node.dependsOn) {
+          // `from` is what must exist first, which reads left to right in the drawing.
+          if (inScope.has(edge.to)) {
+            edges.push({
+              from: edge.to,
+              to: node.logicalName,
+              attribute: edge.attribute,
+              required: edge.required,
+              deferred: edge.deferred,
+            });
+          } else {
+            externalReferences.push({ from: node.logicalName, attribute: edge.attribute, to: edge.to });
+          }
+        }
+      }
+
+      // Depth is the longest chain of things that must exist first. A cycle stops the walk, so a
+      // table caught in one is placed beside the rest of its group rather than sent to infinity.
+      const parents = new Map<string, string[]>();
+      for (const e of edges) parents.set(e.to, [...(parents.get(e.to) ?? []), e.from]);
+      const depths = new Map<string, number>();
+      const depthOf = (name: string, seen: Set<string>): number => {
+        const cached = depths.get(name);
+        if (cached !== undefined) return cached;
+        if (seen.has(name)) return 0;
+        seen.add(name);
+        const own = (parents.get(name) ?? []).filter((p) => p !== name).map((p) => depthOf(p, seen) + 1);
+        const depth = own.length ? Math.max(...own) : 0;
+        seen.delete(name);
+        depths.set(name, depth);
+        return depth;
+      };
+
+      const byName = new Map(run.tables.map((t) => [t.logicalName, t]));
+      const nodes: ErdNodeDto[] = metas.map((meta) => {
+        const table = byName.get(meta.logicalName);
+        const key = meta.attributes.find((a) => a.isPrimaryId);
+        return {
+          logicalName: meta.logicalName,
+          displayName: meta.displayName,
+          recordCount: table?.recordCount ?? 0,
+          columnCount: table?.columnCount ?? meta.attributes.length,
+          depth: depthOf(meta.logicalName, new Set()),
+          keyColumn: key?.logicalName ?? null,
+          cycleGroup: cycleOf.get(meta.logicalName) ?? null,
+        };
+      });
+      nodes.sort((a, b) => a.depth - b.depth || a.displayName.localeCompare(b.displayName));
+      return { nodes, edges, externalReferences };
+    } finally {
+      await conn.dispose?.();
+    }
+  }
 
   async get(ctx: Pick<RequestContext, 'organizationId'>, runId: string): Promise<AnalysisRunDto> {
     const [row] = await this.db

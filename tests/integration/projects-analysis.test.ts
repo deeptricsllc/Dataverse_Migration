@@ -4,6 +4,7 @@ import type {
   AnalysisRunListItemDto,
   AnalysisTableDetailDto,
   EnvironmentDto,
+  ErdDto,
   MappingImportPreviewDto,
   MigrationPlanDto,
   MigrationScheduleDto,
@@ -132,6 +133,43 @@ describe('projects, source analysis, mapping workbook and schedules', () => {
 
     const blockers = await api.get<unknown[]>(`/api/analyses/${analysis.id}/findings?severity=BLOCKER`);
     expect(Array.isArray(blockers)).toBe(true);
+  });
+
+  it('draws the analysis as a diagram, in the order a migration would load it', async () => {
+    const erd = await api.get<ErdDto>(`/api/analyses/${analysis.id}/erd`);
+
+    expect(erd.nodes.map((n) => n.logicalName).sort()).toEqual(['dbo.Customer', 'dbo.Order']);
+    const customer = erd.nodes.find((n) => n.logicalName === 'dbo.Customer')!;
+    const order = erd.nodes.find((n) => n.logicalName === 'dbo.Order')!;
+
+    // An order points at a customer, so the customer is drawn in the column to its left.
+    expect(customer.depth).toBe(0);
+    expect(order.depth).toBe(1);
+    // Which is the load order, drawn. The diagram and the plan come from one dependency analysis,
+    // and this is the assertion that keeps them from drifting into two different answers.
+    const byDepth = [...erd.nodes].sort((a, b) => a.depth - b.depth).map((n) => n.logicalName);
+    const byLoadOrder = [...analysis.tables]
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((t) => t.logicalName);
+    expect(byDepth).toEqual(byLoadOrder);
+
+    expect(customer.keyColumn).toBe('CustomerId');
+    expect(customer.recordCount).toBe(26);
+    expect(customer.columnCount).toBeGreaterThan(10);
+    // Nothing here references itself around a loop, so nothing is drawn as deferred.
+    expect(erd.nodes.every((n) => n.cycleGroup === null)).toBe(true);
+
+    expect(erd.edges).toEqual([
+      { from: 'dbo.Customer', to: 'dbo.Order', attribute: 'CustomerId', required: true, deferred: false },
+    ]);
+
+    // Customer.RegionId points at a table this analysis never looked at. The diagram cannot draw a
+    // box that was not analysed, so it says so rather than dropping the reference silently.
+    expect(erd.externalReferences).toContainEqual({
+      from: 'dbo.Customer',
+      attribute: 'RegionId',
+      to: 'config.Region',
+    });
   });
 
   it('exports a mapping workbook a person can actually fill in', async () => {

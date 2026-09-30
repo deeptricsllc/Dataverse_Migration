@@ -73,13 +73,30 @@ test('analysis project: understand a source, then migrate from what it found', a
   await page.getByRole('tab', { name: /Findings/ }).click();
   await expect(page.getByTestId('analysis-findings')).toBeVisible();
 
-  // 7. The mapping workbook downloads as a real spreadsheet.
+  // 7. Relationships: the same dependencies drawn, which is also the order a migration loads in.
+  await page.getByRole('tab', { name: /Relationships/ }).click();
+  const erd = page.getByTestId('erd');
+  await expect(erd).toBeVisible({ timeout: 60_000 });
+  await expect(erd).toContainText('Customer');
+  await expect(erd).toContainText('Order');
+  // The toggle says what it does in words on the screen, not only to a screen reader.
+  await expect(page.getByText('Show linking columns')).toBeVisible();
+  // The column that ties the two tables together is named on the arrow between them.
+  await expect(erd.getByTestId('erd-edge-label')).toHaveText(['CustomerId']);
+  await page.getByRole('checkbox', { name: 'Show linking columns' }).uncheck();
+  await expect(erd.getByTestId('erd-edge-label')).toHaveCount(0);
+  // config.Region was never analysed, so the diagram says it cannot draw that reference rather
+  // than dropping it.
+  await expect(page.getByText(/point outside this analysis/)).toBeVisible();
+  await expect(page.getByText('config.Region')).toBeVisible();
+
+  // 8. The mapping workbook downloads as a real spreadsheet.
   const download = page.waitForEvent('download');
   await page.getByRole('link', { name: 'Mapping workbook' }).first().click();
   const file = await download;
   expect(file.suggestedFilename()).toMatch(/\.xlsx$/);
 
-  // 8. A migration project that starts from that analysis.
+  // 9. A migration project that starts from that analysis.
   await page.goto('/projects');
   await page.getByTestId('new-project').click();
   await page.getByTestId('project-kind').selectOption('MIGRATION');

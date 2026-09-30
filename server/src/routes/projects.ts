@@ -270,6 +270,11 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     return s.analysis.table(req.ctx, id, table);
   });
 
+  /** The analysed tables as a diagram. Reads metadata, so it carries the expensive-route limit. */
+  app.get('/api/analyses/:id/erd', EXPENSIVE, async (req) =>
+    s.analysis.erd(req.ctx, idParams.parse(req.params).id),
+  );
+
   app.get('/api/analyses/:id/findings', async (req) => {
     const { id } = idParams.parse(req.params);
     const q = z

@@ -1859,6 +1859,45 @@ export interface AnalysisRunListItemDto {
   completedAt: string | null;
 }
 
+/**
+ * An entity relationship diagram of what an analysis looked at.
+ *
+ * Laid out by the same dependency analysis that decides load order, so the picture and the order a
+ * migration runs in are the same fact drawn two ways: a table to the left of another must exist
+ * before it.
+ */
+export interface ErdNodeDto {
+  logicalName: string;
+  displayName: string;
+  recordCount: number;
+  columnCount: number;
+  /** Distance from a table that depends on nothing. Drawn as the column it sits in. */
+  depth: number;
+  /** The column that identifies a row, where the source names one. */
+  keyColumn: string | null;
+  /** Tables in a reference cycle share a group, and the order between them cannot be resolved. */
+  cycleGroup: number | null;
+}
+
+export interface ErdEdgeDto {
+  /** The referenced table: it must exist first. */
+  from: string;
+  /** The referencing table: it holds the column. */
+  to: string;
+  /** The column on `to` that points at `from`. */
+  attribute: string;
+  required: boolean;
+  /** Part of a cycle, so this reference is resolved in a second pass. */
+  deferred: boolean;
+}
+
+export interface ErdDto {
+  nodes: ErdNodeDto[];
+  edges: ErdEdgeDto[];
+  /** References to tables outside the analysis, which the diagram cannot draw. */
+  externalReferences: { from: string; attribute: string; to: string }[];
+}
+
 export interface AnalysisTableDto {
   logicalName: string;
   displayName: string;
