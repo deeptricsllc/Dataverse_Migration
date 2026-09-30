@@ -479,16 +479,27 @@ export function Select({
   );
 }
 
+/**
+ * A checkbox and the words that say what it does.
+ *
+ * The label is rendered by default. It used to be passed to `aria-label` and nothing else, which
+ * meant every option on the site was a bare square with no text beside it, while the tests went on
+ * passing because they look options up by accessible name. Hiding it is now the thing you have to
+ * ask for, and the only honest reason to ask is a checkbox sitting in a row that already says it.
+ */
 export function Checkbox({
   checked,
   onChange,
   label,
+  hideLabel,
   disabled,
   indeterminate,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  /** For a checkbox beside text that already reads as its label. Screen readers still get it. */
+  hideLabel?: boolean;
   disabled?: boolean;
   indeterminate?: boolean;
 }) {
@@ -496,16 +507,28 @@ export function Checkbox({
   useEffect(() => {
     if (ref.current) ref.current.indeterminate = Boolean(indeterminate);
   }, [indeterminate]);
-  return (
+  const box = (
     <input
       ref={ref}
       type="checkbox"
-      aria-label={label}
+      aria-label={hideLabel ? label : undefined}
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      className="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-500"
+      className="h-4 w-4 flex-none rounded border-slate-300 text-brand-700 focus:ring-brand-500"
     />
+  );
+  if (hideLabel) return box;
+  return (
+    <label
+      className={cx(
+        'inline-flex items-center gap-2 text-sm',
+        disabled ? 'cursor-not-allowed text-slate-400' : 'cursor-pointer text-slate-700',
+      )}
+    >
+      {box}
+      <span>{label}</span>
+    </label>
   );
 }
 

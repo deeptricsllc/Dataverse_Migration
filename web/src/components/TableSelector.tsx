@@ -216,6 +216,7 @@ export function TableSelector({
                   <Td>
                     <Checkbox
                       label={`Select ${c.displayName}`}
+                      hideLabel
                       checked={selected.has(c.logicalName)}
                       onChange={(on) => toggle(c.logicalName, on)}
                     />

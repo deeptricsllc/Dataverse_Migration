@@ -301,7 +301,7 @@ function NewComparisonModal({
                   <p className="mt-1 pl-6 text-xs text-slate-500">{s.rationale}</p>
                   {choice.selected && (
                     <div className="mt-2 flex items-center gap-2 pl-6">
-                      <label className="text-xs text-slate-600" htmlFor={`key-${s.leftTable}`}>
+                      <label className="flex-none text-xs text-slate-600" htmlFor={`key-${s.leftTable}`}>
                         Match records on
                       </label>
                       <select
