@@ -10,6 +10,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, FolderPlus, Microscope, Scale, Truck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ConnectionModal } from '../components/ConnectionForm';
+import { StagedFileImport } from '../components/StagedFileImport';
 import { get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import {
@@ -200,19 +202,6 @@ function ProjectTable({
   );
 }
 
-/** A way to create the thing the picker is asking for, without losing this form's place. */
-function AddConnectionLink() {
-  return (
-    <Link
-      to="/environments?new=1"
-      className="text-xs font-medium text-brand-700 hover:underline"
-      data-testid="add-connection-link"
-    >
-      Add a connection
-    </Link>
-  );
-}
-
 /**
  * What the two connection pickers mean, per kind.
  *
@@ -251,6 +240,16 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
   const [sourceId, setSourceId] = useState('');
   const [targetId, setTargetId] = useState('');
   const [analysisProjectId, setAnalysisProjectId] = useState('');
+  /**
+   * Which picker asked for a new connection, or null.
+   *
+   * Adding one used to mean leaving for the connections page, which threw away whatever had been
+   * typed here. The dialog opens over this form instead, and what it creates is selected in the
+   * picker that asked for it.
+   */
+  const [addingFor, setAddingFor] = useState<'source' | 'target' | null>(null);
+  /** A file source that has just been created here and still holds nothing. */
+  const [importInto, setImportInto] = useState<EnvironmentDto | null>(null);
 
   const environments = useQuery({
     queryKey: ['environments'],
@@ -374,11 +373,8 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         {environments.data && connected.length === 0 && (
           <Callout tone="warning" title="No connections yet">
             A project works on a system it can reach, so add one first: a Dataverse environment, a SQL Server,
-            Azure SQL, PostgreSQL or MySQL database, or a CSV, Excel or XML file to upload.{' '}
-            <Link to="/environments?new=1" className="font-medium text-brand-700 underline">
-              Add a connection
-            </Link>
-            , then come back.
+            Azure SQL, PostgreSQL or MySQL database, or a CSV, Excel or XML file to upload. Use{' '}
+            <strong>Add a connection</strong> below — it opens here, and keeps what you have typed.
           </Callout>
         )}
 
@@ -386,7 +382,16 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
           label={SIDES[kind].source}
           htmlFor="project-source"
           hint={SIDES[kind].sourceHint}
-          action={<AddConnectionLink />}
+          action={
+            <button
+              type="button"
+              className="text-xs font-medium text-brand-700 hover:underline"
+              data-testid="add-connection-link"
+              onClick={() => setAddingFor('source')}
+            >
+              Add a connection
+            </button>
+          }
         >
           <Select
             id="project-source"
@@ -399,7 +404,21 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         </Field>
         {kind === 'COMPARISON' && (
           <>
-            <Field label={SIDES[kind].target!} htmlFor="project-target" hint={SIDES[kind].targetHint}>
+            <Field
+              label={SIDES[kind].target!}
+              htmlFor="project-target"
+              hint={SIDES[kind].targetHint}
+              action={
+                <button
+                  type="button"
+                  className="text-xs font-medium text-brand-700 hover:underline"
+                  data-testid="add-connection-link-target"
+                  onClick={() => setAddingFor('target')}
+                >
+                  Add a connection
+                </button>
+              }
+            >
               <Select
                 id="project-target"
                 label={SIDES[kind].target!}
@@ -420,7 +439,21 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         )}
         {kind === 'MIGRATION' && (
           <>
-            <Field label={SIDES[kind].target!} htmlFor="project-target" hint={SIDES[kind].targetHint}>
+            <Field
+              label={SIDES[kind].target!}
+              htmlFor="project-target"
+              hint={SIDES[kind].targetHint}
+              action={
+                <button
+                  type="button"
+                  className="text-xs font-medium text-brand-700 hover:underline"
+                  data-testid="add-connection-link-target"
+                  onClick={() => setAddingFor('target')}
+                >
+                  Add a connection
+                </button>
+              }
+            >
               <Select
                 id="project-target"
                 label={SIDES[kind].target!}
@@ -464,6 +497,46 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
         )}
         {create.error && <ErrorState error={create.error} />}
       </div>
+
+      {/*
+        Opened over this form rather than instead of it, so nothing typed here is lost. What the
+        dialog creates is selected in the picker that asked for it.
+      */}
+      {addingFor && (
+        <ConnectionModal
+          connection={null}
+          discovering={false}
+          onClose={() => setAddingFor(null)}
+          onDiscover={() => {}}
+          onSaved={(saved) => {
+            if (addingFor === 'source') setSourceId(saved.id);
+            else setTargetId(saved.id);
+            setAddingFor(null);
+            void qc.invalidateQueries({ queryKey: ['environments'] });
+            // A file source holds nothing until a file is in it, so ask for one now rather than
+            // letting the project be created against an empty source.
+            if (saved.connectionType === 'FILE') setImportInto(saved);
+          }}
+        />
+      )}
+
+      {importInto && (
+        <Modal
+          open
+          onClose={() => setImportInto(null)}
+          title={`Add a file to ${importInto.displayName}`}
+          footer={
+            <Button variant="primary" onClick={() => setImportInto(null)} data-testid="file-import-done">
+              Done
+            </Button>
+          }
+        >
+          <StagedFileImport
+            environment={importInto}
+            prompt="This source is empty until a file is in it. Choose one now, or close and add it later from Connections."
+          />
+        </Modal>
+      )}
     </Modal>
   );
 }

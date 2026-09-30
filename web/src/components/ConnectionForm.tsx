@@ -356,6 +356,7 @@ export function ConnectionModal({
             <Field id="staged-name" label="Name" hint="What this source is called in the platform.">
               <input
                 id="staged-name"
+                data-testid="staged-name"
                 value={form.displayName}
                 onChange={(e) => update({ displayName: e.target.value })}
                 placeholder="Customer extracts"

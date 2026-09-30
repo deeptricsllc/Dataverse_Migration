@@ -54,16 +54,54 @@ test('every control in the new project form says what it is for', async ({ page 
   expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
 });
 
-test('the form offers a way out to create a connection', async ({ page }) => {
+test('a brand new file source can be created and filled without leaving the form', async ({ page }) => {
+  // The journey this replaces: leave for the connections page, losing whatever had been typed;
+  // create the source; hunt for the import control; upload; navigate back; start the form again.
   await page.goto('/login');
   await page.getByRole('button', { name: 'Continue with demo account' }).click();
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
 
   await page.goto('/projects?new=1');
+  await page.getByTestId('project-kind').selectOption('ANALYSIS');
+  await page.getByTestId('project-name').fill('Customer extract review');
+
+  await page.getByTestId('add-connection-link').click();
+  await page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ }).check();
+  await page.getByTestId('staged-name').fill('Local extracts');
+  await page.getByTestId('create-staged-source').click();
+
+  // A file source holds nothing until a file is in it, so it asks for one here rather than
+  // letting a project be created against an empty source.
+  await expect(page.getByText(/This source is empty until a file is in it/)).toBeVisible();
+  await page.getByTestId('staged-file').setInputFiles({
+    name: 'customers.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(['id,name,city', '1,Acme,Leeds', '2,Globex,Derby'].join('\n')),
+  });
+  await expect(page.getByTestId('staged-import-result')).toContainText('2 row(s)');
+  await page.getByTestId('file-import-done').click();
+
+  // Back in the form, with what was typed still there and the new source chosen.
+  await expect(page.getByTestId('project-name')).toHaveValue('Customer extract review');
+  await expect(page.locator('#project-source')).toHaveValue(/.+/);
+  await page.getByTestId('create-project').click();
+  await expect(page.getByRole('heading', { name: 'Customer extract review' })).toBeVisible();
+});
+
+test('adding a connection happens here, without leaving the form', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Continue with demo account' }).click();
+  await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
+
+  await page.goto('/projects?new=1');
+  await page.getByTestId('project-name').fill('Keeps what I typed');
   await page.getByTestId('add-connection-link').click();
 
-  // Lands on the connections page with the form already open, rather than on the list with the
-  // button still to find.
-  await expect(page).toHaveURL(/\/environments\?new=1/);
+  // The connection picker opens over the form. It used to navigate to the connections page, which
+  // threw away everything typed so far.
   await expect(page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/projects/);
+  // The footer button, not the dialog's × which shares its accessible name.
+  await page.getByRole('dialog', { name: 'Add connection' }).getByText('Close', { exact: true }).click();
+  await expect(page.getByTestId('project-name')).toHaveValue('Keeps what I typed');
 });

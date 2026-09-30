@@ -6,11 +6,12 @@ import {
   type StagedTableDto,
 } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileSpreadsheet, Trash2, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Trash2, Upload } from 'lucide-react';
+import { useState } from 'react';
+import { StagedFileImport } from './StagedFileImport';
 import { api, get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
-import { Button, Callout, Card, cx, Disclosure, ErrorState, Pill, Spinner, Table, Td, Th } from './ui';
+import { Button, Card, Disclosure, ErrorState, Pill, Spinner, Table, Td, Th } from './ui';
 
 /**
  * The imported tables belonging to a file source, and how to add more.
@@ -39,8 +40,6 @@ export function StagedSourceCard({
   onSetSource?: () => void;
 }) {
   const qc = useQueryClient();
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [lastImport, setLastImport] = useState<StagedImportResultDto | null>(null);
   const [reference, setReference] = useState('');
   const kind = environment.connectionType;
   const fromGraph = kind === 'ONEDRIVE' || kind === 'SHAREPOINT';
@@ -55,24 +54,8 @@ export function StagedSourceCard({
     void qc.invalidateQueries({ queryKey: ['environments'] });
   };
 
-  const importFile = useMutation({
-    mutationFn: async (file: File) => {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      }
-      return post<StagedImportResultDto>(`/api/staged-sources/${environment.id}/import`, {
-        filename: file.name,
-        contentBase64: btoa(binary),
-      });
-    },
-    onSuccess: (result) => {
-      setLastImport(result);
-      invalidate();
-      if (fileInput.current) fileInput.current.value = '';
-    },
-  });
+  /** The Graph import reports its own result; a file upload reports through StagedFileImport. */
+  const [referenceResult, setReferenceResult] = useState<StagedImportResultDto | null>(null);
 
   /** OneDrive and SharePoint are fetched with the signed-in user's own account, not a stored secret. */
   const importReference = useMutation({
@@ -84,7 +67,7 @@ export function StagedSourceCard({
         { reference: reference.trim() },
       ),
     onSuccess: (result) => {
-      setLastImport(result);
+      setReferenceResult(result);
       invalidate();
       setReference('');
     },
@@ -156,91 +139,23 @@ export function StagedSourceCard({
               : 'The file is read with your own account, so you can only import what you can already open. Nothing is stored except the rows and where they came from.'}
           </p>
           {importReference.error && <ErrorState error={importReference.error} />}
-        </div>
-      )}
-
-      {/*
-        Just created from the Add connection dialog: the source exists and holds nothing, so the
-        next step is named here rather than left to be worked out.
-      */}
-      <div
-        className={cx(
-          'rounded-lg border border-dashed p-4',
-          justCreated ? 'border-brand-400 bg-brand-50' : 'border-slate-300',
-        )}
-      >
-        {justCreated && (
-          <p className="mb-3 text-sm font-medium text-brand-900">
-            Connection created. Choose the file to import — it stays on this connection and you can add more
-            later.
-          </p>
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          <FileSpreadsheet className="h-5 w-5 text-slate-400" />
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,.tsv,.txt,.xlsx,.xml"
-            data-testid="staged-file"
-            className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) importFile.mutate(file);
-            }}
-          />
-          {importFile.isPending && <Spinner label="Reading the file…" />}
-        </div>
-        <p className="mt-2 text-xs text-slate-500">
-          A CSV (comma, semicolon or tab separated), an .xlsx workbook, or an XML export. Each sheet becomes a
-          table; in XML the element that repeats becomes the rows, with attributes and nested values as
-          columns. Column types are inferred from the values and shown below with the reasoning.
-        </p>
-      </div>
-
-      {importFile.error && <ErrorState error={importFile.error} />}
-
-      {lastImport && (
-        <div className="mt-3 space-y-2" data-testid="staged-import-result">
-          <p className="text-sm text-emerald-700">
-            Imported {lastImport.tables.length} table(s), {fmtNumber(lastImport.totalRows)} row(s).
-          </p>
-          {lastImport.replaced.length > 0 && (
-            <Callout
-              // Re-importing the same file is ordinary. Rows arriving from a file with a different
-              // name means two files resolved to one table, and the earlier one's rows are gone.
-              tone={
-                lastImport.replaced.some((r) => r.previousSourceRef !== lastImport.tables[0]?.sourceRef)
-                  ? 'warning'
-                  : 'info'
-              }
-              title={`${lastImport.replaced.length} table(s) replaced`}
-            >
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {lastImport.replaced.map((r) => (
-                  <li key={r.logicalName}>
-                    <span className="font-medium">{r.displayName}</span> held {fmtNumber(r.previousRows)}{' '}
-                    row(s) from <span className="font-medium">{r.previousSourceRef}</span>
-                    {r.previousSourceRef === lastImport.tables[0]?.sourceRef
-                      ? '. A file is a snapshot, so those rows were replaced rather than added to.'
-                      : ', a different file. Both files resolve to the same table name, so those rows have been replaced.'}
-                  </li>
-                ))}
-              </ul>
-            </Callout>
-          )}
-          {lastImport.skipped.length > 0 && (
-            <Callout tone="info" title={`${lastImport.skipped.length} sheet(s) skipped`}>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {lastImport.skipped.map((s) => (
-                  <li key={s.name}>
-                    <span className="font-medium">{s.name}</span> — {s.reason}
-                  </li>
-                ))}
-              </ul>
-            </Callout>
+          {referenceResult && (
+            <p className="mt-2 text-sm text-emerald-700" data-testid="staged-import-result">
+              Imported {referenceResult.tables.length} table(s), {fmtNumber(referenceResult.totalRows)}{' '}
+              row(s).
+            </p>
           )}
         </div>
       )}
+
+      <StagedFileImport
+        environment={environment}
+        prompt={
+          justCreated
+            ? 'Connection created. Choose the file to import — it stays on this connection and you can add more later.'
+            : undefined
+        }
+      />
 
       {tables.isLoading && <Spinner label="Loading imported tables…" />}
       {tables.error && <ErrorState error={tables.error} />}
