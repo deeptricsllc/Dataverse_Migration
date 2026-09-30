@@ -6,6 +6,10 @@ import { expect, test } from '@playwright/test';
  * migration target.
  */
 test('file source: upload a CSV and analyse it', async ({ page }) => {
+  // Run against a deployed environment (E2E_BASE_URL) and yesterday's sources are still there, so
+  // everything this journey creates is named for this run and every assertion is scoped to it.
+  const tag = Date.now().toString(36).slice(-5);
+  const sourceName = `Customer extracts ${tag}`;
   const consoleErrors: string[] = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
@@ -23,24 +27,24 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
   await page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ }).check();
   await expect(page.getByText(/there is no host, port or password/)).toBeVisible();
   await expect(page.getByLabel('Server / host')).toHaveCount(0);
-  await page.getByLabel('Name').fill('Customer extracts');
+  await page.getByLabel('Name').fill(sourceName);
   await page.getByTestId('create-staged-source').click();
 
   // 1b. Creating the connection lands on the thing you now have to do. It used to close the
   // dialog and leave you at the top of the connections page, with the file picker in a section
   // below every other connection and nothing on screen suggesting it existed.
-  await expect(page.getByText(/Connection created\. Choose the file to import/)).toBeVisible();
-  await expect(page.getByTestId('staged-file')).toBeVisible();
+  const card = page.getByTestId(/^staged-source-/).filter({ hasText: sourceName });
+  await expect(card.getByText(/Connection created\. Choose the file to import/)).toBeVisible();
+  await expect(card.getByTestId('staged-file')).toBeVisible();
   // And a file source is not also listed as an ordinary connection card with every row empty.
-  await expect(page.getByTestId(`env-card-${'Customer extracts'}`)).toHaveCount(0);
+  await expect(page.getByTestId(`env-card-${sourceName}`)).toHaveCount(0);
 
-  // 2. The card appears, saying it has nothing yet.
-  const card = page.getByTestId(/^staged-source-/);
+  // 2. The card says it has nothing yet.
   await expect(card).toBeVisible();
   await expect(card).toContainText('Nothing imported yet');
 
   // 3. Upload a CSV. `pending` in a numeric column is what keeps that column text.
-  await page.getByTestId('staged-file').setInputFiles({
+  await card.getByTestId('staged-file').setInputFiles({
     name: 'customers.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
@@ -53,7 +57,7 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
     ),
   });
 
-  await expect(page.getByTestId('staged-import-result')).toContainText('3 row(s)');
+  await expect(card.getByTestId('staged-import-result')).toContainText('3 row(s)');
   await expect(card).toContainText('customers');
   // A key-shaped, unique, always-present column identifies the row.
   await expect(card).toContainText('key: customer_id');
@@ -65,7 +69,7 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
   await expect(card).toContainText('no values to infer from');
 
   // 4b. An XML export lands as a table too, imported into the same source.
-  await page.getByTestId('staged-file').setInputFiles({
+  await card.getByTestId('staged-file').setInputFiles({
     name: 'orders.xml',
     mimeType: 'application/xml',
     buffer: Buffer.from(
@@ -79,25 +83,24 @@ test('file source: upload a CSV and analyse it', async ({ page }) => {
       ].join('\n'),
     ),
   });
-  await expect(page.getByTestId('staged-import-result')).toContainText('3 row(s)');
+  await expect(card.getByTestId('staged-import-result')).toContainText('3 row(s)');
   // Real columns from the attribute and the elements, rather than one column of markup.
   await expect(card).toContainText('orders');
   await expect(card).toContainText('key: ref');
 
   // 5. It can be a source, and is never offered as a target. The action lives on the file source's
-  // own card, which is the only card it has now.
-  const fileCard = page.getByTestId(/^staged-source-/);
-  await expect(fileCard.getByRole('button', { name: 'Set as source' })).toBeVisible();
-  await expect(fileCard.getByRole('button', { name: /Set as target|^Target$/ })).toHaveCount(0);
+  // own card.
+  await expect(card.getByRole('button', { name: 'Set as source' })).toBeVisible();
+  await expect(card.getByRole('button', { name: /Set as target|^Target$/ })).toHaveCount(0);
   // Capabilities say so too, rather than the button merely being absent.
-  await expect(fileCard).toContainText('CSV / Excel / XML file');
+  await expect(card).toContainText('CSV / Excel / XML file');
 
   // 6. Analyse it as an ordinary source.
   await page.goto('/projects');
   await page.getByTestId('new-project').click();
   await page.getByTestId('project-kind').selectOption('ANALYSIS');
-  await page.getByTestId('project-name').fill('What is in the extract');
-  await page.getByLabel('Source').selectOption({ label: 'Customer extracts' });
+  await page.getByTestId('project-name').fill(`What is in the extract ${tag}`);
+  await page.getByLabel('Source').selectOption({ label: sourceName });
   await page.getByTestId('create-project').click();
   await page.getByTestId('new-analysis').click();
   await page.getByTestId('start-analysis').click();
