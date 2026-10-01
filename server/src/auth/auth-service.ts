@@ -282,9 +282,29 @@ export class AuthService {
       );
     }
     const tenantId = result.tenantId.toLowerCase();
-    if (this.config.allowedTenantIds.length && !this.config.allowedTenantIds.includes(tenantId)) {
-      this.logger.warn({ requestId, tenantId }, 'Sign-in from a tenant that is not allowed');
-      throw new AppError(403, 'TENANT_NOT_ALLOWED', 'Your organization is not enabled for this application.');
+    /**
+     * Admission, failing closed.
+     *
+     * The previous rule was "refuse if an allow-list exists and excludes you", which quietly means
+     * "admit everybody" when the list is empty — so a deployment could become an open beta because
+     * nobody set a variable. Under GATED an unlisted tenant is refused whether or not anybody
+     * remembered to write a list.
+     *
+     * The message says nothing about how the deployment is configured. The operator gets the
+     * tenant id in the log, which is what they need to add it; the visitor gets a sentence and a
+     * way forward.
+     */
+    const listed = this.config.allowedTenantIds.includes(tenantId);
+    if (this.config.ACCESS_MODE === 'GATED' && !listed) {
+      this.logger.warn(
+        { requestId, tenantId, allowListed: this.config.allowedTenantIds.length },
+        'Refused a sign-in from a tenant that is not on the allow list',
+      );
+      throw new AppError(
+        403,
+        'TENANT_NOT_ALLOWED',
+        'Your organization is not enabled for this environment yet. Request access and we will set it up.',
+      );
     }
 
     const domain = result.email?.split('@')[1];

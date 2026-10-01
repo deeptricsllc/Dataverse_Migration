@@ -58,6 +58,17 @@ const schema = z.object({
   ENTRA_AUTHORITY_HOST: z.string().url().default('https://login.microsoftonline.com'),
   ENTRA_REDIRECT_URI: z.string().url().optional(),
   ALLOWED_TENANT_IDS: z.string().optional(),
+  /**
+   * Who may sign in with a Microsoft account.
+   *
+   * GATED      only tenants named in ALLOWED_TENANT_IDS. A tenant nobody listed is refused.
+   * OPEN_BETA  any Microsoft work or school account; a workspace is created on first sign-in.
+   *
+   * GATED by default, and deliberately so. Leaving ALLOWED_TENANT_IDS empty used to mean "allow
+   * everyone", so a deployment became an open beta by omission — the one way that decision should
+   * never be made. Opening up is now a thing somebody writes down.
+   */
+  ACCESS_MODE: z.enum(['GATED', 'OPEN_BETA']).default('GATED'),
   ADMIN_EMAILS: z.string().optional(),
   /**
    * Shown on the public landing page as the way to reach a human. Unset by default: a page that

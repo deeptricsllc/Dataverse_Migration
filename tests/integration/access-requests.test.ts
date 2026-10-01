@@ -173,13 +173,27 @@ describe('reading requests as an operator of this deployment', () => {
 
 describe('what the landing page is told', () => {
   it('offers sign-up only when an unknown tenant would actually get in', async () => {
-    const open = await createTestApp({ ENTRA_CLIENT_ID: 'id', ENTRA_CLIENT_SECRET: 'secret' });
+    // Configuring Microsoft sign-in and nothing else no longer admits the world. It used to: the
+    // rule was "refuse if an allow-list excludes you", which with no list means "admit everybody",
+    // so a deployment became an open beta because nobody set a variable. Advertising sign-up here
+    // would now send visitors into a dead end, so it does not.
+    const gated = await createTestApp({ ENTRA_CLIENT_ID: 'id', ENTRA_CLIENT_SECRET: 'secret' });
+    const gatedConfig = (await gated.app.inject({ url: '/api/auth/config' })).json<AuthConfigDto>();
+    expect(gatedConfig).toMatchObject({ microsoftEnabled: true, signUpEnabled: false });
+    await gated.close();
+
+    // Opening up is a deliberate setting, and then sign-up is worth advertising.
+    const open = await createTestApp({
+      ENTRA_CLIENT_ID: 'id',
+      ENTRA_CLIENT_SECRET: 'secret',
+      ACCESS_MODE: 'OPEN_BETA',
+    });
     const openConfig = (await open.app.inject({ url: '/api/auth/config' })).json<AuthConfigDto>();
     expect(openConfig).toMatchObject({ microsoftEnabled: true, signUpEnabled: true });
     await open.close();
 
-    // With an allow-list, a tenant we have not seen is turned away at the callback — so advertising
-    // "sign up with Microsoft" would send those visitors into a dead end.
+    // An allow-list is the gated case with names on it: known tenants in, strangers out, and no
+    // invitation on the landing page either way.
     const closed = await createTestApp({
       ENTRA_CLIENT_ID: 'id',
       ENTRA_CLIENT_SECRET: 'secret',

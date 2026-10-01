@@ -64,7 +64,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
     // A tenant allow-list means an unknown tenant is turned away at the callback, so offering
     // "sign up with Microsoft" on the landing page would send people into a dead end.
-    signUpEnabled: config.microsoftEnabled && config.allowedTenantIds.length === 0,
+    // Whether a tenant nobody has heard of can sign in. A deliberate setting now, not the
+    // side effect of an empty variable.
+    signUpEnabled: config.microsoftEnabled && config.ACCESS_MODE === 'OPEN_BETA',
     contactEmail: config.CONTACT_EMAIL ?? null,
   }));
 
@@ -692,6 +694,30 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       .header('Content-Disposition', `attachment; filename="${name}"`)
       .send(toCsv(headers, body));
   };
+
+  /**
+   * The retainable record of a run.
+   *
+   * A zip rather than a page: the point is something that outlives the deployment, can be attached
+   * to a change record and read by somebody who was not there.
+   */
+  app.get('/api/runs/:id/evidence.zip', EXPENSIVE, async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const bundle = await s.evidence.bundleForRun(req.ctx, id);
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'EVIDENCE_EXPORTED',
+      outcome: 'SUCCESS',
+      runId: id,
+      requestId: req.id,
+      details: { files: bundle.manifest.files.length },
+    });
+    return reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="${bundle.filename}"`)
+      .send(bundle.zip);
+  });
 
   app.get('/api/runs/:id/errors.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);

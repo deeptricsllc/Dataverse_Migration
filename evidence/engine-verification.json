@@ -6,7 +6,7 @@
       "connectionType": "POSTGRES",
       "serverVersion": "PostgreSQL 16.13 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
       "driver": "pg",
-      "ranAt": "2026-10-01T18:18:54.234Z",
+      "ranAt": "2026-10-01T18:36:23.244Z",
       "suite": "tests/engines/postgres.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -19,14 +19,16 @@
         "write": "PASSED",
         "upsert": "PASSED"
       },
-      "notes": ["An unknown table raises rather than reading as empty."]
+      "notes": [
+        "An unknown table raises rather than reading as empty."
+      ]
     },
     "mysql": {
       "engine": "mysql",
       "connectionType": "MYSQL",
       "serverVersion": "MySQL 8.4.11",
       "driver": "mysql2",
-      "ranAt": "2026-10-01T18:19:01.941Z",
+      "ranAt": "2026-10-01T18:36:19.609Z",
       "suite": "tests/engines/mysql.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -39,14 +41,16 @@
         "write": "PASSED",
         "upsert": "PASSED"
       },
-      "notes": ["An unknown table raises rather than reading as empty."]
+      "notes": [
+        "An unknown table raises rather than reading as empty."
+      ]
     },
     "sqlserver": {
       "engine": "sqlserver",
       "connectionType": "SQL_SERVER",
       "serverVersion": "Microsoft SQL Server 2022 (RTM-CU27) (KB5104824) - 16.0.4295.3 (X64) ",
       "driver": "mssql (tedious)",
-      "ranAt": "2026-10-01T18:18:58.146Z",
+      "ranAt": "2026-10-01T18:36:15.731Z",
       "suite": "tests/engines/sqlserver.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -59,7 +63,9 @@
         "write": "PASSED",
         "upsert": "PASSED"
       },
-      "notes": ["An unknown table raises rather than reading as empty."]
+      "notes": [
+        "An unknown table raises rather than reading as empty."
+      ]
     }
   }
 }

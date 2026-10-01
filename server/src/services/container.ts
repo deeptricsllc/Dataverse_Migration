@@ -10,6 +10,7 @@ import { AlertService } from './alert-service';
 import { AnalysisService } from './analysis-service';
 import { DataComparisonService } from './data-comparison-service';
 import { DemoScenarioService } from './demo-scenario-service';
+import { EvidenceService } from './evidence-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
 import { EnvironmentService } from './environment-service';
@@ -167,6 +168,8 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     projectsSvc,
     analysis,
   );
+  // What a migration lead keeps after the environments have moved on.
+  const evidence = new EvidenceService(runs, validation, planning, logger.child({ component: 'evidence' }));
   // Built on demand in DEMO MODE, by running two real migrations through the engine above.
   const demoScenarios = new DemoScenarioService(
     db,
@@ -236,6 +239,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     remediation,
     connectionAdmin,
     insights,
+    evidence,
     demoScenarios,
     createWorker,
   };
