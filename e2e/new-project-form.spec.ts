@@ -57,17 +57,22 @@ test('every control in the new project form says what it is for', async ({ page 
 test('a brand new file source can be created and filled without leaving the form', async ({ page }) => {
   // The journey this replaces: leave for the connections page, losing whatever had been typed;
   // create the source; hunt for the import control; upload; navigate back; start the form again.
+  //
+  // Named for this run: against a deployed environment yesterday's source is still there, and
+  // creating it again is correctly refused as a duplicate.
+  const tag = Date.now().toString(36).slice(-5);
+  const sourceName = `Local extracts ${tag}`;
   await page.goto('/login');
   await page.getByRole('button', { name: 'Continue with demo account' }).click();
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
 
   await page.goto('/projects?new=1');
   await page.getByTestId('project-kind').selectOption('ANALYSIS');
-  await page.getByTestId('project-name').fill('Customer extract review');
+  await page.getByTestId('project-name').fill(`Customer extract review ${tag}`);
 
   await page.getByTestId('add-connection-link').click();
   await page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ }).check();
-  await page.getByTestId('staged-name').fill('Local extracts');
+  await page.getByTestId('staged-name').fill(sourceName);
   await page.getByTestId('create-staged-source').click();
 
   // A file source holds nothing until a file is in it, so it asks for one here rather than
@@ -82,10 +87,10 @@ test('a brand new file source can be created and filled without leaving the form
   await page.getByTestId('file-import-done').click();
 
   // Back in the form, with what was typed still there and the new source chosen.
-  await expect(page.getByTestId('project-name')).toHaveValue('Customer extract review');
+  await expect(page.getByTestId('project-name')).toHaveValue(`Customer extract review ${tag}`);
   await expect(page.locator('#project-source')).toHaveValue(/.+/);
   await page.getByTestId('create-project').click();
-  await expect(page.getByRole('heading', { name: 'Customer extract review' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Customer extract review ${tag}` })).toBeVisible();
 });
 
 test('adding a connection happens here, without leaving the form', async ({ page }) => {
