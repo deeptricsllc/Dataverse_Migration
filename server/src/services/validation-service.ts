@@ -443,6 +443,7 @@ export class ValidationService {
         ),
         matchedRecords: results.reduce((n, r) => n + r.matched, 0),
         missingRecords: results.reduce((n, r) => n + r.missing, 0),
+        failedInRunRecords: results.reduce((n, r) => n + r.failedInRun, 0),
         differentRecords: results.reduce((n, r) => n + r.different, 0),
         brokenReferences: results.reduce((n, r) => n + r.brokenReferences, 0),
         pass: results.filter((r) => r.outcome === 'PASS').length,
@@ -519,6 +520,7 @@ export class ValidationService {
       targetCount: null,
       accounting: { ...EMPTY_ACCOUNTING },
       checkedRecords: 0,
+      failedInRun: 0,
       coverage: null,
       duplicates: null,
       duplicateCoverage: null,
@@ -748,7 +750,20 @@ export class ValidationService {
     }
     base.checkedRecords = pairs.length;
     base.matched = cmp.matched;
-    base.missing = cmp.missing + failedMaps.length;
+    /**
+     * Two different facts, kept apart.
+     *
+     * `missing` is validation's own finding: a record the run said it had dealt with, which is not
+     * in the target. `failedInRun` is the run's finding, confirmed here: a record the run already
+     * reported as failed, which is absent for a reason nobody needs validation to discover.
+     *
+     * They used to be added together, and the sum broke the arithmetic a reader does naturally.
+     * A report could say 66 matched, 3 missing and 1 differing over 67 examined records — three
+     * numbers each correct, adding to seventy, over sixty-seven. Found by reconciling a deployed
+     * report by hand rather than by a test, which is also how the last one was found.
+     */
+    base.missing = cmp.missing;
+    base.failedInRun = failedMaps.length;
     base.different = cmp.different;
     // Coverage is derived from the counts rather than written beside them, so a message cannot
     // claim more than the numbers underneath it support.
@@ -1008,6 +1023,7 @@ export class ValidationService {
       duplicates: result.duplicates,
       duplicateCoverage: result.duplicateCoverage,
       checkedRecords: result.checkedRecords,
+      failedInRun: result.failedInRun,
       matched: result.matched,
       missing: result.missing,
       different: result.different,
@@ -1074,6 +1090,7 @@ export class ValidationService {
         duplicates: e.duplicates ?? null,
         duplicateCoverage: e.duplicateCoverage ?? null,
         checkedRecords: e.checkedRecords,
+        failedInRun: e.failedInRun,
         matched: e.matched,
         missing: e.missing,
         different: e.different,

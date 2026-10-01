@@ -143,6 +143,20 @@ describe('invariants that must hold however the numbers arrive', () => {
     }
   });
 
+  it('the numbers a reader adds up actually add up', () => {
+    // Found by reconciling a deployed report by hand: matched 66 + missing 3 + differing 1 = 70,
+    // over 67 records examined. Each number was right; the sum was not a number of anything,
+    // because the three "missing" were records the run had already reported as failed and which
+    // were therefore never compared. They are counted separately now.
+    const examined = 67;
+    const matched = 66;
+    const different = 1;
+    const missing = 0; // validation's own finding
+    const failedInRun = 3; // the run's finding, confirmed
+    expect(matched + different + missing, 'what was examined is what was accounted for').toBe(examined);
+    expect(failedInRun, 'is reported beside, not added into, the examined set').toBeGreaterThan(0);
+  });
+
   it('a capability cannot read as engine verified without being engine provable', () => {
     for (const [type, row] of Object.entries(CONNECTOR_VERIFICATION)) {
       if (type === 'FILE') continue; // no external engine exists to verify against

@@ -91,7 +91,31 @@ function Verdict({
     lines.push(
       <>
         <strong className="text-red-700">{fmtNumber(s.missingRecords)}</strong> were expected in the target
-        and are not there — they did not migrate
+        and are not there, although the run did not report a failure for them. That is this report&apos;s own
+        finding
+        {migrationRunId ? (
+          <>
+            {' '}
+            (
+            <Link to={`/runs/${migrationRunId}`} className="font-medium text-brand-700 hover:underline">
+              see the run
+            </Link>
+            )
+          </>
+        ) : null}
+        .
+      </>,
+    );
+  }
+  if (s.failedInRunRecords > 0) {
+    // The run already said these failed. Confirming it is useful; counting it as a validation
+    // miss is not, and adding the two made matched + missing + differing exceed the number of
+    // records examined.
+    lines.push(
+      <>
+        <strong className="text-red-700">{fmtNumber(s.failedInRunRecords)}</strong> were reported as failed by
+        the run itself and are confirmed absent. They were never compared, because there is nothing in the
+        target to compare them against
         {migrationRunId ? (
           <>
             {' '}
@@ -380,7 +404,7 @@ export function ValidationReportPage() {
         <div className="space-y-5">
           <Verdict summary={s} outcome={v.outcome} migrationRunId={v.migrationRunId} />
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-9">
             <Stat
               label="Tables"
               value={s.tablesValidated}
@@ -413,11 +437,17 @@ export function ValidationReportPage() {
               label="Missing"
               tone={s.missingRecords ? 'red' : 'default'}
               value={fmtNumber(s.missingRecords)}
-              hint="Expected in the target, not found"
+              hint="Expected in the target, not found, and the run did not say so"
               onClick={() => {
                 setType('MISSING_IN_TARGET');
                 setPage(0);
               }}
+            />
+            <Stat
+              label="Failed in the run"
+              tone={s.failedInRunRecords ? 'red' : 'default'}
+              value={fmtNumber(s.failedInRunRecords)}
+              hint="The run reported these; confirmed absent, never compared"
             />
             <Stat
               label="Different"
@@ -461,6 +491,7 @@ export function ValidationReportPage() {
                   <Th className="text-right">Checked</Th>
                   <Th className="text-right">Matched</Th>
                   <Th className="text-right">Missing</Th>
+                  <Th className="text-right">Failed in run</Th>
                   <Th className="text-right">Different</Th>
                   <Th className="text-right">Broken refs</Th>
                   <Th className="text-right">Duplicates</Th>
@@ -497,6 +528,9 @@ export function ValidationReportPage() {
                         <Td className={`text-right tabular-nums ${e.missing ? 'text-red-700' : ''}`}>
                           {fmtNumber(e.missing)}
                         </Td>
+                        <Td className={`text-right tabular-nums ${e.failedInRun ? 'text-red-700' : ''}`}>
+                          {fmtNumber(e.failedInRun)}
+                        </Td>
                         <Td className={`text-right tabular-nums ${e.different ? 'text-amber-700' : ''}`}>
                           {fmtNumber(e.different)}
                         </Td>
@@ -525,7 +559,7 @@ export function ValidationReportPage() {
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={11} className="bg-slate-50/70 px-6 py-3">
+                          <td colSpan={12} className="bg-slate-50/70 px-6 py-3">
                             <ul className="space-y-1.5">
                               {e.checks.map((c) => (
                                 <li key={c.check} className="flex items-start gap-3 text-sm">

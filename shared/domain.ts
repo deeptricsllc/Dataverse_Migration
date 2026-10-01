@@ -1399,6 +1399,14 @@ export interface ValidationEntityResultDto {
   /** Records actually compared against the source. A sample when the table is large. */
   checkedRecords: number;
   /**
+   * Records the run itself reported as failed, confirmed absent here.
+   *
+   * Separate from `missing`, which is validation's own finding. Adding them together made
+   * matched + missing + different exceed the number of records examined, because a failed record
+   * was never examined — it is not in the target to compare against.
+   */
+  failedInRun: number;
+  /**
    * How much of this table was examined, and how those records were chosen. Null for a report
    * produced before coverage was recorded, which the report says rather than implying FULL.
    */
@@ -1428,6 +1436,8 @@ export interface ValidationSummary {
   duplicateRecords: number;
   matchedRecords: number;
   missingRecords: number;
+  /** Records the run reported as failed. Not a validation finding; the run already knew. */
+  failedInRunRecords: number;
   differentRecords: number;
   brokenReferences: number;
   pass: number;
