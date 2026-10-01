@@ -1,0 +1,59 @@
+{
+  "measuredAt": "2026-10-01T21:21:43.077Z",
+  "store": "PGlite, the platform database embedded in the process",
+  "host": "win32 x64, 8 cpus, 32304.6 MB",
+  "node": "v24.14.1",
+  "pageSize": 500,
+  "proves": "How the platform’s own bookkeeping behaves as a table grows, at these sizes, on this host.",
+  "doesNotProve": "Anything about a customer’s source or target. Read and write throughput against Dataverse, SQL Server or any other real system is that system’s, and it is usually the slower half.",
+  "measurements": [
+    {
+      "records": 10000,
+      "writeSeconds": 0.851,
+      "writeRatePerSecond": 11744,
+      "countMilliseconds": 9,
+      "pagedReadSeconds": 0.069,
+      "pagedReadRatePerSecond": 145965,
+      "pagedReadPages": 20,
+      "pagedReadPeakHeapMb": 24.9,
+      "wholeMapSeconds": 0.166,
+      "wholeMapHeapMb": 16
+    },
+    {
+      "records": 50000,
+      "writeSeconds": 3.895,
+      "writeRatePerSecond": 12838,
+      "countMilliseconds": 17,
+      "pagedReadSeconds": 0.263,
+      "pagedReadRatePerSecond": 190097,
+      "pagedReadPages": 100,
+      "pagedReadPeakHeapMb": 64.3,
+      "wholeMapSeconds": 0.761,
+      "wholeMapHeapMb": 80.8
+    },
+    {
+      "records": 200000,
+      "writeSeconds": 16.448,
+      "writeRatePerSecond": 12160,
+      "countMilliseconds": 62,
+      "pagedReadSeconds": 0.984,
+      "pagedReadRatePerSecond": 203179,
+      "pagedReadPages": 400,
+      "pagedReadPeakHeapMb": 65.2,
+      "wholeMapSeconds": 2.994,
+      "wholeMapHeapMb": 296.9
+    },
+    {
+      "records": 500000,
+      "writeSeconds": 39.274,
+      "writeRatePerSecond": 12731,
+      "countMilliseconds": 276,
+      "pagedReadSeconds": 2.741,
+      "pagedReadRatePerSecond": 182408,
+      "pagedReadPages": 1000,
+      "pagedReadPeakHeapMb": 67.7,
+      "wholeMapSeconds": null,
+      "wholeMapHeapMb": null
+    }
+  ]
+}
