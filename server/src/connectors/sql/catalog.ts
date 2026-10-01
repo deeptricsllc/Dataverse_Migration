@@ -30,13 +30,21 @@ import {
 // --- queries ---------------------------------------------------------------------------------
 
 /** Tables and views with an approximate row count. Uses sys.tables, sys.views, sys.schemas, sys.dm_db_partition_stats. */
+/**
+ * Every table and view, with an estimated row count from partition statistics.
+ *
+ * `rowCount` is bracketed because ROWCOUNT is a reserved word in SQL Server: unbracketed, the whole
+ * query is a syntax error and `listTables` fails at the first step. It went unnoticed for as long
+ * as it did because the end-to-end journeys run against a simulator that never executes this SQL —
+ * which is the argument for the real-engine conformance suite in one sentence.
+ */
 export const TABLES_QUERY = `
 SELECT s.name AS schemaName,
        t.name AS tableName,
        'table' AS objectType,
        ISNULL((SELECT SUM(ps.row_count)
                FROM sys.dm_db_partition_stats ps
-               WHERE ps.object_id = t.object_id AND ps.index_id IN (0, 1)), 0) AS rowCount
+               WHERE ps.object_id = t.object_id AND ps.index_id IN (0, 1)), 0) AS [rowCount]
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE t.is_ms_shipped = 0
@@ -44,7 +52,7 @@ UNION ALL
 SELECT s.name AS schemaName,
        v.name AS tableName,
        'view' AS objectType,
-       NULL AS rowCount
+       NULL AS [rowCount]
 FROM sys.views v
 JOIN sys.schemas s ON s.schema_id = v.schema_id
 WHERE v.is_ms_shipped = 0
@@ -359,13 +367,33 @@ export function buildTableMetadata(
   };
 }
 
+/**
+ * A catalog number, whatever the driver chose to call it.
+ *
+ * `information_schema` columns are wide integer types, and drivers disagree about whether that
+ * means a JavaScript number or a string. mysql2 returns `CHARACTER_MAXIMUM_LENGTH` as the string
+ * "200"; the type says `number | null` and TypeScript cannot see the difference at runtime.
+ *
+ * It mattered quietly rather than loudly, which is worse: a string length compares unequal to every
+ * number, so truncation detection — which asks whether a value's length is exactly the column's
+ * maximum — could never fire on MySQL. Nothing failed. The check simply never found anything.
+ */
+function num(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function buildAttribute(
   row: SqlColumnRow,
   types: SqlTypeVocabulary,
   ctx: { isPk: boolean; isPrimaryId: boolean; lookupTarget: string | null },
 ): AttributeMeta {
   const dataType = row.dataType;
-  const charLength = types.charLength(dataType, row.maxLength);
+  const maxLength = num(row.maxLength);
+  const precision = num(row.precision);
+  const scale = num(row.scale);
+  const charLength = types.charLength(dataType, maxLength);
   const isIdentity = yes(row.isIdentity);
   const isComputed = yes(row.isComputed);
   const isRowVersion = yes(row.isRowVersion);
@@ -379,7 +407,7 @@ function buildAttribute(
   // would rewrite the row's identity and break every foreign key pointing at it.
   const isValidForUpdate = !serverGenerated && !ctx.isPk;
 
-  const scalarType = types.toAttributeType(dataType, row.precision, row.scale, charLength);
+  const scalarType = types.toAttributeType(dataType, precision, scale, charLength);
   const type = ctx.lookupTarget ? 'Lookup' : scalarType;
   const range = types.integerRange(dataType);
   const isText = scalarType === 'String' || scalarType === 'Memo';
@@ -408,7 +436,7 @@ function buildAttribute(
     // The shared model's `precision` means "decimal places", which is SQL's `scale`. It is only
     // meaningful for the fractional numeric types: a `datetime2(7)` also reports a scale, and
     // copying it here would make the column look like it had 7 decimal places.
-    precision: FRACTIONAL_TYPES.has(scalarType) ? (row.scale ?? null) : null,
+    precision: FRACTIONAL_TYPES.has(scalarType) ? scale : null,
     minValue: range?.min ?? null,
     maxValue: range?.max ?? null,
     format: null,
@@ -417,8 +445,8 @@ function buildAttribute(
     sql: {
       dataType,
       maxLength: charLength,
-      precision: row.precision ?? null,
-      scale: row.scale ?? null,
+      precision,
+      scale,
       isNullable,
       isIdentity,
       isComputed,

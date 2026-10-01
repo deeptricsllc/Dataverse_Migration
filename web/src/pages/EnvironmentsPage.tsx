@@ -1,4 +1,4 @@
-import { CONNECTOR_VERIFICATION, VERIFICATION_LABELS } from '@shared/connector-verification';
+import { levelRank, summaryLevel, VERIFICATION_LABELS } from '@shared/connector-verification';
 import type {
   ConnectionTestResultDto,
   ConnectionType,
@@ -83,21 +83,27 @@ const CAPABILITIES: [keyof ConnectorCapabilities, string, string][] = [
 /**
  * What we have actually seen this connector do, beside what it is allowed to do.
  *
- * The pills above answer "may the planner use this?". This answers "have we run it?", which is the
- * question somebody about to migrate their data is really asking. The two are different and the
- * card now says both, because a capability flag set to true is a statement about code and a
- * verification level is a statement about evidence.
+ * The pills above answer "may the planner use this?". This answers "have we run it, and against
+ * what?" — which is the question somebody about to move their data is really asking. A capability
+ * flag set to true is a statement about code; a verification level is a statement about evidence,
+ * and the card says both because they are not the same thing.
+ *
+ * The headline is the connector's *weakest* meaningful capability, never its best. A connector with
+ * nine verified capabilities and one simulated one has a simulated capability in it, and somebody
+ * glancing at a single badge must not be told otherwise.
  */
 function VerificationNote({ type }: { type: ConnectionType }) {
-  const row = CONNECTOR_VERIFICATION[type];
-  if (!row) return null;
-  const headline = row.migration ?? row.read ?? 'IMPLEMENTED';
-  const meta = VERIFICATION_LABELS[headline];
-  const tone = headline === 'VERIFIED' ? 'teal' : headline === 'NOT_SUPPORTED' ? 'slate' : 'amber';
+  const level = summaryLevel(type);
+  if (!level) return null;
+  const meta = VERIFICATION_LABELS[level];
+  const strong = levelRank(level) >= levelRank('ENGINE_VERIFIED');
+  const absent = level === 'NOT_SUPPORTED';
   return (
-    <p className="mt-2 text-xs text-slate-500">
-      <Pill tone={tone}>{meta.label}</Pill> <span title={meta.meaning}>{meta.meaning}</span>
-    </p>
+    <div className="mt-2 text-xs text-slate-500">
+      <Pill tone={strong ? 'teal' : absent ? 'slate' : 'amber'}>{meta.label}</Pill>{' '}
+      <span>{meta.meaning}</span>
+      <p className="mt-1 text-[11px] text-slate-400">{meta.evidence}</p>
+    </div>
   );
 }
 

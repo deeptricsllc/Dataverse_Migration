@@ -22,7 +22,8 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e",
+    "test:engines": "vitest run --config vitest.engines.config.ts"
   },
   "repository": {
     "type": "git",
