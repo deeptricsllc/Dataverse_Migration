@@ -13,6 +13,81 @@ import { alias } from 'drizzle-orm/pg-core';
 /** How many recent events are considered when filtering. Beyond this, narrow the period. */
 const MAX_SCANNED = 2000;
 
+/**
+ * The most an audit event may carry, in characters of serialised JSON.
+ *
+ * Generous on purpose: the point is to stop one pathological event — a validation result, a source
+ * record, an error with a stack — from becoming an unbounded row, not to keep events small.
+ */
+const MAX_DETAIL_CHARS = 8_000;
+/** A single value longer than this is summarised rather than stored whole. */
+const MAX_VALUE_CHARS = 1_000;
+
+/**
+ * Keeps an audit event's detail bounded without destroying what it was for.
+ *
+ * Truncating the middle of a JSON document is the wrong answer twice over: it leaves something that
+ * no longer parses, and it throws away whichever half happened to be second. Instead each value is
+ * shortened on its own, and a value that was shortened says so in place — so the shape of the event
+ * survives, every key is still there, and a reader can see exactly where the detail was cut and go
+ * to the run or the validation report for the whole of it.
+ *
+ * What is never touched: the action, who did it, when, the environments and the run. Those are the
+ * forensic record. This only bounds the free-form payload hanging off it.
+ */
+export function boundDetails(details: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!details) return null;
+  const serialised = safeLength(details);
+  if (serialised <= MAX_DETAIL_CHARS) return details;
+
+  const bounded: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    bounded[key] = boundValue(value);
+  }
+  bounded['_truncated'] = {
+    reason: 'This event carried more detail than an audit row stores.',
+    originalCharacters: serialised,
+    limit: MAX_DETAIL_CHARS,
+    where: 'Individual values were shortened; every key is still present.',
+  };
+  return bounded;
+}
+
+/** How deep the walk goes. A structure deeper than this is summarised rather than followed. */
+const MAX_DEPTH = 8;
+
+function boundValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') {
+    return value.length <= MAX_VALUE_CHARS
+      ? value
+      : `${value.slice(0, MAX_VALUE_CHARS)}… (${value.length} characters, shortened for the audit trail)`;
+  }
+  // A depth limit rather than a visited set: it bounds a deeply nested structure and a circular
+  // one with the same rule, and an audit write is the wrong place to find out which it was.
+  if (depth >= MAX_DEPTH) return '… (nested too deeply for the audit trail)';
+  if (Array.isArray(value)) {
+    const head = value.slice(0, 20).map((v) => boundValue(v, depth + 1));
+    return value.length <= 20 ? head : [...head, `… ${value.length - 20} more`];
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = boundValue(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+function safeLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    // Circular or otherwise unserialisable: treat as over the limit so it gets bounded.
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
 export type AuditAction =
   | 'AUTH_SIGN_IN'
   | 'AUTH_SIGN_OUT'
@@ -85,6 +160,7 @@ export class AuditService {
   ) {}
 
   async record(input: AuditInput): Promise<void> {
+    // Details are bounded before they are stored. See `boundDetails`.
     try {
       await this.db.insert(auditEvents).values({
         organizationId: input.organizationId,
@@ -95,7 +171,7 @@ export class AuditService {
         targetEnvironmentId: input.targetEnvironmentId ?? null,
         runId: input.runId ?? null,
         requestId: input.requestId ?? null,
-        details: input.details ?? null,
+        details: boundDetails(input.details ?? null),
       });
       this.logger.info(
         {

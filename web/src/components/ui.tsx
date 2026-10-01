@@ -661,14 +661,18 @@ export function ExportButton({
   href,
   label = 'Export CSV',
   size = 'sm',
+  title,
 }: {
   href: string;
   label?: string;
   size?: 'sm' | 'md';
+  /** What the file contains, for somebody deciding whether they want it. */
+  title?: string;
 }) {
   return (
     <a
       href={href}
+      title={title}
       download
       data-testid="export-csv"
       className={cx(

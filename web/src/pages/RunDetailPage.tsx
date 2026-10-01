@@ -147,6 +147,18 @@ export function RunDetailPage() {
                 Validate
               </Button>
             )}
+            {/*
+              The retainable record of this run. Offered here rather than buried among the CSVs,
+              because it is the thing somebody attaches to a change record and reads six months
+              later, when the environments have moved on and nothing can be re-run.
+            */}
+            {terminal && (
+              <ExportButton
+                href={`/api/runs/${r.id}/evidence.zip`}
+                label="Evidence package"
+                title="Configuration, record outcomes, validation coverage and connector verification, with a digest for each file."
+              />
+            )}
           </>
         }
       />

@@ -104,6 +104,37 @@ export class AuthService {
   }
 
   /**
+   * Refuses to create another evaluator workspace once the deployment is full.
+   *
+   * Building one runs two real migrations, so a flood of sign-ins is a flood of work rather than a
+   * flood of rows. Sweeping first means the ceiling is reached only when that many people really
+   * are evaluating at once, not merely when that many have ever visited.
+   *
+   * The visitor is told to come back shortly. They are not told the limit, which is nobody's
+   * business and an invitation to find it.
+   */
+  private async assertDemoCapacity(requestId: string): Promise<void> {
+    const limit = this.config.DEMO_MAX_WORKSPACES;
+    const count = async () => {
+      const [row] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(organizations)
+        .where(eq(organizations.isDemo, true));
+      return Number(row?.n ?? 0);
+    };
+    if ((await count()) < limit) return;
+    await this.purgeExpiredDemoWorkspaces();
+    const after = await count();
+    if (after < limit) return;
+    this.logger.warn({ requestId, workspaces: after, limit }, 'Demo workspace capacity reached');
+    throw new AppError(
+      503,
+      'DEMO_AT_CAPACITY',
+      'The demo is busy right now. Please try again in a few minutes.',
+    );
+  }
+
+  /**
    * Removes evaluator workspaces nobody is coming back to.
    *
    * Every demo sign-in creates an organization, so without this they accumulate for as long as the
@@ -193,6 +224,7 @@ export class AuthService {
     } else {
       // An evaluator's own workspace. The isolation boundary is the organization, which every
       // query in the product already filters on, rather than a second one invented for the demo.
+      await this.assertDemoCapacity(requestId);
       [org] = await this.db
         .insert(organizations)
         .values({ name: `${EVALUATOR_ORG_NAME} ${randomToken(3).toUpperCase()}`, isDemo: true })

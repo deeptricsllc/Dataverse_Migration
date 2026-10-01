@@ -51,6 +51,18 @@ const schema = z.object({
    * mid-evaluation would be worse than keeping the row. Zero disables the sweep entirely.
    */
   DEMO_WORKSPACE_TTL_HOURS: z.coerce.number().min(0).default(48),
+  /**
+   * How many evaluator workspaces may exist at once.
+   *
+   * Each one seeds its own copy of the simulated data and runs two real migrations to build its
+   * worked examples, so a sign-in is a few seconds of genuine work rather than a row insert. That
+   * is the right behaviour — the demo is honest because it actually runs — and it is also a way to
+   * spend somebody else's compute. Past this ceiling a new visitor is asked to come back shortly
+   * rather than being handed a workspace the deployment cannot afford.
+   *
+   * The limit is on live workspaces, not on sign-ins, so the expiry sweep is what frees capacity.
+   */
+  DEMO_MAX_WORKSPACES: z.coerce.number().int().min(1).default(200),
 
   ENTRA_CLIENT_ID: z.string().optional(),
   ENTRA_CLIENT_SECRET: z.string().optional(),

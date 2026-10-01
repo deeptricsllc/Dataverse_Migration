@@ -127,7 +127,10 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.post(
     '/api/auth/demo-login',
-    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    // Tighter than the other auth routes because each anonymous sign-in seeds a workspace and runs
+    // two real migrations. Thirty a minute from one address would be a denial of service with
+    // extra steps.
+    { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const { name } = z.object({ name: z.string().max(80).optional() }).parse(req.body ?? {});
       const userId = await s.auth.demoSignIn(req.id, name);
