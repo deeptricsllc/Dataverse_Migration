@@ -125,6 +125,28 @@ export function coveragePercent(c: ValidationCoverage): number {
  * Deliberately pessimistic. One table validated by sample makes the whole report a sampled report,
  * because the reader is being asked to trust a single verdict.
  */
+export function weakestMode(modes: readonly CoverageMode[]): CoverageMode {
+  if (modes.includes('NOT_VERIFIED')) return 'NOT_VERIFIED';
+  if (modes.includes('SAMPLED')) return 'SAMPLED';
+  return 'FULL';
+}
+
+/**
+ * Narrows a coverage to a weaker mode without touching its counts.
+ *
+ * Used where a second check over the same records — the duplicate scan — could not run. The report
+ * must not claim full coverage when one of its dimensions was never examined, and it must not count
+ * those records twice to say so.
+ */
+export function withMode(
+  coverage: ValidationCoverage,
+  mode: CoverageMode,
+  reason?: string,
+): ValidationCoverage {
+  if (coverage.mode === mode) return coverage;
+  return { ...coverage, mode, ...(mode === 'NOT_VERIFIED' && reason ? { reason } : {}) };
+}
+
 export function combineCoverage(parts: readonly ValidationCoverage[]): ValidationCoverage {
   if (parts.length === 0) return fullCoverage(0, 'Nothing to examine.');
   const eligible = parts.reduce((n, c) => n + c.eligible, 0);

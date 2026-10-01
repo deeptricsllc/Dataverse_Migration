@@ -73,6 +73,10 @@ describe('duplicate keys in the target', () => {
     expect(region.duplicateCoverage?.mode).toBe('FULL');
     expect(region.duplicates).toEqual([]);
     expect(report.summary!.duplicateRecords).toBe(0);
+    // Coverage counts records once. The duplicate scan looks at the same records as the value
+    // comparison, and adding both totals reported twice as many as the tables hold.
+    expect(report.summary!.coverage!.eligible).toBe(region.coverage!.eligible);
+    expect(report.summary!.coverage!.examined).toBe(region.coverage!.examined);
     expect(
       region.checks.some((c) => /No repeated values/.test(c.message) && c.outcome === 'PASS'),
       'the table says in words that nothing repeats',

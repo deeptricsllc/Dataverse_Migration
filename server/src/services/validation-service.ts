@@ -57,6 +57,8 @@ import {
   describeCoverage,
   fullCoverage,
   notVerified,
+  weakestMode,
+  withMode,
   type ValidationDepth,
 } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from './run-snapshot';
@@ -423,8 +425,16 @@ export class ValidationService {
         accounting: sumAccounting(results.map((r) => r.accounting ?? EMPTY_ACCOUNTING)),
         // The weakest claim any table can support, including the duplicate check, which can be
         // NOT VERIFIED on a table whose values all matched.
-        coverage: combineCoverage(
-          results.flatMap((r) => [r.coverage ?? fullCoverage(0), r.duplicateCoverage ?? fullCoverage(0)]),
+        // Counts come from the record coverage only — the duplicate scan examines the same records
+        // and adding both would report twice as many as exist. Its mode still counts, because a
+        // dimension nobody could check must not leave the report claiming full coverage.
+        coverage: withMode(
+          combineCoverage(results.map((r) => r.coverage ?? fullCoverage(0))),
+          weakestMode([
+            combineCoverage(results.map((r) => r.coverage ?? fullCoverage(0))).mode,
+            ...results.map((r) => r.duplicateCoverage?.mode ?? 'FULL'),
+          ]),
+          results.find((r) => r.duplicateCoverage?.mode === 'NOT_VERIFIED')?.duplicateCoverage?.reason,
         ),
         depth,
         duplicateRecords: results.reduce(
