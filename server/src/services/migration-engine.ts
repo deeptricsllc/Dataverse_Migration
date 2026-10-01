@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
@@ -906,30 +906,60 @@ export class MigrationEngine {
   // PASS 2
   // ---------------------------------------------------------------------------
 
+  /**
+   * Walks the record maps a second pass still has work for, a page at a time.
+   *
+   * Both second passes used to select every pending row for a table into an array and then batch
+   * over it. The primary read path has always been paged; these two were not, so a table with
+   * millions of deferred lookups would hold every one of their identity rows in memory at once —
+   * at exactly the size where somebody needs this to work.
+   *
+   * Keyed on `sourceId`, which is unique per run and table, rather than on the status column the
+   * pass is about to change. A status cursor would re-select a row it had just marked FAILED and
+   * never finish; a keyset always moves forward, which also makes the continuation deterministic
+   * and the pass safe to resume after a cancel.
+   */
+  private async *pendingMapPages(
+    where: SQL,
+    pageSize: number,
+  ): AsyncGenerator<(typeof migrationRecordMaps.$inferSelect)[]> {
+    const size = Math.max(1, Math.min(pageSize, 1000));
+    let cursor: string | null = null;
+    for (;;) {
+      const page: (typeof migrationRecordMaps.$inferSelect)[] = await this.db
+        .select()
+        .from(migrationRecordMaps)
+        .where(cursor === null ? where : and(where, gt(migrationRecordMaps.sourceId, cursor)))
+        .orderBy(asc(migrationRecordMaps.sourceId))
+        .limit(size);
+      if (page.length === 0) return;
+      yield page;
+      cursor = page[page.length - 1]!.sourceId;
+      if (page.length < size) return;
+    }
+  }
+
   private async resolveDeferred(ctx: ExecContext, entity: SnapshotEntity) {
     const { run } = ctx;
     const t = ctx.targetMeta.get(entity.targetLogicalName);
     if (!t) return;
-    const pending = await this.db
-      .select()
-      .from(migrationRecordMaps)
-      .where(
-        and(
-          eq(migrationRecordMaps.runId, run.id),
-          eq(migrationRecordMaps.logicalName, entity.logicalName),
-          inArray(migrationRecordMaps.deferredStatus, ['PENDING', 'FAILED']),
-          isNotNull(migrationRecordMaps.targetId),
-        ),
-      );
-    if (pending.length === 0) return;
-    await this.db
-      .update(migrationRuns)
-      .set({ currentEntity: entity.logicalName })
-      .where(eq(migrationRuns.id, run.id));
+    const where = and(
+      eq(migrationRecordMaps.runId, run.id),
+      eq(migrationRecordMaps.logicalName, entity.logicalName),
+      inArray(migrationRecordMaps.deferredStatus, ['PENDING', 'FAILED']),
+      isNotNull(migrationRecordMaps.targetId),
+    )!;
     const tAttrs = new Map(t.attributes.map((a) => [a.logicalName, a]));
-    for (let i = 0; i < pending.length; i += ctx.options.batchSize) {
+    let announced = false;
+    for await (const batch of this.pendingMapPages(where, ctx.options.batchSize)) {
+      if (!announced) {
+        announced = true;
+        await this.db
+          .update(migrationRuns)
+          .set({ currentEntity: entity.logicalName })
+          .where(eq(migrationRuns.id, run.id));
+      }
       await this.checkControl(run.id);
-      const batch = pending.slice(i, i + ctx.options.batchSize);
       await mapLimit(batch, 4, async (map) => {
         const values: Record<string, FieldValue> = {};
         const errors: RecordError[] = [];
@@ -1002,25 +1032,22 @@ export class MigrationEngine {
     const { run } = ctx;
     const t = ctx.targetMeta.get(entity.targetLogicalName);
     if (!t) return;
-    const pending = await this.db
-      .select()
-      .from(migrationRecordMaps)
-      .where(
-        and(
-          eq(migrationRecordMaps.runId, run.id),
-          eq(migrationRecordMaps.logicalName, entity.logicalName),
-          eq(migrationRecordMaps.auditStatus, 'PENDING'),
-          isNotNull(migrationRecordMaps.targetId),
-        ),
-      );
-    if (pending.length === 0) return;
-    await this.db
-      .update(migrationRuns)
-      .set({ currentEntity: entity.logicalName })
-      .where(eq(migrationRuns.id, run.id));
-    for (let i = 0; i < pending.length; i += ctx.options.batchSize) {
+    const where = and(
+      eq(migrationRecordMaps.runId, run.id),
+      eq(migrationRecordMaps.logicalName, entity.logicalName),
+      eq(migrationRecordMaps.auditStatus, 'PENDING'),
+      isNotNull(migrationRecordMaps.targetId),
+    )!;
+    let announced = false;
+    for await (const batch of this.pendingMapPages(where, ctx.options.batchSize)) {
+      if (!announced) {
+        announced = true;
+        await this.db
+          .update(migrationRuns)
+          .set({ currentEntity: entity.logicalName })
+          .where(eq(migrationRuns.id, run.id));
+      }
       await this.checkControl(run.id);
-      const batch = pending.slice(i, i + ctx.options.batchSize);
       await mapLimit(batch, 4, async (map) => {
         const work = map.auditPending;
         if (!work) return;
