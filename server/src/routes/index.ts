@@ -1255,7 +1255,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can reset demo data');
     // A build that is mid-migration would write into records this is about to delete.
     await s.demoScenarios.settle();
-    await seedDemoData(s.db, { reset: true });
+    await seedDemoData(s.db, req.ctx.organizationId, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
     // Restoring the simulated records invalidates every migration that ran against them, so a

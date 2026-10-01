@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { AutomationInfo, PrincipalDto, PrincipalTable } from '../../../../shared/domain';
 import {
@@ -57,9 +57,23 @@ export class DemoConnection implements DataverseConnection {
     private readonly db: AppDb,
     private readonly logger: Logger,
     private readonly latencyMs: number,
+    /** The organization whose copy of the simulated data this connection reads and writes. */
+    private readonly organizationId: string,
   ) {
     this.url = env.url;
     this.tables = new Map(demoMetadata(env.key).map((t) => [t.logicalName, t]));
+  }
+
+  /**
+   * Every read and write of the simulated data, narrowed to the organization that owns this
+   * environment. Used in place of a bare environment-key filter so a missed call site cannot
+   * quietly read another evaluator's copy.
+   */
+  private scope(): SQL {
+    return and(
+      eq(demoRecords.organizationId, this.organizationId),
+      eq(demoRecords.environmentKey, this.env.key),
+    )!;
   }
 
   private async simulate(factor = 1) {
@@ -133,7 +147,7 @@ export class DemoConnection implements DataverseConnection {
     const [row] = await this.db
       .select({ n: count() })
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)));
     return { count: Number(row?.n ?? 0), approximate: false };
   }
 
@@ -157,7 +171,7 @@ export class DemoConnection implements DataverseConnection {
       const rows = await this.db
         .select()
         .from(demoRecords)
-        .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName)))
+        .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)))
         .orderBy(asc(demoRecords.recordId))
         .limit(opts.pageSize)
         .offset(offset);
@@ -184,7 +198,7 @@ export class DemoConnection implements DataverseConnection {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.env.key),
+          this.scope(),
           eq(demoRecords.logicalName, t.logicalName),
           inArray(
             demoRecords.recordId,
@@ -230,13 +244,7 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(
-        and(
-          eq(demoRecords.environmentKey, this.env.key),
-          eq(demoRecords.logicalName, t.logicalName),
-          ...(conditions as never[]),
-        ),
-      )
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(2);
     return rows.find((r) => r.recordId !== excludeId)?.data ?? null;
   }
@@ -258,13 +266,7 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(
-        and(
-          eq(demoRecords.environmentKey, this.env.key),
-          eq(demoRecords.logicalName, t.logicalName),
-          ...(conditions as never[]),
-        ),
-      )
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(Math.max(1, Math.min(limit, 50)));
     return rows.map((r) => this.project(t, r.data, columns));
   }
@@ -360,7 +362,7 @@ export class DemoConnection implements DataverseConnection {
             .from(demoRecords)
             .where(
               and(
-                eq(demoRecords.environmentKey, this.env.key),
+                this.scope(),
                 eq(demoRecords.logicalName, value.logicalName),
                 eq(demoRecords.recordId, value.id.toLowerCase()),
               ),
@@ -474,7 +476,13 @@ export class DemoConnection implements DataverseConnection {
         this.computed(t, data);
         const inserted = await this.db
           .insert(demoRecords)
-          .values({ environmentKey: this.env.key, logicalName: t.logicalName, recordId: id, data })
+          .values({
+            organizationId: this.organizationId,
+            environmentKey: this.env.key,
+            logicalName: t.logicalName,
+            recordId: id,
+            data,
+          })
           .onConflictDoNothing()
           .returning({ id: demoRecords.recordId });
         if (inserted.length === 0) {
@@ -502,11 +510,7 @@ export class DemoConnection implements DataverseConnection {
           .select()
           .from(demoRecords)
           .where(
-            and(
-              eq(demoRecords.environmentKey, this.env.key),
-              eq(demoRecords.logicalName, t.logicalName),
-              eq(demoRecords.recordId, recordId),
-            ),
+            and(this.scope(), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)),
           );
         if (!existing) {
           throw new DataverseError(
@@ -542,11 +546,7 @@ export class DemoConnection implements DataverseConnection {
           .update(demoRecords)
           .set({ data, updatedAt: new Date() })
           .where(
-            and(
-              eq(demoRecords.environmentKey, this.env.key),
-              eq(demoRecords.logicalName, t.logicalName),
-              eq(demoRecords.recordId, recordId),
-            ),
+            and(this.scope(), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)),
           );
       },
       { operation: 'update', table: t.logicalName },
@@ -570,7 +570,7 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, table)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, table)));
     return rows
       .map((r) => {
         const d = r.data as Record<string, string | boolean | null>;
@@ -593,7 +593,7 @@ export class DemoConnection implements DataverseConnection {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.env.key),
+          this.scope(),
           eq(demoRecords.logicalName, 'systemuser'),
           eq(demoRecords.recordId, targetUserId.toLowerCase()),
         ),

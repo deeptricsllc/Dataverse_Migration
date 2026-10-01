@@ -75,11 +75,29 @@ describe('several people testing the same deployment', () => {
     expect(page.users).toEqual(expect.arrayContaining(['Dana Whitfield', 'Sam Okonkwo']));
   });
 
-  it('still signs in anonymously when no name is given', async () => {
-    // The landing page's one-click demo, and every existing journey, must be unchanged.
+  it('gives an anonymous visitor a workspace of their own', async () => {
+    // The landing page's one-click demo is the prospect's path, and two prospects are two
+    // evaluations. This used to return the same account both times, which is how one visitor met
+    // the previous visitor's projects and the records they had migrated.
     const anon = await signIn();
     expect(anon.user.displayName).toBe('Demo User');
-    const twice = await signIn();
-    expect(twice.user.id).toBe(anon.user.id);
+    const another = await signIn();
+    expect(another.user.id, 'two visitors are two people').not.toBe(anon.user.id);
+    expect(
+      another.user.organization.id,
+      'and two separate workspaces, which is what keeps their work apart',
+    ).not.toBe(anon.user.organization.id);
+  });
+
+  it('keeps named testers in one workspace and anonymous visitors out of it', async () => {
+    // The two paths, stated side by side so the distinction cannot be lost by accident: a name
+    // means "I am a tester on this team", no name means "I am evaluating on my own".
+    const one = await signIn('Ada Okafor');
+    const two = await signIn('Ben Larsson');
+    expect(one.user.organization.id, 'named testers share a workspace').toBe(two.user.organization.id);
+    const visitor = await signIn();
+    expect(visitor.user.organization.id, 'an anonymous visitor is not in it').not.toBe(
+      one.user.organization.id,
+    );
   });
 });

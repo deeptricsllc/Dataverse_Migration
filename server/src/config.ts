@@ -43,6 +43,14 @@ const schema = z.object({
    * pilot tenant that wants the simulated environments without somebody else's example projects.
    */
   DEMO_SCENARIOS: bool(!isTest),
+  /**
+   * How long an abandoned evaluator workspace is kept before it is deleted with everything in it.
+   *
+   * Each demo sign-in creates its own organization, so something has to clear them up. A workspace
+   * with a session that has not expired is never removed, whatever its age — logging somebody out
+   * mid-evaluation would be worse than keeping the row. Zero disables the sweep entirely.
+   */
+  DEMO_WORKSPACE_TTL_HOURS: z.coerce.number().min(0).default(48),
 
   ENTRA_CLIENT_ID: z.string().optional(),
   ENTRA_CLIENT_SECRET: z.string().optional(),

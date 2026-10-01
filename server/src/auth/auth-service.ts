@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { SessionUser } from '../../../shared/domain';
 import type { AppConfig } from '../config';
@@ -98,6 +98,52 @@ export class AuthService {
   async purgeExpired() {
     await this.db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
     await this.db.delete(authRequests).where(lt(authRequests.expiresAt, new Date()));
+    await this.purgeExpiredDemoWorkspaces();
+  }
+
+  /**
+   * Removes evaluator workspaces nobody is coming back to.
+   *
+   * Every demo sign-in creates an organization, so without this they accumulate for as long as the
+   * deployment runs — each carrying its own copy of the simulated data, its projects, its runs and
+   * its audit trail. A workspace is expired once it is older than the window and has no session
+   * that is still valid, which means nobody is in it: deleting one with a live session would log
+   * somebody out in the middle of an evaluation.
+   *
+   * Deletion cascades from `organizations`, which is why every table that holds customer data
+   * references it with `onDelete: 'cascade'`. A real organization is never touched; `isDemo` is the
+   * whole point of that predicate.
+   */
+  async purgeExpiredDemoWorkspaces(): Promise<number> {
+    const hours = this.config.DEMO_WORKSPACE_TTL_HOURS;
+    if (hours <= 0) return 0;
+    const cutoff = new Date(Date.now() - hours * 3_600_000);
+    const stale = await this.db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(and(eq(organizations.isDemo, true), lt(organizations.createdAt, cutoff)));
+    if (stale.length === 0) return 0;
+
+    const live = await this.db
+      .select({ organizationId: users.organizationId })
+      .from(sessions)
+      .innerJoin(users, eq(users.id, sessions.userId))
+      .where(
+        and(
+          sql`${sessions.expiresAt} > now()`,
+          inArray(
+            users.organizationId,
+            stale.map((o) => o.id),
+          ),
+        ),
+      );
+    const occupied = new Set(live.map((r) => r.organizationId));
+    const removable = stale.filter((o) => !occupied.has(o.id)).map((o) => o.id);
+    if (removable.length === 0) return 0;
+
+    await this.db.delete(organizations).where(inArray(organizations.id, removable));
+    this.logger.info({ count: removable.length, ttlHours: hours }, 'Expired demo workspaces removed');
+    return removable.length;
   }
 
   // ---------------------------------------------------------------------------
@@ -105,32 +151,51 @@ export class AuthService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Signing in to the shared demo organization.
+   * Signing in to a demo workspace. There are two, and the name decides which.
    *
-   * A name is optional and matters more than it looks. Without one every visitor is literally the
-   * same account, which is right for an anonymous demo and wrong for a user-acceptance test: half
-   * of what testers are asked to evaluate is the audit trail, and a trail where every entry says
-   * "Demo User" cannot answer the question it exists to answer. Giving a name creates a separate
-   * person inside the same organization, so testers still see each other's work — which is the
-   * point of testing together — while who did what stays legible.
+   * **No name — an evaluator.** A workspace of their own, created here and belonging to nobody
+   * else. Prospects used to land in one shared organization and meet whatever the last visitor had
+   * been doing, including the records they had migrated into the simulated target. Signing out and
+   * back in gives a fresh one: the browser session carries the workspace.
+   *
+   * **A name — a tester on a team.** The shared user-acceptance workspace, where seeing each
+   * other's work is the point. Half of what testers are asked to evaluate is the audit trail, and a
+   * trail where every entry says "Demo User" cannot answer the question it exists to answer, so the
+   * name makes them a distinct person inside that one organization.
+   *
+   * The split is this blunt on purpose. It needs no extra control on the sign-in page, and the page
+   * says which one a visitor is choosing rather than leaving them to find out.
    */
   async demoSignIn(requestId: string, displayName?: string): Promise<string> {
     if (!this.config.DEMO_MODE) throw new AppError(404, 'NOT_FOUND', 'Demo mode is disabled');
-    let [org] = await this.db
-      .select()
-      .from(organizations)
-      .where(
-        and(
-          eq(organizations.isDemo, true),
-          eq(organizations.name, DEMO_ORG_NAME),
-          isNull(organizations.entraTenantId),
-        ),
-      );
-    if (!org)
-      [org] = await this.db.insert(organizations).values({ name: DEMO_ORG_NAME, isDemo: true }).returning();
     // A name identifies the person for the whole life of the demo organization, so it is
     // normalised: "Priya Raman", "priya raman" and " Priya  Raman " are one tester, not three.
     const name = (displayName ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+    let org: typeof organizations.$inferSelect | undefined;
+    if (name) {
+      // The shared team workspace. Found by the same three conditions it is created with, so a
+      // second tester joins the first one's workspace rather than starting a parallel one.
+      [org] = await this.db
+        .select()
+        .from(organizations)
+        .where(
+          and(
+            eq(organizations.isDemo, true),
+            eq(organizations.name, DEMO_ORG_NAME),
+            isNull(organizations.entraTenantId),
+          ),
+        );
+      if (!org)
+        [org] = await this.db.insert(organizations).values({ name: DEMO_ORG_NAME, isDemo: true }).returning();
+    } else {
+      // An evaluator's own workspace. The isolation boundary is the organization, which every
+      // query in the product already filters on, rather than a second one invented for the demo.
+      [org] = await this.db
+        .insert(organizations)
+        .values({ name: `${DEMO_ORG_NAME} · ${randomToken(4)}`, isDemo: true })
+        .returning();
+    }
     const slug = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -153,7 +218,8 @@ export class AuthService {
         set: { lastLoginAt: new Date(), displayName: name || 'Demo User' },
       })
       .returning();
-    await seedDemoData(this.db, { logger: this.logger });
+    // This workspace's own copy of the simulated data.
+    await seedDemoData(this.db, org.id, { logger: this.logger });
     await this.audit.record({
       organizationId: org.id,
       userId: user.id,

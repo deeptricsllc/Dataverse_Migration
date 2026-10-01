@@ -1273,9 +1273,21 @@ export const accessRequests = pgTable(
   (t) => [uniqueIndex('access_requests_email_idx').on(t.email)],
 );
 
+/**
+ * The simulated Dataverse and SQL Server data behind the demo environments.
+ *
+ * Partitioned by organization. It used to be keyed only by environment, so every evaluator shared
+ * one copy: a prospect migrating into the simulated UAT wrote records the next prospect then found
+ * sitting there. The environments that read this table are themselves owned by an organization, so
+ * that is the partition key — the boundary the rest of the product already enforces, rather than a
+ * second one invented for the demo.
+ */
 export const demoRecords = pgTable(
   'demo_records',
   {
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     environmentKey: text('environment_key').notNull(),
     logicalName: text('logical_name').notNull(),
     recordId: text('record_id').notNull(),
@@ -1283,5 +1295,5 @@ export const demoRecords = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [primaryKey({ columns: [t.environmentKey, t.logicalName, t.recordId] })],
+  (t) => [primaryKey({ columns: [t.organizationId, t.environmentKey, t.logicalName, t.recordId] })],
 );

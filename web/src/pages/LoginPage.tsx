@@ -132,7 +132,10 @@ export function LoginPage() {
                           className="mb-1.5 block text-xs font-medium text-slate-600"
                           htmlFor="demo-name"
                         >
-                          Your name <span className="font-normal text-slate-400">(optional)</span>
+                          Your name{' '}
+                          <span className="font-normal text-slate-400">
+                            (only if you are testing with a team)
+                          </span>
                         </label>
                         <input
                           id="demo-name"
@@ -143,9 +146,15 @@ export function LoginPage() {
                           autoComplete="name"
                           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
+                        {/*
+                          The field decides which of the two demo workspaces this is, so it says so
+                          rather than leaving somebody to discover it. A prospect evaluating alone
+                          should leave it blank and get a workspace nobody else is in.
+                        */}
                         <p className="mt-1 text-xs text-slate-500">
-                          Everyone shares one demo workspace. A name keeps your work, and the audit trail,
-                          apart from everyone else testing today.
+                          {name.trim()
+                            ? 'You will join the shared team workspace, where everyone testing together sees the same projects and the audit trail says who did what.'
+                            : 'Leave this blank and you get a private workspace of your own, with nothing in it but the worked examples. Add a name only to join a team already testing together.'}
                         </p>
                       </div>
                       <button

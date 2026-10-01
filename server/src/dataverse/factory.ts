@@ -101,6 +101,7 @@ export class ConnectionFactory {
         this.db,
         logger,
         this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+        env.organizationId,
       );
     }
     // An imported source has no server to reach: its rows live in the platform's own database.
@@ -181,6 +182,7 @@ export class ConnectionFactory {
         this.db,
         logger,
         this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+        env.organizationId,
       );
     }
     return new WebApiConnection({
@@ -286,26 +288,31 @@ export class ConnectionFactory {
 }
 
 /**
- * Seeds simulated Dataverse data for demo environments. Idempotent: an environment is only
+ * Seeds one organization's copy of the simulated data. Idempotent: an environment is only
  * (re-)seeded when it is empty, when the fixtures version changed, or on an explicit reset.
+ *
+ * Per organization, not global. Every evaluator gets their own copy, so one prospect migrating
+ * into the simulated UAT cannot leave records for the next one to find.
  */
 export async function seedDemoData(
   db: AppDb,
+  organizationId: string,
   opts: { reset?: boolean; logger?: { info: (o: object, m: string) => void } } = {},
 ) {
-  if (opts.reset) await db.delete(demoRecords);
-  await seedDemoSqlData(db, opts);
+  if (opts.reset) await db.delete(demoRecords).where(eq(demoRecords.organizationId, organizationId));
+  await seedDemoSqlData(db, organizationId, opts);
   for (const env of DEMO_ENVIRONMENTS) {
     const [existing] = await db
       .select({ n: count() })
       .from(demoRecords)
-      .where(eq(demoRecords.environmentKey, env.key));
+      .where(and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, env.key)));
     if (Number(existing?.n ?? 0) > 0) {
       const [marker] = await db
         .select({ id: demoRecords.recordId })
         .from(demoRecords)
         .where(
           and(
+            eq(demoRecords.organizationId, organizationId),
             eq(demoRecords.environmentKey, env.key),
             eq(demoRecords.logicalName, SEED_MARKER),
             eq(demoRecords.recordId, DEMO_DATA_VERSION),
@@ -314,11 +321,14 @@ export async function seedDemoData(
       if (marker) continue;
       // Fixtures changed: replace this demo environment's data.
       opts.logger?.info({ environment: env.key, version: DEMO_DATA_VERSION }, 'Re-seeding demo environment');
-      await db.delete(demoRecords).where(eq(demoRecords.environmentKey, env.key));
+      await db
+        .delete(demoRecords)
+        .where(and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, env.key)));
     }
     const dataset = datasetFor(env.key as DemoEnvKey);
     const rows = Object.entries(dataset).flatMap(([logicalName, records]) =>
       records.map((data) => ({
+        organizationId,
         environmentKey: env.key,
         logicalName,
         recordId: String(data[`${logicalName}id`]).toLowerCase(),
@@ -333,16 +343,28 @@ export async function seedDemoData(
     }
     await db
       .insert(demoRecords)
-      .values({ environmentKey: env.key, logicalName: SEED_MARKER, recordId: DEMO_DATA_VERSION, data: {} })
+      .values({
+        organizationId,
+        environmentKey: env.key,
+        logicalName: SEED_MARKER,
+        recordId: DEMO_DATA_VERSION,
+        data: {},
+      })
       .onConflictDoNothing();
   }
 }
 
-export async function demoRecordCount(db: AppDb, envKey: string, table: string) {
+export async function demoRecordCount(db: AppDb, organizationId: string, envKey: string, table: string) {
   const [row] = await db
     .select({ n: count() })
     .from(demoRecords)
-    .where(and(eq(demoRecords.environmentKey, envKey), eq(demoRecords.logicalName, table)));
+    .where(
+      and(
+        eq(demoRecords.organizationId, organizationId),
+        eq(demoRecords.environmentKey, envKey),
+        eq(demoRecords.logicalName, table),
+      ),
+    );
   return Number(row?.n ?? 0);
 }
 
@@ -353,18 +375,22 @@ export async function demoRecordCount(db: AppDb, envKey: string, table: string) 
  */
 export async function seedDemoSqlData(
   db: AppDb,
+  organizationId: string,
   opts: { logger?: { info: (o: object, m: string) => void } } = {},
 ) {
   const [existing] = await db
     .select({ n: count() })
     .from(demoRecords)
-    .where(eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY));
+    .where(
+      and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY)),
+    );
   if (Number(existing?.n ?? 0) > 0) {
     const [marker] = await db
       .select({ id: demoRecords.recordId })
       .from(demoRecords)
       .where(
         and(
+          eq(demoRecords.organizationId, organizationId),
           eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY),
           eq(demoRecords.logicalName, SEED_MARKER),
           eq(demoRecords.recordId, DEMO_DATA_VERSION),
@@ -372,7 +398,11 @@ export async function seedDemoSqlData(
       );
     if (marker) return;
     opts.logger?.info({ version: DEMO_DATA_VERSION }, 'Re-seeding demo SQL Server');
-    await db.delete(demoRecords).where(eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY));
+    await db
+      .delete(demoRecords)
+      .where(
+        and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY)),
+      );
   }
   const tables = new Map(demoSqlTables().map((t) => [t.logicalName, t]));
   const data = demoSqlData();
@@ -380,6 +410,7 @@ export async function seedDemoSqlData(
     const meta = tables.get(logicalName);
     if (!meta) continue;
     const values = rows.map((r) => ({
+      organizationId,
       environmentKey: DEMO_SQL_ENV_KEY,
       logicalName,
       recordId: String(r[meta.primaryIdAttribute]).toLowerCase(),
@@ -395,6 +426,7 @@ export async function seedDemoSqlData(
   await db
     .insert(demoRecords)
     .values({
+      organizationId,
       environmentKey: DEMO_SQL_ENV_KEY,
       logicalName: SEED_MARKER,
       recordId: DEMO_DATA_VERSION,
