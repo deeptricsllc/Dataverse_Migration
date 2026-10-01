@@ -132,6 +132,20 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       const session = await s.auth.createSession(userId, req.headers['user-agent']);
       reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
       const resolved = await s.auth.resolveSession(session.token);
+      // The two worked examples a prospective customer should find already done. Built in the
+      // background by running real migrations, so signing in is not held up by them; the demo
+      // workspace fills in while the dashboard is being read.
+      if (config.DEMO_SCENARIOS && config.RUN_WORKER) {
+        void s.demoScenarios.ensure({
+          userId: resolved!.user.id,
+          organizationId: resolved!.user.organization.id,
+          role: resolved!.user.role,
+          isDemoOrg: true,
+          displayName: resolved!.user.displayName,
+          requestId: req.id,
+          platformOperator: false,
+        });
+      }
       return { user: resolved!.user, csrfToken: resolved!.csrfToken };
     },
   );

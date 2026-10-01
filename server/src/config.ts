@@ -13,6 +13,8 @@ const bool = (def: boolean) =>
     );
 
 const isProduction = process.env.NODE_ENV === 'production';
+// Curated demo content is off under test, where a suite counts only the runs it started itself.
+const isTest = process.env.NODE_ENV === 'test';
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -32,6 +34,15 @@ const schema = z.object({
 
   DEMO_MODE: bool(!isProduction),
   DEMO_LATENCY_MS: z.coerce.number().int().min(0).default(12),
+  /**
+   * Builds the two worked migrations a visitor should find already done, by running them.
+   *
+   * Separate from DEMO_MODE because the two mean different things: DEMO_MODE decides whether the
+   * connectors are simulated, this decides whether the workspace comes with curated content. Off
+   * under test, where every suite wants to count only the runs it started itself, and off for a
+   * pilot tenant that wants the simulated environments without somebody else's example projects.
+   */
+  DEMO_SCENARIOS: bool(!isTest),
 
   ENTRA_CLIENT_ID: z.string().optional(),
   ENTRA_CLIENT_SECRET: z.string().optional(),

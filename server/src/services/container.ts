@@ -9,6 +9,7 @@ import { AccessRequestService } from './access-request-service';
 import { AlertService } from './alert-service';
 import { AnalysisService } from './analysis-service';
 import { DataComparisonService } from './data-comparison-service';
+import { DemoScenarioService } from './demo-scenario-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
 import { EnvironmentService } from './environment-service';
@@ -166,6 +167,16 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     projectsSvc,
     analysis,
   );
+  // Built on demand in DEMO MODE, by running two real migrations through the engine above.
+  const demoScenarios = new DemoScenarioService(
+    db,
+    projectsSvc,
+    environments,
+    planning,
+    runs,
+    validation,
+    logger.child({ component: 'demo-scenarios' }),
+  );
 
   /**
    * The scheduler lives beside the worker: both do work with no request behind them, and both are
@@ -225,6 +236,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     remediation,
     connectionAdmin,
     insights,
+    demoScenarios,
     createWorker,
   };
 }
