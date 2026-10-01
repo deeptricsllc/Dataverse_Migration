@@ -1,4 +1,5 @@
 import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
+import { normaliseRole } from '../../../shared/authorization';
 import type { Logger } from 'pino';
 import {
   needsTypedConfirmation,
@@ -371,7 +372,7 @@ export class ScheduleService {
     return {
       organizationId: schedule.organizationId,
       userId: creator.id,
-      role: creator.role,
+      role: normaliseRole(creator.role),
       isDemoOrg: false,
       displayName: `${creator.displayName} (schedule: ${schedule.name})`,
       requestId: `schedule-${schedule.id}`,

@@ -12,6 +12,7 @@ import type { ApiErrorBody } from '../../shared/domain';
 import { SESSION_COOKIE, type ResolvedSession } from './auth/auth-service';
 import type { AppConfig } from './config';
 import { timingSafeEqualStr } from './lib/crypto';
+import { can, normaliseRole, refusalFor, type Permission } from '../../shared/authorization';
 import { AppError } from './lib/errors';
 import { scrubSecrets } from './logger';
 import { registerRoutes } from './routes';
@@ -44,6 +45,58 @@ const PUBLIC_ROUTES = new Set([
   'POST /api/access-requests',
 ]);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Mutating routes that need something other than the ordinary "may change this workspace".
+ *
+ * Matched on the route's registered pattern, so `/api/runs/:id/cancel` is one entry rather than one
+ * per run. Anything not listed falls through to `workspace:mutate`, which is the safe default: a
+ * route added tomorrow is closed to the read-only roles without anybody editing this table.
+ */
+const MUTATION_PERMISSIONS: [RegExp, Permission][] = [
+  // The one change a validator exists to make.
+  [/^\/api\/validations$/, 'validation:run'],
+  // Starting, stopping and resuming a migration. An operator may; a validator may not.
+  [/^\/api\/plans\/[^/]+\/execute$/, 'migration:control'],
+  [/^\/api\/runs\/[^/]+\/(cancel|pause|resume|retry|rerun)$/, 'migration:control'],
+  // Destroys a stored credential and the configuration other people's plans depend on.
+  [/^\/api\/connections\/[^/]+$/, 'connections:delete'],
+  // Keeps writing when nobody is watching.
+  [/^\/api\/schedules/, 'schedules:write'],
+  // Archives every project in the workspace and restores the simulated data.
+  [/^\/api\/demo\/reset$/, 'workspace:reset'],
+  [/^\/api\/members/, 'members:manage'],
+];
+
+function permissionForRoute(method: string, url: string): Permission {
+  const path = url.split('?')[0] ?? url;
+  for (const [pattern, permission] of MUTATION_PERMISSIONS) {
+    // A connection is only destroyed by DELETE; editing one is an ordinary change.
+    if (permission === 'connections:delete' && method !== 'DELETE') continue;
+    if (pattern.test(path)) return permission;
+  }
+  return 'workspace:mutate';
+}
+
+/** The action named in a refusal, so the message says what was attempted. */
+function describePermission(permission: Permission): string {
+  switch (permission) {
+    case 'validation:run':
+      return 'Running a validation';
+    case 'migration:control':
+      return 'Starting or controlling a migration';
+    case 'connections:delete':
+      return 'Deleting a connection';
+    case 'schedules:write':
+      return 'Changing a schedule';
+    case 'workspace:reset':
+      return 'Resetting the workspace';
+    case 'members:manage':
+      return 'Changing who is in this workspace';
+    default:
+      return 'Changing anything in this workspace';
+  }
+}
 
 export async function buildApp(services: Services, opts: { logger: Logger; webDist?: string }) {
   const config: AppConfig = services.config;
@@ -128,12 +181,33 @@ export async function buildApp(services: Services, opts: { logger: Logger; webDi
     req.ctx = {
       userId: u.id,
       organizationId: u.organization.id,
-      role: u.role,
+      // Roles stored before the four-role model existed are read here, once, rather than at
+      // every site that asks what somebody may do.
+      role: normaliseRole(u.role),
       isDemoOrg: u.organization.isDemo,
       displayName: u.displayName,
       requestId: req.id,
       platformOperator: u.platformOperator,
     };
+
+    /*
+      Authorization, before any handler runs.
+
+      Enforced here rather than route by route because a model made of a hundred remembered checks
+      is not a model: the one route somebody forgets is the hole, and nothing about the code says
+      which route that is. Every mutating request must clear `workspace:mutate`, so a new route is
+      closed to a validator and an auditor the moment it exists, without anybody remembering it.
+
+      Routes that need something *other* than the default say so in MUTATION_PERMISSIONS below —
+      either because they are more dangerous than an ordinary change, or because they are the one
+      kind of change a validator is for.
+    */
+    if (!SAFE_METHODS.has(req.method)) {
+      const permission = permissionForRoute(req.method, req.routeOptions?.url ?? req.url);
+      if (!can(req.ctx.role, permission)) {
+        throw new AppError(403, 'FORBIDDEN', refusalFor(req.ctx.role, describePermission(permission)));
+      }
+    }
   });
 
   app.setErrorHandler((err: unknown, req, reply: FastifyReply) => {

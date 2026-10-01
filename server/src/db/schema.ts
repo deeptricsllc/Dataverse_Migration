@@ -63,6 +63,7 @@ import type {
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
+import type { WorkspaceRole } from '../../../shared/authorization';
 import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
@@ -96,7 +97,12 @@ export const users = pgTable(
     authProvider: text('auth_provider').$type<'microsoft' | 'demo'>().notNull(),
     email: text('email'),
     displayName: text('display_name').notNull(),
-    role: text('role').$type<'ADMIN' | 'MEMBER'>().notNull().default('MEMBER'),
+    /**
+     * `MEMBER` predates the four-role model and is read as `MIGRATION_OPERATOR`, which is exactly
+     * what it could already do. Stored rather than migrated: rewriting rows to a new vocabulary
+     * would make an old backup mean something different from what it said.
+     */
+    role: text('role').$type<WorkspaceRole | 'MEMBER'>().notNull().default('MEMBER'),
     /** MSAL home account id used to acquire tokens silently. */
     msalHomeAccountId: text('msal_home_account_id'),
     createdAt: createdAt(),

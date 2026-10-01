@@ -19,7 +19,9 @@ import { ApiClient, createTestApp, type TestApp } from '../helpers';
  * just as importantly what is still allowed.
  */
 
-const ctxWith = (role: 'ADMIN' | 'MEMBER'): RequestContext => ({
+// MEMBER is the stored value that predates the four-role model; a request context carries the
+// normalised role, which for a member is the operator.
+const ctxWith = (role: 'ADMIN' | 'MIGRATION_OPERATOR'): RequestContext => ({
   userId: 'u',
   organizationId: 'o',
   role,
@@ -32,13 +34,17 @@ const ctxWith = (role: 'ADMIN' | 'MEMBER'): RequestContext => ({
 describe('the policy itself', () => {
   it('lets an administrator through, and names what a member cannot do', () => {
     expect(() => requireAdmin(ctxWith('ADMIN'), 'Deleting a connection')).not.toThrow();
-    expect(() => requireAdmin(ctxWith('MEMBER'), 'Deleting a connection')).toThrow(/needs an administrator/);
+    expect(() => requireAdmin(ctxWith('MIGRATION_OPERATOR'), 'Deleting a connection')).toThrow(
+      /needs an administrator/,
+    );
     // The refusal says what was refused rather than just "forbidden".
-    expect(() => requireAdmin(ctxWith('MEMBER'), 'Firing a schedule')).toThrow(/firing a schedule/i);
+    expect(() => requireAdmin(ctxWith('MIGRATION_OPERATOR'), 'Firing a schedule')).toThrow(
+      /firing a schedule/i,
+    );
   });
 
   it('lets a member migrate to a sandbox but not to production', () => {
-    const member = ctxWith('MEMBER');
+    const member = ctxWith('MIGRATION_OPERATOR');
     expect(() =>
       requireAdminForProductionTarget(member, { environmentType: 'Sandbox', displayName: 'QA' }, 'Migrating'),
     ).not.toThrow();
@@ -64,7 +70,7 @@ describe('the policy itself', () => {
     // backwards for the one kind of target nobody labelled.
     expect(() =>
       requireAdminForProductionTarget(
-        ctxWith('MEMBER'),
+        ctxWith('MIGRATION_OPERATOR'),
         { environmentType: null, displayName: 'sql01/BILLING' },
         'Migrating',
       ),

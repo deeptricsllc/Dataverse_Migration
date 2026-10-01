@@ -1,7 +1,9 @@
+import type { WorkspaceRole } from '../../../shared/authorization';
+
 export interface RequestContext {
   userId: string;
   organizationId: string;
-  role: 'ADMIN' | 'MEMBER';
+  role: WorkspaceRole;
   isDemoOrg: boolean;
   displayName: string;
   requestId: string;

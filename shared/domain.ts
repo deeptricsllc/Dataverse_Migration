@@ -3,6 +3,7 @@
  */
 import type { AttributeType, FieldValue, OptionMeta, RequiredLevel } from './metadata';
 import type { RecordAccounting } from './run-metrics';
+import type { WorkspaceRole } from './authorization';
 import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
 
 // ---------------------------------------------------------------------------
@@ -13,7 +14,8 @@ export interface SessionUser {
   id: string;
   displayName: string;
   email: string | null;
-  role: 'ADMIN' | 'MEMBER';
+  /** As stored. `MEMBER` predates the four-role model; `normaliseRole` reads it. */
+  role: WorkspaceRole | 'MEMBER';
   organization: { id: string; name: string; isDemo: boolean };
   authProvider: 'microsoft' | 'demo';
   /**

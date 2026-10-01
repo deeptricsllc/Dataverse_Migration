@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { writtenByRun } from '../../../shared/run-metrics';
+import { normaliseRole } from '../../../shared/authorization';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
@@ -148,7 +149,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         void s.demoScenarios.ensure({
           userId: resolved!.user.id,
           organizationId: resolved!.user.organization.id,
-          role: resolved!.user.role,
+          role: normaliseRole(resolved!.user.role),
           isDemoOrg: true,
           displayName: resolved!.user.displayName,
           requestId: req.id,
