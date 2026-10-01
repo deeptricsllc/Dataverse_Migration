@@ -12,6 +12,8 @@ import {
 import { DataverseError } from '../../dataverse/errors';
 import { unsupportedOperation } from '../errors';
 import type {
+  DuplicateGroup,
+  DuplicateScanOptions,
   ConnectionCheck,
   ConnectionTestResult,
   MigrationConnector,
@@ -485,6 +487,62 @@ export class PostgresConnector implements MigrationConnector {
     for (const name of key.attributes) criteria[name] = values[name] ?? null;
     const found = await this.findByFields(table, criteria, columns, 2);
     return found.length === 1 ? found[0] : null;
+  }
+
+  /**
+   * Repeated key values, counted by the database.
+   *
+   * `GROUP BY ... HAVING COUNT(*) > 1`, run where the rows are. Reading the table into this
+   * process to count it stops working at exactly the size where somebody needs the answer.
+   *
+   * Identifiers go through the quoting helper, which refuses anything it does not fully recognise.
+   * No value is interpolated: the second read that collects example records binds them.
+   *
+   * NULL is not a duplicate — a thousand unknown values are not one value a thousand times, and
+   * these engines' unique indexes agree.
+   */
+  async findDuplicateKeys(
+    table: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]> {
+    if (columns.length === 0) return [];
+    const quoted = columns.map(pgQuoteIdent);
+    const keyList = quoted.join(', ');
+    const notNull = quoted.map((c) => `${c} IS NOT NULL`).join(' AND ');
+    const groups = await this.query<Record<string, unknown>>(
+      `SELECT ${keyList}, COUNT(*) AS dup_count
+         FROM ${pgQuoteTable(table.logicalName)}
+        WHERE ${notNull}
+        GROUP BY ${keyList}
+       HAVING COUNT(*) > 1
+        ORDER BY dup_count DESC, ${keyList}
+        LIMIT ${Math.max(1, Math.min(opts.maxGroups, 1000))}`,
+      {},
+      `find duplicate ${columns.join('+')} in ${table.logicalName}`,
+    );
+    if (groups.length === 0) return [];
+
+    const pk = pgQuoteIdent(table.primaryIdAttribute);
+    const out: DuplicateGroup[] = [];
+    for (const row of groups) {
+      const values: Record<string, FieldValue> = {};
+      const params: Record<string, FieldValue> = {};
+      const where = columns.map((field, n) => {
+        const v = (row[field] ?? null) as FieldValue;
+        values[field] = v;
+        params[`k${n}`] = v;
+        return `${pgQuoteIdent(field)} = @k${n}`;
+      });
+      const ids = await this.query<Record<string, unknown>>(
+        `SELECT ${pk} AS id FROM ${pgQuoteTable(table.logicalName)}
+          WHERE ${where.join(' AND ')} ORDER BY ${pk} LIMIT ${Math.max(1, Math.min(opts.idsPerGroup, 20))}`,
+        params,
+        `sample duplicate records in ${table.logicalName}`,
+      );
+      out.push({ values, count: Number(row['dup_count'] ?? 0), sampleIds: ids.map((r) => String(r['id'])) });
+    }
+    return out;
   }
 
   async findByFields(

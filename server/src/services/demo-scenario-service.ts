@@ -66,6 +66,24 @@ export class DemoScenarioService {
     await this.building;
   }
 
+  /**
+   * Whether this workspace's worked examples are still being built.
+   *
+   * They are built by running two real migrations, which takes a few seconds, and an evaluator who
+   * arrives during that sees a workspace that looks half finished rather than one that is filling
+   * in. Saying so costs one small poll and removes the only moment the product looks broken when
+   * it is working exactly as intended.
+   */
+  async status(ctx: RequestContext): Promise<{ building: boolean; ready: boolean }> {
+    const rows = await this.db
+      .select({ name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.organizationId, ctx.organizationId), eq(projects.status, 'ACTIVE')));
+    const names = new Set(rows.map((r) => r.name));
+    const ready = DEMO_SCENARIO_PROJECTS.every((n) => names.has(n));
+    return { ready, building: !ready && this.building !== null };
+  }
+
   async tidy(ctx: RequestContext): Promise<{ archived: number }> {
     const rows = await this.db
       .select({ id: projects.id })

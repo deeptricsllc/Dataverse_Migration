@@ -1251,6 +1251,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     database: s.db ? (config.DATABASE_URL ? 'postgres' : 'pglite') : 'unknown',
   }));
 
+  app.get('/api/demo/status', async (req) => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) return { building: false, ready: true };
+    return s.demoScenarios.status(req.ctx);
+  });
+
   app.post('/api/demo/reset', async (req) => {
     if (!config.DEMO_MODE || !req.ctx.isDemoOrg) throw forbidden('Demo data can only be reset in DEMO MODE');
     if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can reset demo data');

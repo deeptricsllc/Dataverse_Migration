@@ -1,3 +1,4 @@
+import { DemoWorkspaceBuilding } from '../components/DemoWorkspaceBuilding';
 import {
   PROJECT_KIND_DESCRIPTIONS,
   PROJECT_KIND_LABELS,
@@ -86,6 +87,8 @@ export function ProjectsPage() {
           </div>
         }
       />
+
+      <DemoWorkspaceBuilding onReady={() => void projects.refetch()} />
 
       {projects.isLoading && <Spinner label="Loading projects…" />}
       {projects.error && <ErrorState error={projects.error} onRetry={() => projects.refetch()} />}

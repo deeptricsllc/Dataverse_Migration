@@ -12,6 +12,8 @@ import type { MicrosoftIdentityService } from './microsoft-identity';
 
 export const SESSION_COOKIE = 'dvm_session';
 const DEMO_ORG_NAME = 'DeepTrics (Demo)';
+/** An evaluator's own workspace. The suffix is there so somebody can tell two of them apart. */
+const EVALUATOR_ORG_NAME = 'Demo workspace';
 
 export interface ResolvedSession {
   sessionId: string;
@@ -193,7 +195,7 @@ export class AuthService {
       // query in the product already filters on, rather than a second one invented for the demo.
       [org] = await this.db
         .insert(organizations)
-        .values({ name: `${DEMO_ORG_NAME} · ${randomToken(4)}`, isDemo: true })
+        .values({ name: `${EVALUATOR_ORG_NAME} ${randomToken(3).toUpperCase()}`, isDemo: true })
         .returning();
     }
     const slug = name

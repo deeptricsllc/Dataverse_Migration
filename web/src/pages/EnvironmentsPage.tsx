@@ -1,3 +1,4 @@
+import { CONNECTOR_VERIFICATION, VERIFICATION_LABELS } from '@shared/connector-verification';
 import type {
   ConnectionTestResultDto,
   ConnectionType,
@@ -79,6 +80,27 @@ const CAPABILITIES: [keyof ConnectorCapabilities, string, string][] = [
   ['supportsOwnership', 'Ownership', 'Records have an owner the migration can set'],
   ['supportsAuditImpersonation', 'Audit attribution', 'Created by / modified by can be preserved'],
 ];
+
+/**
+ * What we have actually seen this connector do, beside what it is allowed to do.
+ *
+ * The pills above answer "may the planner use this?". This answers "have we run it?", which is the
+ * question somebody about to migrate their data is really asking. The two are different and the
+ * card now says both, because a capability flag set to true is a statement about code and a
+ * verification level is a statement about evidence.
+ */
+function VerificationNote({ type }: { type: ConnectionType }) {
+  const row = CONNECTOR_VERIFICATION[type];
+  if (!row) return null;
+  const headline = row.migration ?? row.read ?? 'IMPLEMENTED';
+  const meta = VERIFICATION_LABELS[headline];
+  const tone = headline === 'VERIFIED' ? 'teal' : headline === 'NOT_SUPPORTED' ? 'slate' : 'amber';
+  return (
+    <p className="mt-2 text-xs text-slate-500">
+      <Pill tone={tone}>{meta.label}</Pill> <span title={meta.meaning}>{meta.meaning}</span>
+    </p>
+  );
+}
 
 function CapabilityList({ capabilities }: { capabilities: ConnectorCapabilities }) {
   return (
@@ -492,6 +514,7 @@ export function EnvironmentsPage() {
                 </div>
                 <ConnectionDetails env={env} />
                 <CapabilityList capabilities={env.capabilities} />
+                <VerificationNote type={env.connectionType} />
                 <div className="mt-3 flex items-center gap-2 text-xs">
                   <StatusBadge
                     status={env.connectionStatus}
