@@ -5,3 +5,8 @@ server/drizzle
 playwright-report
 test-results
 package-lock.json
+
+# Written by the real-engine conformance run, not by a person. It is the audit trail for the
+# strongest claim the product makes about itself, and a formatter rewriting it would mean the
+# committed evidence no longer matched what the run produced.
+evidence

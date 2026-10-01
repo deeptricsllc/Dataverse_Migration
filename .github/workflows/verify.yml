@@ -86,13 +86,15 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # SQL Server starts with no user database, and the suite will not create one for itself:
-      # provisioning its own schema inside a database somebody else made is as far as it goes.
+      # SQL Server starts with only the system databases, and the suite will not create one for
+      # itself: provisioning its own schema inside a database somebody else made is as far as it
+      # goes. Done with the driver the product already depends on rather than a tools image —
+      # mcr.microsoft.com/mssql-tools18 publishes no `latest` tag and the first hosted run died
+      # pulling it. The driver also proves it can reach the server before the suite starts.
       - name: Create the SQL Server test database
-        run: |
-          docker run --rm --network host mcr.microsoft.com/mssql-tools18 \
-            /opt/mssql-tools18/bin/sqlcmd -S localhost,1433 -U sa -P 'Conformance!2026' -C \
-            -Q "IF DB_ID('conformance') IS NULL CREATE DATABASE conformance"
+        run: node scripts/ensure-sqlserver-db.mjs "$TEST_MSSQL_URL"
+        env:
+          TEST_MSSQL_URL: sqlserver://sa:Conformance%212026@localhost:1433/conformance
 
       - name: Conformance
         env:
