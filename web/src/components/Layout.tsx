@@ -176,14 +176,21 @@ export function WorkspaceHeader() {
 export function Layout() {
   const { user, realTenantReadOnly } = useSession();
   const location = useLocation();
-  // Project, analysis, comparison and settings pages state their own source and target, so the
-  // global source→target strip would only repeat or contradict them. A comparison page is the clear
-  // case: it names the two systems it reconciled, and the strip above it would name two others.
+  // Project, analysis, comparison, run and report pages state their own source and target, so the
+  // global source→target strip would only repeat or contradict them. A run reached from a project
+  // is the clear case: the page says "Development → UAT" and the strip above it said "Legacy SQL
+  // Server → QA", which is a different migration entirely.
+  //
+  // The validation *list* keeps it, because the "validate environment tables" card on that page
+  // acts on the global source and target and needs to say which ones.
+  const path = location.pathname;
   const showWorkspace =
-    !['/', '/settings'].includes(location.pathname) &&
-    !location.pathname.startsWith('/projects') &&
-    !location.pathname.startsWith('/analyses') &&
-    !location.pathname.startsWith('/data-comparisons');
+    !['/', '/settings', '/runs'].includes(path) &&
+    !path.startsWith('/projects') &&
+    !path.startsWith('/analyses') &&
+    !path.startsWith('/data-comparisons') &&
+    !path.startsWith('/runs/') &&
+    !(path.startsWith('/validation/') && path !== '/validation');
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 flex-none flex-col border-r border-slate-200 bg-slate-900 text-slate-300 md:flex">

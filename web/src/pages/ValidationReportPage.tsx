@@ -9,7 +9,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Callout,
   Card,
@@ -253,10 +252,6 @@ export function ValidationReportPage() {
 
   return (
     <>
-      <WizardSteps
-        current={done ? 9 : 8}
-        links={v.migrationRunId ? { 7: `/runs/${v.migrationRunId}` } : {}}
-      />
       <PageHeader
         title="Validation report"
         description={

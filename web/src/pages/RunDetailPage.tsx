@@ -11,7 +11,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Ban, Pause, Play, RotateCw, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
   Callout,
@@ -79,13 +78,6 @@ export function RunDetailPage() {
 
   return (
     <>
-      <WizardSteps
-        current={terminal ? 8 : 7}
-        links={{
-          6: `/migration/plans/${r.planId}?step=review`,
-          ...(r.latestValidationRunId ? { 9: `/validation/${r.latestValidationRunId}` } : {}),
-        }}
-      />
       <PageHeader
         title={`Migration run`}
         description={
