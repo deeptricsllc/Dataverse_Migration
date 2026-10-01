@@ -1468,6 +1468,50 @@ export class ValidationService {
     }));
   }
 
+  /**
+   * The same differences, as pages, for an export that must not be capped.
+   *
+   * Keyed on the row id rather than on an offset: a validation of a large table can hold a lot of
+   * differences, and `OFFSET` makes the database count and discard everything before the page.
+   */
+  async *differencePages(
+    ctx: RequestContext,
+    id: string,
+    filter: { entity?: string; type?: DifferenceType; outcome?: ValidationOutcome; pageSize?: number } = {},
+  ): AsyncGenerator<ValidationDifferenceDto[]> {
+    await this.get(ctx, id);
+    const size = Math.max(1, Math.min(filter.pageSize ?? 1000, 5000));
+    const conditions = [eq(validationDifferences.validationRunId, id)];
+    if (filter.entity) conditions.push(eq(validationDifferences.logicalName, filter.entity));
+    if (filter.type) conditions.push(eq(validationDifferences.differenceType, filter.type));
+    if (filter.outcome) conditions.push(eq(validationDifferences.outcome, filter.outcome));
+    const scope = and(...conditions)!;
+    type Row = typeof validationDifferences.$inferSelect;
+    let cursor: string | null = null;
+    for (;;) {
+      const rows: Row[] = await this.db
+        .select()
+        .from(validationDifferences)
+        .where(cursor === null ? scope : and(scope, gt(validationDifferences.id, cursor)))
+        .orderBy(asc(validationDifferences.id))
+        .limit(size);
+      if (rows.length === 0) return;
+      yield rows.map((d) => ({
+        id: d.id,
+        entity: d.logicalName,
+        sourceRecordId: d.sourceRecordId,
+        targetRecordId: d.targetRecordId,
+        field: d.field,
+        sourceValue: d.sourceValue,
+        targetValue: d.targetValue,
+        differenceType: d.differenceType as DifferenceType,
+        outcome: d.outcome,
+      }));
+      cursor = rows[rows.length - 1]!.id;
+      if (rows.length < size) return;
+    }
+  }
+
   async differences(
     ctx: RequestContext,
     id: string,

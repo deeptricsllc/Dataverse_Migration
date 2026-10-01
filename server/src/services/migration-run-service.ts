@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
@@ -582,6 +582,63 @@ export class MigrationRunService {
         updatedAt: m.updatedAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * The same records, as pages, for an export that must not be capped.
+   *
+   * Walked by keyset on `(logicalName, sourceId)` — the identity map's own unique index — rather than
+   * by offset, because `OFFSET 2000000` makes the database count two million rows it then discards,
+   * and the last page of a large export is the slowest one exactly when it matters most.
+   */
+  async *recordPages(
+    ctx: RequestContext,
+    runId: string,
+    filter: {
+      entity?: string;
+      outcome?: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
+      pageSize?: number;
+    } = {},
+  ): AsyncGenerator<RecordMapDto[]> {
+    await this.loadRun(ctx.organizationId, runId);
+    const size = Math.max(1, Math.min(filter.pageSize ?? 1000, 5000));
+    const conditions = [eq(migrationRecordMaps.runId, runId)];
+    if (filter.entity) conditions.push(eq(migrationRecordMaps.logicalName, filter.entity));
+    if (filter.outcome) conditions.push(eq(migrationRecordMaps.outcome, filter.outcome));
+    const scope = and(...conditions)!;
+    type Row = typeof migrationRecordMaps.$inferSelect;
+    let cursor: { logicalName: string; sourceId: string } | null = null;
+    for (;;) {
+      const rows: Row[] = await this.db
+        .select()
+        .from(migrationRecordMaps)
+        .where(
+          cursor === null
+            ? scope
+            : and(
+                scope,
+                gt(
+                  sql`(${migrationRecordMaps.logicalName}, ${migrationRecordMaps.sourceId})`,
+                  sql`(${cursor.logicalName}, ${cursor.sourceId})`,
+                ),
+              ),
+        )
+        .orderBy(asc(migrationRecordMaps.logicalName), asc(migrationRecordMaps.sourceId))
+        .limit(size);
+      if (rows.length === 0) return;
+      yield rows.map((m) => ({
+        entity: m.logicalName,
+        sourceId: m.sourceId,
+        targetId: m.targetId,
+        outcome: m.outcome,
+        matchMethod: m.matchMethod,
+        deferredStatus: m.deferredStatus,
+        updatedAt: m.updatedAt.toISOString(),
+      }));
+      const last = rows[rows.length - 1]!;
+      cursor = { logicalName: last.logicalName, sourceId: last.sourceId };
+      if (rows.length < size) return;
+    }
   }
 
   /**

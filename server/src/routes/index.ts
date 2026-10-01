@@ -5,7 +5,8 @@ import { writtenByRun } from '../../../shared/run-metrics';
 import { normaliseRole } from '../../../shared/authorization';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
-import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
+import { Readable } from 'node:stream';
+import { csvFileName, csvStream, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
 import { verifyEvidencePackage } from '../services/evidence-verifier';
 import { accessRequestSchema } from '../services/access-request-service';
@@ -42,6 +43,14 @@ const VERY_EXPENSIVE = { config: { rateLimit: { max: 10, timeWindow: '1 minute' 
  * the tightest allowance of all.
  */
 const PROBES_A_HOST = { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } };
+
+/** Turns pages of one shape into pages of CSV cells, without collecting either. */
+async function* map<T>(
+  pages: AsyncIterable<T[]>,
+  row: (item: T) => CsvValue[],
+): AsyncGenerator<CsvValue[][]> {
+  for await (const page of pages) yield page.map(row);
+}
 
 export async function registerRoutes(app: FastifyInstance, s: Services) {
   const { config } = s;
@@ -682,6 +691,25 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    * from, so the note is written only when rows were actually left out — and it goes in the file,
    * because that is what gets opened, forwarded and archived.
    */
+  /**
+   * A CSV sent as its rows are found, for the exports that scale with the migration.
+   *
+   * `sendCsv` holds the file and caps it, which is the right trade for a summary and the wrong one for
+   * one row per record: a capped export answers a different question from the one somebody asked, and
+   * a TRUNCATED line at the bottom does not make it the right answer. Nothing here accumulates, so
+   * there is no cap to need.
+   */
+  const streamCsv = (
+    reply: FastifyReply,
+    name: string,
+    headers: string[],
+    pages: AsyncIterable<CsvValue[][]>,
+  ) =>
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${name}"`)
+      .send(Readable.from(csvStream(headers, pages)));
+
   const sendCsv = (
     reply: FastifyReply,
     name: string,
@@ -822,12 +850,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items, total } = await s.runs.records(req.ctx, id, { ...q, limit: 100_000, offset: 0 });
-    return sendCsv(
+    return streamCsv(
       reply,
       csvFileName(['migration-records', run.planName]),
       ['Table', 'Source id', 'Target id', 'Outcome', 'Matched by', 'Deferred lookups', 'Updated at'],
-      items.map((m) => [
+      map(s.runs.recordPages(req.ctx, id, q), (m) => [
         m.entity,
         m.sourceId,
         m.targetId,
@@ -836,7 +863,6 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         m.deferredStatus,
         m.updatedAt,
       ]),
-      total,
     );
   });
 
@@ -891,8 +917,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.validation.get(req.ctx, id);
-    const { items } = await s.validation.differences(req.ctx, id, { ...q, limit: 50_000, offset: 0 });
-    return sendCsv(
+    return streamCsv(
       reply,
       csvFileName([
         'validation-differences',
@@ -909,7 +934,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Difference',
         'Outcome',
       ],
-      items.map((d) => [
+      map(s.validation.differencePages(req.ctx, id, q), (d) => [
         d.entity,
         d.sourceRecordId,
         d.targetRecordId,
