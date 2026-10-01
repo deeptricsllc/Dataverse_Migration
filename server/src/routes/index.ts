@@ -128,9 +128,13 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.post(
     '/api/auth/demo-login',
     // Tighter than the other auth routes because each anonymous sign-in seeds a workspace and runs
-    // two real migrations. Thirty a minute from one address would be a denial of service with
-    // extra steps.
-    { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } },
+    // two real migrations, so a flood here is a flood of work rather than of rows.
+    //
+    // Not as tight as it first was. Several people behind one office address are a normal way for
+    // a demo to be used, and six a minute made them block each other — which is the failure mode
+    // where a protection costs more than the thing it protects against. The ceiling on live
+    // workspaces is what actually bounds the cost; this only stops a script.
+    { config: { rateLimit: { max: 15, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const { name } = z.object({ name: z.string().max(80).optional() }).parse(req.body ?? {});
       const userId = await s.auth.demoSignIn(req.id, name);
