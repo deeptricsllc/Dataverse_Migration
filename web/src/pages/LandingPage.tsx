@@ -147,9 +147,12 @@ function PreflightVignette() {
             NOTHING WRITTEN
           </span>
         </div>
-        <dl className="mt-4 grid grid-cols-5 gap-2">
+        {/* Five columns of five-digit numbers have a minimum width, and a grid item will not go
+            below its content: that floor was what pushed this page past a phone's viewport, not the
+            header it showed up in. Three columns on a phone, five once there is room. */}
+        <dl className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
           {TILES.map((t) => (
-            <div key={t.label} className="rounded-lg bg-white/5 p-2.5">
+            <div key={t.label} className="min-w-0 rounded-lg bg-white/5 p-2.5">
               <dt className="truncate text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                 {t.label}
               </dt>
@@ -270,8 +273,15 @@ export function LandingPage() {
             : 'inline-flex items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-2 text-sm font-semibold text-amber-950 transition-colors hover:bg-amber-300 disabled:opacity-70'
         }
       >
-        <FlaskConical className="h-4 w-4" aria-hidden />
-        {demo.isPending ? 'Preparing environments…' : 'Try the live demo'}
+        <FlaskConical className="h-4 w-4 flex-none" aria-hidden />
+        {demo.isPending ? (
+          'Preparing environments…'
+        ) : (
+          <>
+            <span className="sm:hidden">Try the demo</span>
+            <span className="hidden sm:inline">Try the live demo</span>
+          </>
+        )}
       </button>
     );
 
@@ -286,7 +296,11 @@ export function LandingPage() {
             <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-brand-600">
               <Boxes className="h-5 w-5 text-white" aria-hidden />
             </div>
-            <div className="leading-tight">
+            {/* The name is long, and on a phone it is the thing competing with both buttons for a
+                390-pixel row. The mark carries the brand there; the name returns as soon as there
+                is room for it. A hosted run found this as 45 pixels of horizontal scroll, on Linux
+                fonts wide enough to push the row past the viewport. */}
+            <div className="hidden leading-tight sm:block">
               <div className="text-sm font-semibold text-white">{PRODUCT_NAME}</div>
               <div className="text-[11px] text-slate-400">by DeepTrics</div>
             </div>

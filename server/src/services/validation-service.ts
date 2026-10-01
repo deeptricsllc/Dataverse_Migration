@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type {
@@ -51,7 +51,7 @@ import {
 } from '../../../shared/aggregates';
 import {
   accountedFor,
-  countOutcomes,
+  accountingFromCounts,
   EMPTY_ACCOUNTING,
   sumAccounting,
   writtenByRun,
@@ -80,6 +80,8 @@ const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
 
 /** Maximum records compared field-by-field per table (reported when sampling applies). */
+/** Records compared in one round trip. Constant memory per batch, whatever the table holds. */
+const COMPARISON_BATCH = 500;
 const MAX_DIFFERENCES_PER_TABLE = 2000;
 /** Distinct repeated values reported per table. The count of records is never capped. */
 const MAX_DUPLICATE_GROUPS = 50;
@@ -586,15 +588,24 @@ export class ValidationService {
             },
     );
 
-    // Identity map for this migration run (or ID-based matching without one).
-    const maps = vr.migrationRunId
+    /**
+     * What this run did with this table, counted by the database.
+     *
+     * This used to load every identity row for the table and count the array. A ten-million-record
+     * table has ten million identity rows, so counting them that way needs ten million objects in
+     * memory before the first comparison — and the count is the one number every screen shows, so
+     * the cheapest report was the one that could not be produced at all at the size where somebody
+     * would pay for it. Five numbers come back instead, whatever the table holds.
+     */
+    const mapScope = vr.migrationRunId
+      ? and(eq(migrationRecordMaps.runId, vr.migrationRunId), eq(migrationRecordMaps.logicalName, table))!
+      : null;
+    const outcomeCounts = mapScope
       ? await this.db
-          .select()
+          .select({ outcome: migrationRecordMaps.outcome, n: count() })
           .from(migrationRecordMaps)
-          .where(
-            and(eq(migrationRecordMaps.runId, vr.migrationRunId), eq(migrationRecordMaps.logicalName, table)),
-          )
-          .orderBy(asc(migrationRecordMaps.sourceId))
+          .where(mapScope)
+          .groupBy(migrationRecordMaps.outcome)
       : [];
     const mappings =
       p.snapshotEntity?.mappings ??
@@ -636,130 +647,257 @@ export class ValidationService {
     for (const check of auditChecks)
       if (!mappings.some((m) => m.targetField === check.targetField)) mappings.push(check);
 
-    let pairs: EntityComparisonInput['pairs'];
-    const failedMaps = maps.filter((m) => m.outcome === 'FAILED');
-    // What the run did, straight from its own record outcomes, in the one shape the whole product
-    // reads. `verifiable` is a different question from "what did this run write": a record the run
-    // skipped is in the target and worth checking, but the run did not write it. Collapsing the two
-    // is what made the report claim 28 records were written by a run that created nothing.
-    base.accounting = countOutcomes(maps.map((m) => m.outcome));
-    const verifiable = maps.filter((m) => m.outcome !== 'FAILED' && m.targetId);
+    // What the run did, in the one shape the whole product reads. `verifiable` is a different
+    // question from "what did this run write": a record the run skipped is in the target and worth
+    // checking, but the run did not write it. Collapsing the two is what made the report claim 28
+    // records were written by a run that created nothing.
+    base.accounting = accountingFromCounts(outcomeCounts);
+    const failedInRun = base.accounting.failed;
+    // Rows that can be compared at all: not failed, and with a target identifier to look up.
+    const verifiableScope = mapScope
+      ? and(mapScope, ne(migrationRecordMaps.outcome, 'FAILED'), isNotNull(migrationRecordMaps.targetId))!
+      : null;
+    const [verifiableRow] = verifiableScope
+      ? await this.db.select({ n: count() }).from(migrationRecordMaps).where(verifiableScope)
+      : [];
+    const verifiableCount = Number(verifiableRow?.n ?? 0);
 
     // How many records this validation was asked to compare. FULL has no cap, which is the only
     // setting that can report full coverage.
     const cap = depthCap(p.depth);
-    const sampled = cap === null ? verifiable : verifiable.slice(0, cap);
-    if (vr.migrationRunId) {
-      const sourceRecords = await this.fetchByIds(
-        p.sConn,
-        source,
-        sampled.map((m) => m.sourceId),
-        mappings.map((m) => m.sourceField),
-      );
-      const targetRecords = await this.fetchByIds(
-        p.tConn,
-        target,
-        sampled.map((m) => m.targetId!),
-        mappings.map((m) => m.targetField),
-      );
-      pairs = sampled
-        .filter((m) => sourceRecords.has(m.sourceId))
-        .map((m) => ({
-          source: sourceRecords.get(m.sourceId)!,
-          target: targetRecords.get(m.targetId!.toLowerCase()) ?? null,
-          outcome: m.outcome,
-        }));
-    } else {
-      // Without a run: compare records by identical primary id (sample).
-      const sample: DvRecord[] = [];
-      for await (const page of p.sConn.queryRecords(
-        source,
-        mappings.map((m) => m.sourceField),
-        { pageSize: 500 },
-      )) {
-        sample.push(...page);
-        if (cap !== null && sample.length >= cap) break;
-      }
-      const targetRecords = await this.fetchByIds(
-        p.tConn,
-        target,
-        sample.map((r) => r.id),
-        mappings.map((m) => m.targetField),
-      );
-      pairs = sample.map((r) => ({
-        source: r,
-        target: targetRecords.get(r.id.toLowerCase()) ?? null,
-        outcome: 'UNMAPPED' as const,
-      }));
-    }
+    const cmp = { matched: 0, missing: 0, different: 0 };
+    let examined = 0;
+    // Every difference found, including the ones past the listing cap. The counts a reader adds up
+    // must be the real ones; only the examples are limited.
+    let totalDifferences = 0;
+    /** Differences by kind, tallied as batches go by rather than counted from a kept list. */
+    const byType = new Map<DifferenceType, number>();
+    const countOf = (type: DifferenceType) => byType.get(type) ?? 0;
+    let broken = 0;
 
-    // Expected lookup targets: identity maps for the environment pair, else same id.
-    const lookupIds = new Map<string, Set<string>>();
-    for (const pair of pairs) {
-      for (const m of mappings.filter((x) => x.isLookup)) {
-        const v = pair.source.values[m.sourceField];
-        if (isLookupValue(v)) {
-          if (!lookupIds.has(v.logicalName)) lookupIds.set(v.logicalName, new Set());
-          lookupIds.get(v.logicalName)!.add(v.id.toLowerCase());
+    /**
+     * One batch of records, compared and then let go.
+     *
+     * The whole table used to be read into memory, compared in one call, and the differences kept
+     * whether or not they could be stored. FULL validation of a large table therefore held every
+     * source record, every target record and every difference at once — three copies of a table
+     * nobody has that much memory for. Batches of a few hundred cost the same per record and a
+     * constant amount of memory, so the only thing that grows with the table is the time.
+     */
+    const comparePairs = async (pairs: EntityComparisonInput['pairs']) => {
+      if (pairs.length === 0) return;
+      // Expected lookup targets: identity maps for the environment pair, else same id.
+      const lookupIds = new Map<string, Set<string>>();
+      for (const pair of pairs) {
+        for (const m of mappings.filter((x) => x.isLookup)) {
+          const v = pair.source.values[m.sourceField];
+          if (isLookupValue(v)) {
+            if (!lookupIds.has(v.logicalName)) lookupIds.set(v.logicalName, new Set());
+            lookupIds.get(v.logicalName)!.add(v.id.toLowerCase());
+          }
         }
       }
-    }
-    const expected = new Map<string, string>();
-    for (const [logicalName, ids] of lookupIds) {
-      const idList = [...ids];
-      for (let i = 0; i < idList.length; i += 500) {
-        const chunk = idList.slice(i, i + 500);
-        const rows = await this.db
-          .select({ sourceId: migrationRecordMaps.sourceId, targetId: migrationRecordMaps.targetId })
+      const expected = new Map<string, string>();
+      for (const [logicalName, ids] of lookupIds) {
+        const idList = [...ids];
+        for (let i = 0; i < idList.length; i += 500) {
+          const chunk = idList.slice(i, i + 500);
+          const rows = await this.db
+            .select({ sourceId: migrationRecordMaps.sourceId, targetId: migrationRecordMaps.targetId })
+            .from(migrationRecordMaps)
+            .where(
+              and(
+                eq(migrationRecordMaps.organizationId, vr.organizationId),
+                eq(migrationRecordMaps.sourceEnvironmentId, vr.sourceEnvironmentId),
+                eq(migrationRecordMaps.targetEnvironmentId, vr.targetEnvironmentId),
+                eq(migrationRecordMaps.logicalName, logicalName),
+                inArray(migrationRecordMaps.sourceId, chunk),
+                ne(migrationRecordMaps.outcome, 'FAILED'),
+                isNotNull(migrationRecordMaps.targetId),
+              ),
+            )
+            .orderBy(desc(migrationRecordMaps.updatedAt));
+          for (const r of rows)
+            if (!expected.has(`${logicalName}:${r.sourceId}`))
+              expected.set(`${logicalName}:${r.sourceId}`, r.targetId!);
+        }
+        const unresolved = idList.filter((id) => !expected.has(`${logicalName}:${id}`));
+        const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
+        if (unresolved.length && tTable) {
+          const found = await p.tConn.retrieveByIds(tTable, unresolved, []);
+          for (const f of found) expected.set(`${logicalName}:${f.id.toLowerCase()}`, f.id.toLowerCase());
+        }
+      }
+
+      const batch = compareRecords({
+        source,
+        target,
+        mappings,
+        pairs,
+        expectedLookup: (logicalName, id) =>
+          p.principalMap.get(`${logicalName}:${id.toLowerCase()}`) ??
+          expected.get(`${logicalName}:${id.toLowerCase()}`) ??
+          null,
+      });
+      cmp.matched += batch.matched;
+      cmp.missing += batch.missing;
+      cmp.different += batch.different;
+      examined += pairs.length;
+      // The counts above are complete; only the listed examples are capped, and the report says so
+      // when they are. Keeping every difference in memory to throw most of them away at the insert
+      // was the other half of the same problem.
+      for (const d of batch.diffs) {
+        byType.set(d.differenceType, countOf(d.differenceType) + 1);
+        if (diffs.length < MAX_DIFFERENCES_PER_TABLE) diffs.push(d);
+      }
+      totalDifferences += batch.diffs.length;
+
+      // References: every lookup on a compared target record must point at a record that exists.
+      // Resolved per batch, because the alternative is remembering every lookup value in the table
+      // to ask about them all at the end.
+      const refIds = new Map<string, Map<string, string[]>>();
+      for (const pair of pairs) {
+        if (!pair.target) continue;
+        for (const m of mappings.filter((x) => x.isLookup)) {
+          const v = pair.target.values[m.targetField];
+          if (!isLookupValue(v)) continue;
+          if (!refIds.has(v.logicalName)) refIds.set(v.logicalName, new Map());
+          const byId = refIds.get(v.logicalName)!;
+          byId.set(v.id.toLowerCase(), [
+            ...(byId.get(v.id.toLowerCase()) ?? []),
+            `${pair.target.id}|${m.targetField}|${pair.source.id}`,
+          ]);
+        }
+      }
+      for (const [logicalName, byId] of refIds) {
+        const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
+        const ids = [...byId.keys()];
+        const found = new Set<string>();
+        if (tTable)
+          (await p.tConn.retrieveByIds(tTable, ids, [])).forEach((r) => found.add(r.id.toLowerCase()));
+        for (const id of ids.filter((x) => !found.has(x))) {
+          for (const ref of byId.get(id)!) {
+            const [targetRecordId, field, sourceRecordId] = ref.split('|');
+            broken++;
+            totalDifferences++;
+            if (diffs.length < MAX_DIFFERENCES_PER_TABLE)
+              diffs.push({
+                sourceRecordId,
+                targetRecordId,
+                field,
+                sourceValue: null,
+                targetValue: `${logicalName}(${id})`,
+                differenceType: 'BROKEN_REFERENCE',
+                outcome: 'FAIL',
+              });
+          }
+        }
+      }
+    };
+
+    if (verifiableScope) {
+      let cursor: string | null = null;
+      for (;;) {
+        const remaining = cap === null ? COMPARISON_BATCH : Math.min(COMPARISON_BATCH, cap - examined);
+        if (remaining <= 0) break;
+        const page = await this.db
+          .select({
+            sourceId: migrationRecordMaps.sourceId,
+            targetId: migrationRecordMaps.targetId,
+            outcome: migrationRecordMaps.outcome,
+          })
           .from(migrationRecordMaps)
           .where(
-            and(
-              eq(migrationRecordMaps.organizationId, vr.organizationId),
-              eq(migrationRecordMaps.sourceEnvironmentId, vr.sourceEnvironmentId),
-              eq(migrationRecordMaps.targetEnvironmentId, vr.targetEnvironmentId),
-              eq(migrationRecordMaps.logicalName, logicalName),
-              inArray(migrationRecordMaps.sourceId, chunk),
-              ne(migrationRecordMaps.outcome, 'FAILED'),
-              isNotNull(migrationRecordMaps.targetId),
-            ),
+            cursor === null
+              ? verifiableScope
+              : and(verifiableScope, gt(migrationRecordMaps.sourceId, cursor)),
           )
-          .orderBy(desc(migrationRecordMaps.updatedAt));
-        for (const r of rows)
-          if (!expected.has(`${logicalName}:${r.sourceId}`))
-            expected.set(`${logicalName}:${r.sourceId}`, r.targetId!);
+          .orderBy(asc(migrationRecordMaps.sourceId))
+          .limit(remaining);
+        if (page.length === 0) break;
+        const [sourceRecords, targetRecords] = await Promise.all([
+          this.fetchByIds(
+            p.sConn,
+            source,
+            page.map((m) => m.sourceId),
+            mappings.map((m) => m.sourceField),
+          ),
+          this.fetchByIds(
+            p.tConn,
+            target,
+            page.map((m) => m.targetId!),
+            mappings.map((m) => m.targetField),
+          ),
+        ]);
+        await comparePairs(
+          page
+            .filter((m) => sourceRecords.has(m.sourceId))
+            .map((m) => ({
+              source: sourceRecords.get(m.sourceId)!,
+              target: targetRecords.get(m.targetId!.toLowerCase()) ?? null,
+              outcome: m.outcome,
+            })),
+        );
+        cursor = page[page.length - 1]!.sourceId;
+        if (page.length < remaining) break;
       }
-      const unresolved = idList.filter((id) => !expected.has(`${logicalName}:${id}`));
-      const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
-      if (unresolved.length && tTable) {
-        const found = await p.tConn.retrieveByIds(tTable, unresolved, []);
-        for (const f of found) expected.set(`${logicalName}:${f.id.toLowerCase()}`, f.id.toLowerCase());
+    } else {
+      // Without a run: compare records by identical primary id, a page at a time.
+      let batch: DvRecord[] = [];
+      const flush = async () => {
+        if (batch.length === 0) return;
+        const targetRecords = await this.fetchByIds(
+          p.tConn,
+          target,
+          batch.map((r) => r.id),
+          mappings.map((m) => m.targetField),
+        );
+        await comparePairs(
+          batch.map((r) => ({
+            source: r,
+            target: targetRecords.get(r.id.toLowerCase()) ?? null,
+            outcome: 'UNMAPPED' as const,
+          })),
+        );
+        batch = [];
+      };
+      outer: for await (const page of p.sConn.queryRecords(
+        source,
+        mappings.map((m) => m.sourceField),
+        { pageSize: COMPARISON_BATCH },
+      )) {
+        for (const record of page) {
+          batch.push(record);
+          if (batch.length >= COMPARISON_BATCH) await flush();
+          if (cap !== null && examined + batch.length >= cap) break outer;
+        }
       }
+      await flush();
     }
 
-    // 3 + 4. Existence and field values
-    const cmp = compareRecords({
-      source,
-      target,
-      mappings,
-      pairs,
-      expectedLookup: (logicalName, id) =>
-        p.principalMap.get(`${logicalName}:${id.toLowerCase()}`) ??
-        expected.get(`${logicalName}:${id.toLowerCase()}`) ??
-        null,
-    });
-    diffs.push(...cmp.diffs);
-    for (const f of failedMaps) {
-      diffs.push({
-        sourceRecordId: f.sourceId,
-        targetRecordId: null,
-        field: null,
-        sourceValue: null,
-        targetValue: 'Record failed to migrate',
-        differenceType: 'MISSING_IN_TARGET',
-        outcome: 'FAIL',
-      });
+    // Records the run itself reported as failed. Listed as examples up to the same cap, because a
+    // thousand identical "failed to migrate" rows tell a reader nothing the count did not.
+    if (mapScope && failedInRun > 0 && diffs.length < MAX_DIFFERENCES_PER_TABLE) {
+      const failedExamples = await this.db
+        .select({ sourceId: migrationRecordMaps.sourceId })
+        .from(migrationRecordMaps)
+        .where(and(mapScope, eq(migrationRecordMaps.outcome, 'FAILED'))!)
+        .orderBy(asc(migrationRecordMaps.sourceId))
+        .limit(MAX_DIFFERENCES_PER_TABLE - diffs.length);
+      for (const f of failedExamples) {
+        diffs.push({
+          sourceRecordId: f.sourceId,
+          targetRecordId: null,
+          field: null,
+          sourceValue: null,
+          targetValue: 'Record failed to migrate',
+          differenceType: 'MISSING_IN_TARGET',
+          outcome: 'FAIL',
+        });
+      }
+      totalDifferences += failedInRun;
     }
-    base.checkedRecords = pairs.length;
+    base.checkedRecords = examined;
     base.matched = cmp.matched;
     /**
      * Two different facts, kept apart.
@@ -774,13 +912,13 @@ export class ValidationService {
      * report by hand rather than by a test, which is also how the last one was found.
      */
     base.missing = cmp.missing;
-    base.failedInRun = failedMaps.length;
+    base.failedInRun = failedInRun;
     base.different = cmp.different;
     // Coverage is derived from the counts rather than written beside them, so a message cannot
     // claim more than the numbers underneath it support.
     base.coverage = coverageOf({
-      eligible: vr.migrationRunId ? verifiable.length : (base.sourceCount ?? pairs.length),
-      examined: pairs.length,
+      eligible: vr.migrationRunId ? verifiableCount : (base.sourceCount ?? examined),
+      examined,
       cap,
     });
     const sampleNote = base.coverage.mode === 'SAMPLED' ? ` ${describeCoverage(base.coverage)}` : '';
@@ -825,10 +963,9 @@ export class ValidationService {
       checks.push({
         check: 'RECORD_EXISTENCE',
         outcome: cmp.missing === 0 ? 'PASS' : 'FAIL',
-        message: `${pairs.length - cmp.missing} of ${pairs.length} source record(s) found in target by identifier${cmp.missing ? `; ${cmp.missing} missing` : ''}`,
+        message: `${examined - cmp.missing} of ${examined} source record(s) found in target by identifier${cmp.missing ? `; ${cmp.missing} missing` : ''}`,
       });
     }
-    const countOf = (type: DifferenceType) => cmp.diffs.filter((d) => d.differenceType === type).length;
     const lost = countOf('VALUE_LOST');
     const truncated = countOf('VALUE_TRUNCATED');
     const valueFails = countOf('VALUE_MISMATCH') + countOf('LOOKUP_MISMATCH') + lost + truncated;
@@ -861,44 +998,7 @@ export class ValidationService {
             },
     );
 
-    // 5. References: every lookup on checked target records must point at an existing record.
-    const refIds = new Map<string, Map<string, string[]>>();
-    for (const pair of pairs) {
-      if (!pair.target) continue;
-      for (const m of mappings.filter((x) => x.isLookup)) {
-        const v = pair.target.values[m.targetField];
-        if (!isLookupValue(v)) continue;
-        if (!refIds.has(v.logicalName)) refIds.set(v.logicalName, new Map());
-        const byId = refIds.get(v.logicalName)!;
-        byId.set(v.id.toLowerCase(), [
-          ...(byId.get(v.id.toLowerCase()) ?? []),
-          `${pair.target.id}|${m.targetField}|${pair.source.id}`,
-        ]);
-      }
-    }
-    let broken = 0;
-    for (const [logicalName, byId] of refIds) {
-      const tTable = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
-      const ids = [...byId.keys()];
-      const found = new Set<string>();
-      if (tTable)
-        (await p.tConn.retrieveByIds(tTable, ids, [])).forEach((r) => found.add(r.id.toLowerCase()));
-      for (const id of ids.filter((x) => !found.has(x))) {
-        for (const ref of byId.get(id)!) {
-          const [targetRecordId, field, sourceRecordId] = ref.split('|');
-          broken++;
-          diffs.push({
-            sourceRecordId,
-            targetRecordId,
-            field,
-            sourceValue: null,
-            targetValue: `${logicalName}(${id})`,
-            differenceType: 'BROKEN_REFERENCE',
-            outcome: 'FAIL',
-          });
-        }
-      }
-    }
+    // 5. References were resolved batch by batch, as the records were compared.
     base.brokenReferences = broken;
     checks.push(
       broken === 0
@@ -910,10 +1010,15 @@ export class ValidationService {
           },
     );
 
-    await this.scanDuplicates(p, target, base, checks, maps);
+    await this.scanDuplicates(p, target, base, checks, mapScope);
     await this.reconcileAggregates(p, source, target, base, checks, mappings);
 
-    return this.saveEntity(vr.id, { ...base, outcome: worst(checks.map((c) => c.outcome)) }, diffs);
+    return this.saveEntity(
+      vr.id,
+      { ...base, outcome: worst(checks.map((c) => c.outcome)) },
+      diffs,
+      totalDifferences,
+    );
   }
 
   private async fetchByIds(
@@ -1116,7 +1221,8 @@ export class ValidationService {
     target: TableMetadata,
     base: ValidationEntityResultDto,
     checks: ValidationCheckDto[],
-    maps: { targetId: string | null; outcome: string }[],
+    /** The identity rows for this run and table, as a predicate rather than as rows. */
+    mapScope: SQL | null,
   ): Promise<void> {
     // What was supposed to be unique: the key the plan matched records on, or the table's own
     // primary id when nothing else was configured. Inventing a uniqueness expectation the customer
@@ -1160,13 +1266,31 @@ export class ValidationService {
       return;
     }
 
-    // Whether this run is responsible. Only answerable when every record in the group is in hand:
-    // with a partial sample, the records this run wrote might be the ones not sampled.
-    const writtenHere = new Set(
-      maps
-        .filter((m) => m.targetId && (m.outcome === 'CREATED' || m.outcome === 'UPDATED'))
-        .map((m) => m.targetId!.toLowerCase()),
-    );
+    /**
+     * Whether this run is responsible. Only answerable when every record in the group is in hand:
+     * with a partial sample, the records this run wrote might be the ones not sampled.
+     *
+     * Asked about the sample rather than about the table. There are at most fifty groups of five
+     * identifiers here, and looking those up is one indexed query — where loading the run's whole
+     * identity map to build the same answer was the largest allocation in a validation.
+     */
+    const sampleIds = [...new Set(groups.flatMap((g) => g.sampleIds.map((id) => id.toLowerCase())))];
+    const writtenHere = new Set<string>();
+    if (mapScope && sampleIds.length > 0) {
+      for (let i = 0; i < sampleIds.length; i += 500) {
+        const rows = await this.db
+          .select({ targetId: migrationRecordMaps.targetId })
+          .from(migrationRecordMaps)
+          .where(
+            and(
+              mapScope,
+              inArray(migrationRecordMaps.outcome, ['CREATED', 'UPDATED']),
+              inArray(sql`lower(${migrationRecordMaps.targetId})`, sampleIds.slice(i, i + 500)),
+            ),
+          );
+        for (const r of rows) if (r.targetId) writtenHere.add(r.targetId.toLowerCase());
+      }
+    }
     base.duplicates = groups.map((g) => {
       const complete = g.count <= g.sampleIds.length;
       const mine = g.sampleIds.filter((id) => writtenHere.has(id.toLowerCase())).length;
@@ -1208,7 +1332,19 @@ export class ValidationService {
     });
   }
 
-  private async saveEntity(validationRunId: string, result: ValidationEntityResultDto, diffs: PendingDiff[]) {
+  private async saveEntity(
+    validationRunId: string,
+    result: ValidationEntityResultDto,
+    diffs: PendingDiff[],
+    /**
+     * Every difference found, which is not the same as every difference in hand.
+     *
+     * The listing is capped before it reaches memory now, so the array no longer knows how many
+     * there were. Inferring the total from the array would have quietly turned "2,000 of 40,000"
+     * into "2,000", which is the one number in this message that matters.
+     */
+    totalDifferences = diffs.length,
+  ) {
     await this.db.insert(validationEntityResults).values({
       validationRunId,
       logicalName: result.logicalName,
@@ -1233,11 +1369,11 @@ export class ValidationService {
     // conclude they have seen every difference. The check that reports this table carries the note, so
     // it travels with the result rather than living only in a comment here.
     const capped = diffs.slice(0, MAX_DIFFERENCES_PER_TABLE);
-    if (diffs.length > capped.length) {
+    if (totalDifferences > capped.length) {
       result.checks.push({
         check: 'FIELD_VALUES',
         outcome: 'WARNING',
-        message: `Showing ${capped.length.toLocaleString()} of ${diffs.length.toLocaleString()} differences. The counts are complete; the listed differences are the first ${MAX_DIFFERENCES_PER_TABLE.toLocaleString()}.`,
+        message: `Showing ${capped.length.toLocaleString()} of ${totalDifferences.toLocaleString()} differences. The counts are complete; the listed differences are the first ${MAX_DIFFERENCES_PER_TABLE.toLocaleString()}.`,
       });
     }
     for (let i = 0; i < capped.length; i += 200) {

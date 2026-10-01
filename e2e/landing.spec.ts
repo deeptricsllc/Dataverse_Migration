@@ -99,18 +99,22 @@ test('the demo still starts from the landing page, and deep links still ask for 
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
 });
 
-test('the landing page works on a phone', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: /Know exactly what a migration will do/ })).toBeVisible();
-  // A horizontal scrollbar on a marketing page is the first thing anyone notices on a phone.
-  // Evaluated as an expression string: this file is typechecked without the DOM library.
-  const overflow = Number(
-    await page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth'),
-  );
-  // Naming the culprit, because "45 pixels too wide" sends whoever sees this failure hunting
-  // through the whole page, and the element that sticks out is already known to the browser.
-  const culprits = (await page.evaluate(`(() => {
+// 390 is an iPhone, 360 is most Android phones, and 320 is the narrowest anyone still uses. Testing
+// the margin rather than one device is the point: the layout that failed a hosted run by 45 pixels
+// at 390 was also 30 pixels too wide at 360 and 70 at 320, and only the first was being checked.
+for (const width of [390, 360, 320]) {
+  test(`the landing page works on a phone (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: /Know exactly what a migration will do/ })).toBeVisible();
+    // A horizontal scrollbar on a marketing page is the first thing anyone notices on a phone.
+    // Evaluated as an expression string: this file is typechecked without the DOM library.
+    const overflow = Number(
+      await page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth'),
+    );
+    // Naming the culprit, because "45 pixels too wide" sends whoever sees this failure hunting
+    // through the whole page, and the element that sticks out is already known to the browser.
+    const culprits = (await page.evaluate(`(() => {
     const limit = document.documentElement.clientWidth;
     return Array.from(document.querySelectorAll('*'))
       .map((el) => {
@@ -121,6 +125,9 @@ test('the landing page works on a phone', async ({ page }) => {
       .sort((a, b) => b.right - a.right)
       .slice(0, 5);
   })()`)) as { right: number; width: number; tag: string; cls: string }[];
-  expect(overflow, `widest elements past the viewport: ${JSON.stringify(culprits)}`).toBeLessThanOrEqual(1);
-  await expect(page.getByTestId('try-demo-quiet')).toBeVisible();
-});
+    expect(overflow, `widest elements past the viewport: ${JSON.stringify(culprits)}`).toBeLessThanOrEqual(1);
+    await expect(page.getByTestId('try-demo-quiet')).toBeVisible();
+    // Signing in must still be reachable; the brand mark is what gives way, not an action.
+    await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
+  });
+}

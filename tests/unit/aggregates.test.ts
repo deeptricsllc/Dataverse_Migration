@@ -48,6 +48,18 @@ describe('which columns can be reconciled by totals', () => {
     expect(canCompareExtremes(attr('c', 'String'))).toBe(false);
     expect(whyNotAggregatable(attr('c', 'String'))).toMatch(/collation/);
   });
+
+  it('refuses to compare the extremes of a date without a time', () => {
+    // Found by validating 1,415 records rather than by reading the code. The source reported a
+    // maximum of 2024-05-31 17:00-07 and the target 2024-06-01 00:00-07: the same day, seven hours
+    // apart, and a failed migration according to the only check that looked at instants. The
+    // record-level comparison had already called all 1,415 records identical, and it was right.
+    const dateOnly = { ...attr('c', 'DateTime'), dateTimeBehavior: 'DateOnly' };
+    expect(canCompareExtremes(dateOnly)).toBe(false);
+    expect(whyNotAggregatable(dateOnly)).toMatch(/timezone/);
+    // A real timestamp still compares, because both sides mean the same instant by it.
+    expect(canCompareExtremes({ ...attr('c', 'DateTime'), dateTimeBehavior: 'UserLocal' })).toBe(true);
+  });
 });
 
 describe('comparing decimal totals exactly', () => {

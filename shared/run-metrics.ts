@@ -51,6 +51,25 @@ export function countOutcomes(outcomes: Iterable<RecordOutcome>): RecordAccounti
   return total;
 }
 
+/**
+ * The same tally, built from counts the database already computed.
+ *
+ * `countOutcomes` needs every outcome in hand, which means loading every identity row to count it —
+ * exactly what cannot work on the table where the count matters. A `GROUP BY outcome` returns five
+ * numbers for ten million records, and this turns those five numbers into the same shape.
+ *
+ * An outcome this version does not recognise is counted nowhere rather than guessed at, so a future
+ * outcome cannot quietly inflate one of these five.
+ */
+export function accountingFromCounts(counts: Iterable<{ outcome: string; n: number }>): RecordAccounting {
+  const total = { ...EMPTY_ACCOUNTING };
+  for (const { outcome, n } of counts) {
+    const field = FIELD_OF[outcome as RecordOutcome];
+    if (field) total[field] += Number(n) || 0;
+  }
+  return total;
+}
+
 export function addAccounting(a: RecordAccounting, b: RecordAccounting): RecordAccounting {
   return {
     created: a.created + b.created,

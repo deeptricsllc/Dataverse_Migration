@@ -55,12 +55,19 @@ export function canSum(attr: AttributeMeta): boolean {
 /**
  * Whether a column has a minimum and maximum that compare across engines.
  *
- * Numbers and dates, which are ordered the same way everywhere. Text is excluded: MIN over strings
- * depends on collation, and two engines with different collations disagree about which value is
- * smallest without either being wrong.
+ * Numbers and timestamps, which are ordered the same way everywhere. Two exclusions:
+ *
+ * - **Text**: MIN over strings depends on collation, and two engines with different collations
+ *   disagree about which value is smallest without either being wrong.
+ * - **Date-only columns**: the engine returns an instant, the column means a calendar day, and
+ *   turning one into the other depends on a timezone neither side declares. A source reporting
+ *   `2024-05-31 17:00-07` and a target reporting `2024-06-01 00:00-07` hold the same day and
+ *   different instants, so an extreme comparison contradicts the record-level comparison — which
+ *   applies the date-only rule properly and is the authority here.
  */
 export function canCompareExtremes(attr: AttributeMeta): boolean {
-  return ['Integer', 'BigInt', 'Decimal', 'Money', 'DateTime'].includes(attr.type);
+  if (attr.type === 'DateTime') return attr.dateTimeBehavior !== 'DateOnly';
+  return ['Integer', 'BigInt', 'Decimal', 'Money'].includes(attr.type);
 }
 
 /** Why a column was skipped, for a report that says what it did not check and why. */
@@ -69,6 +76,8 @@ export function whyNotAggregatable(attr: AttributeMeta): string | null {
   switch (attr.type) {
     case 'Double':
       return 'floating point: addition depends on row order, so totals are not comparable';
+    case 'DateTime':
+      return 'a date without a time: the engine reports an instant, and which day that is depends on a timezone neither side declares';
     case 'String':
     case 'Memo':
       return 'text: ordering depends on collation, which differs between engines';

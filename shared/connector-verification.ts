@@ -173,19 +173,6 @@ const ALL = (level: VerificationLevel): VerificationRow => ({
 const engineVerified = (): VerificationRow =>
   Object.fromEntries(ENGINE_PROVABLE.map((k) => [k, 'ENGINE_VERIFIED' as const]));
 
-/**
- * Capabilities the conformance suite now exercises but no recorded hosted run has yet proved.
- *
- * The suite asserting something and a server having answered are different facts, and this file
- * states the second. A capability sits here from the moment the test is written until a hosted
- * engines run writes PASSED into `evidence/engine-verification.json`; then it comes out and the
- * matrix test checks the claim against that evidence. Raising it early is the one shortcut that
- * would make every other level in this file worth nothing.
- */
-const AWAITING_EVIDENCE: VerificationRow = {
-  aggregateReconciliation: 'IMPLEMENTED',
-};
-
 const READ_ONLY_SOURCE = {
   write: 'NOT_SUPPORTED',
   upsert: 'NOT_SUPPORTED',
@@ -211,9 +198,9 @@ const TRANSFORMS = { transformations: 'IMPLEMENTED' } as const;
  * passed into `evidence/engine-verification.json`.
  */
 export const CONNECTOR_VERIFICATION: Partial<Record<ConnectionType, VerificationRow>> = {
-  POSTGRES: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
-  SQL_SERVER: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
-  MYSQL: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
+  POSTGRES: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
+  SQL_SERVER: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
+  MYSQL: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
   /**
    * Azure SQL shares SQL Server's implementation, and sharing an implementation is not evidence.
    * What differs is everything around the query — Entra authentication, firewall rules, enforced

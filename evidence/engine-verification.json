@@ -4,9 +4,9 @@
     "postgresql": {
       "engine": "postgresql",
       "connectionType": "POSTGRES",
-      "serverVersion": "PostgreSQL 16.13 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+      "serverVersion": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
       "driver": "pg",
-      "ranAt": "2026-10-01T18:36:23.244Z",
+      "ranAt": "2026-10-01T20:50:56.259Z",
       "suite": "tests/engines/postgres.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -16,6 +16,7 @@
         "pagination": "PASSED",
         "read": "PASSED",
         "duplicateDetection": "PASSED",
+        "aggregateReconciliation": "PASSED",
         "write": "PASSED",
         "upsert": "PASSED"
       },
@@ -28,7 +29,7 @@
       "connectionType": "MYSQL",
       "serverVersion": "MySQL 8.4.11",
       "driver": "mysql2",
-      "ranAt": "2026-10-01T18:36:19.609Z",
+      "ranAt": "2026-10-01T20:50:52.958Z",
       "suite": "tests/engines/mysql.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -38,6 +39,7 @@
         "pagination": "PASSED",
         "read": "PASSED",
         "duplicateDetection": "PASSED",
+        "aggregateReconciliation": "PASSED",
         "write": "PASSED",
         "upsert": "PASSED"
       },
@@ -50,7 +52,7 @@
       "connectionType": "SQL_SERVER",
       "serverVersion": "Microsoft SQL Server 2022 (RTM-CU27) (KB5104824) - 16.0.4295.3 (X64) ",
       "driver": "mssql (tedious)",
-      "ranAt": "2026-10-01T18:36:15.731Z",
+      "ranAt": "2026-10-01T20:50:49.214Z",
       "suite": "tests/engines/sqlserver.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -60,6 +62,7 @@
         "pagination": "PASSED",
         "read": "PASSED",
         "duplicateDetection": "PASSED",
+        "aggregateReconciliation": "PASSED",
         "write": "PASSED",
         "upsert": "PASSED"
       },
