@@ -542,19 +542,38 @@ export class MigrationEngine {
       .set({ total: total.count })
       .where(eq(migrationRunEntities.id, runEntity.id));
 
-    const existingMaps = new Map(
-      (
-        await this.db
-          .select({ sourceId: migrationRecordMaps.sourceId, outcome: migrationRecordMaps.outcome })
-          .from(migrationRecordMaps)
-          .where(
-            and(
-              eq(migrationRecordMaps.runId, run.id),
-              eq(migrationRecordMaps.logicalName, entity.logicalName),
-            ),
-          )
-      ).map((m) => [m.sourceId, m.outcome]),
-    );
+    /**
+     * What a resume has already done, asked a page at a time.
+     *
+     * This used to load every identity row for the table into a Map before reading a single
+     * record, so resuming a five-million-row migration started by holding five million entries in
+     * memory — on the one path that only runs when a large migration has already failed once.
+     *
+     * The lookup is on `(runId, logicalName, sourceId)`, which is the table's unique index, so a
+     * page costs one indexed probe. On a first attempt there is nothing to resume, and the count
+     * below means those runs do not pay for the question at all.
+     */
+    const [prior] = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(migrationRecordMaps)
+      .where(
+        and(eq(migrationRecordMaps.runId, run.id), eq(migrationRecordMaps.logicalName, entity.logicalName)),
+      );
+    const hasPriorWork = Number(prior?.n ?? 0) > 0;
+    const alreadyHandled = async (ids: string[]): Promise<Map<string, string>> => {
+      if (!hasPriorWork || ids.length === 0) return new Map();
+      const rows = await this.db
+        .select({ sourceId: migrationRecordMaps.sourceId, outcome: migrationRecordMaps.outcome })
+        .from(migrationRecordMaps)
+        .where(
+          and(
+            eq(migrationRecordMaps.runId, run.id),
+            eq(migrationRecordMaps.logicalName, entity.logicalName),
+            inArray(migrationRecordMaps.sourceId, ids),
+          ),
+        );
+      return new Map(rows.map((r) => [r.sourceId, r.outcome]));
+    };
 
     const sourceColumns = [
       ...entity.mappings.map((m) => m.sourceField),
@@ -575,8 +594,9 @@ export class MigrationEngine {
       })) {
         if (watermarkField) observeWatermark(ctx.watermark, page, watermarkField);
         await this.checkControl(run.id);
+        const handled = await alreadyHandled(page.map((r) => r.id));
         const pending = page.filter((r) => {
-          const outcome = existingMaps.get(r.id);
+          const outcome = handled.get(r.id);
           return !outcome || outcome === 'FAILED';
         });
         if (pending.length === 0) continue;
