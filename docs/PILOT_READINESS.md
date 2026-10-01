@@ -102,6 +102,12 @@ statistical confidence is claimed anywhere**, because the sampling model does no
 
 ## 3. Connector verification
 
+> **Superseded by `VERIFICATION.md` (1 October 2026, Phase 3).** The connectors have since been run
+> against real PostgreSQL 16, MySQL 8.4 and SQL Server 2022 servers through their production
+> drivers, which found two bugs: SQL Server's catalog query was a syntax error against a real
+> server, and MySQL reported varchar lengths as strings so truncation detection could never fire.
+> The section below is kept because its reasoning still holds; its levels are out of date.
+
 See `shared/connector-verification.ts`, which is tested rather than maintained by hope.
 
 The finding that matters: **the end-to-end journeys run against built-in simulators.** "Legacy SQL
