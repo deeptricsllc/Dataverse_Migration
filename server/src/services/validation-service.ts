@@ -41,6 +41,17 @@ import {
   sumAccounting,
   writtenByRun,
 } from '../../../shared/run-metrics';
+import {
+  combineCoverage,
+  coverageOf,
+  DEFAULT_VALIDATION_DEPTH,
+  depthCap,
+  describeClean,
+  describeCoverage,
+  fullCoverage,
+  notVerified,
+  type ValidationDepth,
+} from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { transformField } from './transformation/engine';
@@ -52,8 +63,9 @@ const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
 
 /** Maximum records compared field-by-field per table (reported when sampling applies). */
-const MAX_RECORDS_PER_TABLE = 5000;
 const MAX_DIFFERENCES_PER_TABLE = 2000;
+/** Distinct repeated values reported per table. The count of records is never capped. */
+const MAX_DUPLICATE_GROUPS = 50;
 
 interface PendingDiff {
   sourceRecordId: string | null;
@@ -199,6 +211,8 @@ export class ValidationService {
       sourceEnvironmentId?: string;
       targetEnvironmentId?: string;
       tables?: string[];
+      /** How many records to compare per table. Defaults to STANDARD. */
+      depth?: ValidationDepth;
     },
   ): Promise<ValidationRunDto> {
     let sourceId: string;
@@ -242,6 +256,7 @@ export class ValidationService {
         sourceEnvironmentId: sourceId,
         targetEnvironmentId: targetId,
         tables,
+        depth: input.depth ?? DEFAULT_VALIDATION_DEPTH,
         createdByUserId: ctx.userId,
         progressMessage: 'Queued',
       })
@@ -334,6 +349,8 @@ export class ValidationService {
       this.metadata.invalidateCounts(source.id);
       this.metadata.invalidateCounts(target.id);
 
+      // Null on runs that predate the setting, which are read as the default rather than as FULL.
+      const depth: ValidationDepth = vr.depth ?? DEFAULT_VALIDATION_DEPTH;
       const results: ValidationEntityResultDto[] = [];
       for (const [i, table] of vr.tables.entries()) {
         await progress(`Validating ${table} (${i + 1}/${vr.tables.length})`);
@@ -346,6 +363,7 @@ export class ValidationService {
           targetTableFor,
           snapshotEntity: snapshot?.entities.find((e) => e.logicalName === table) ?? null,
           runOptions,
+          depth,
           principalMap,
           sConn,
           tConn,
@@ -361,6 +379,16 @@ export class ValidationService {
         sourceRows: results.reduce((n, r) => n + (r.sourceCount ?? 0), 0),
         targetRows: results.reduce((n, r) => n + (r.targetCount ?? 0), 0),
         accounting: sumAccounting(results.map((r) => r.accounting ?? EMPTY_ACCOUNTING)),
+        // The weakest claim any table can support, including the duplicate check, which can be
+        // NOT VERIFIED on a table whose values all matched.
+        coverage: combineCoverage(
+          results.flatMap((r) => [r.coverage ?? fullCoverage(0), r.duplicateCoverage ?? fullCoverage(0)]),
+        ),
+        depth,
+        duplicateRecords: results.reduce(
+          (n, r) => n + (r.duplicates ?? []).reduce((m, d) => m + d.occurrences, 0),
+          0,
+        ),
         matchedRecords: results.reduce((n, r) => n + r.matched, 0),
         missingRecords: results.reduce((n, r) => n + r.missing, 0),
         differentRecords: results.reduce((n, r) => n + r.different, 0),
@@ -420,6 +448,8 @@ export class ValidationService {
     targetTableFor: ReadonlyMap<string, string>;
     snapshotEntity: RunPlanSnapshot['entities'][number] | null;
     runOptions: PlanOptions | null;
+    /** How many records this validation may compare per table. */
+    depth: ValidationDepth;
     principalMap: ReadonlyMap<string, string>;
     sConn: DataverseConnection;
     tConn: DataverseConnection;
@@ -437,6 +467,9 @@ export class ValidationService {
       targetCount: null,
       accounting: { ...EMPTY_ACCOUNTING },
       checkedRecords: 0,
+      coverage: null,
+      duplicates: null,
+      duplicateCoverage: null,
       matched: 0,
       missing: 0,
       different: 0,
@@ -547,7 +580,10 @@ export class ValidationService {
     base.accounting = countOutcomes(maps.map((m) => m.outcome));
     const verifiable = maps.filter((m) => m.outcome !== 'FAILED' && m.targetId);
 
-    const sampled = verifiable.slice(0, MAX_RECORDS_PER_TABLE);
+    // How many records this validation was asked to compare. FULL has no cap, which is the only
+    // setting that can report full coverage.
+    const cap = depthCap(p.depth);
+    const sampled = cap === null ? verifiable : verifiable.slice(0, cap);
     if (vr.migrationRunId) {
       const sourceRecords = await this.fetchByIds(
         p.sConn,
@@ -577,7 +613,7 @@ export class ValidationService {
         { pageSize: 500 },
       )) {
         sample.push(...page);
-        if (sample.length >= MAX_RECORDS_PER_TABLE) break;
+        if (cap !== null && sample.length >= cap) break;
       }
       const targetRecords = await this.fetchByIds(
         p.tConn,
@@ -662,10 +698,14 @@ export class ValidationService {
     base.matched = cmp.matched;
     base.missing = cmp.missing + failedMaps.length;
     base.different = cmp.different;
-    const sampleNote =
-      verifiable.length > MAX_RECORDS_PER_TABLE
-        ? ` (first ${MAX_RECORDS_PER_TABLE} of ${verifiable.length} checked)`
-        : '';
+    // Coverage is derived from the counts rather than written beside them, so a message cannot
+    // claim more than the numbers underneath it support.
+    base.coverage = coverageOf({
+      eligible: vr.migrationRunId ? verifiable.length : (base.sourceCount ?? pairs.length),
+      examined: pairs.length,
+      cap,
+    });
+    const sampleNote = base.coverage.mode === 'SAMPLED' ? ` ${describeCoverage(base.coverage)}` : '';
     if (vr.migrationRunId) {
       const written = writtenByRun(base.accounting);
       // Says which of those records the run put there and which were already present, because
@@ -679,7 +719,7 @@ export class ValidationService {
           ? {
               check: 'RECORD_EXISTENCE',
               outcome: 'PASS',
-              message: `All ${pairs.length} record(s) this run accounted for exist in the target${composition}${sampleNote}`,
+              message: `${describeCoverage(base.coverage, 'records this run accounted for')} Every one of them is in the target${composition}.`,
             }
           : {
               check: 'RECORD_EXISTENCE',
@@ -714,7 +754,7 @@ export class ValidationService {
           : {
               check: 'FIELD_VALUES',
               outcome: 'PASS',
-              message: `${cmp.matched} record(s) match on ${mappings.length} mapped column(s)`,
+              message: `${describeClean(base.coverage, `records on ${mappings.length} mapped column(s)`)}`,
             },
     );
 
@@ -767,6 +807,8 @@ export class ValidationService {
           },
     );
 
+    await this.scanDuplicates(p, target, base, checks, maps);
+
     return this.saveEntity(vr.id, { ...base, outcome: worst(checks.map((c) => c.outcome)) }, diffs);
   }
 
@@ -784,6 +826,114 @@ export class ValidationService {
     return out;
   }
 
+  /**
+   * Looks for key values that occur more than once in the target.
+   *
+   * Uniqueness was the one validation dimension the platform had no answer for: a migration can
+   * duplicate every record it writes and still report that every value matches, because every
+   * source record would find a target record holding the right values — just not only one of them.
+   *
+   * The counting happens in the system that holds the data, through an optional connector method.
+   * A connector that cannot group reliably leaves it undefined and this reports NOT VERIFIED,
+   * which is the honest answer and deliberately not PASS.
+   */
+  private async scanDuplicates(
+    p: { snapshotEntity: RunPlanSnapshot['entities'][number] | null; tConn: DataverseConnection },
+    target: TableMetadata,
+    base: ValidationEntityResultDto,
+    checks: ValidationCheckDto[],
+    maps: { targetId: string | null; outcome: string }[],
+  ): Promise<void> {
+    // What was supposed to be unique: the key the plan matched records on, or the table's own
+    // primary id when nothing else was configured. Inventing a uniqueness expectation the customer
+    // never stated would produce findings about data that was always allowed to repeat.
+    const snapshot = p.snapshotEntity;
+    const columns =
+      snapshot?.matchStrategy === 'BUSINESS_KEY' && snapshot.businessKeyFields.length
+        ? snapshot.businessKeyFields
+        : snapshot?.matchStrategy === 'ALTERNATE_KEY' && snapshot.alternateKey
+          ? (target.keys.find((k) => k.logicalName === snapshot.alternateKey)?.attributes ?? [])
+          : [target.primaryIdAttribute];
+    if (columns.length === 0) {
+      base.duplicateCoverage = notVerified(0, 'No key was configured for this table.');
+      return;
+    }
+
+    const scan = p.tConn.findDuplicateKeys?.bind(p.tConn);
+    if (!scan) {
+      base.duplicateCoverage = notVerified(
+        base.targetCount ?? 0,
+        `${p.tConn.provider} cannot count repeated values without reading the whole table, so this check did not run.`,
+      );
+      checks.push({
+        check: 'FIELD_VALUES',
+        outcome: 'WARNING',
+        message: `Duplicate keys: not verified. ${base.duplicateCoverage.reason}`,
+      });
+      return;
+    }
+
+    let groups;
+    try {
+      groups = await scan(target, columns, { maxGroups: MAX_DUPLICATE_GROUPS, idsPerGroup: 5 });
+    } catch (err) {
+      base.duplicateCoverage = notVerified(base.targetCount ?? 0, errorMessage(err).slice(0, 200));
+      checks.push({
+        check: 'FIELD_VALUES',
+        outcome: 'WARNING',
+        message: `Duplicate keys: not verified. ${base.duplicateCoverage.reason}`,
+      });
+      return;
+    }
+
+    // Whether this run is responsible. Only answerable when every record in the group is in hand:
+    // with a partial sample, the records this run wrote might be the ones not sampled.
+    const writtenHere = new Set(
+      maps
+        .filter((m) => m.targetId && (m.outcome === 'CREATED' || m.outcome === 'UPDATED'))
+        .map((m) => m.targetId!.toLowerCase()),
+    );
+    base.duplicates = groups.map((g) => {
+      const complete = g.count <= g.sampleIds.length;
+      const mine = g.sampleIds.filter((id) => writtenHere.has(id.toLowerCase())).length;
+      return {
+        columns,
+        value: Object.values(g.values)
+          .map((v) => (v === null || v === undefined ? '(empty)' : String(v)))
+          .join(' · '),
+        occurrences: g.count,
+        sampleIds: g.sampleIds,
+        writtenByThisRun: complete ? mine : null,
+        // One record this run wrote, sharing a key with one that was already there, is a collision
+        // this run introduced. Zero means it was already like that.
+        attributable: complete ? mine > 0 : null,
+      };
+    });
+    base.duplicateCoverage = fullCoverage(
+      base.targetCount ?? 0,
+      `Counted by ${p.tConn.provider}, grouping on ${columns.join(' + ')}.`,
+    );
+
+    const total = base.duplicates.reduce((n, d) => n + d.occurrences, 0);
+    if (base.duplicates.length === 0) {
+      checks.push({
+        check: 'FIELD_VALUES',
+        outcome: 'PASS',
+        message: `No repeated values of ${columns.join(' + ')} in the target.`,
+      });
+      return;
+    }
+    const ours = base.duplicates.some((d) => d.attributable === true);
+    const capped = base.duplicates.length >= MAX_DUPLICATE_GROUPS ? ` (first ${MAX_DUPLICATE_GROUPS})` : '';
+    checks.push({
+      check: 'FIELD_VALUES',
+      outcome: ours ? 'FAIL' : 'WARNING',
+      message: ours
+        ? `${base.duplicates.length} value(s) of ${columns.join(' + ')} are repeated across ${total} record(s)${capped}, and this run wrote at least one record in a repeated group.`
+        : `${base.duplicates.length} value(s) of ${columns.join(' + ')} are repeated across ${total} record(s)${capped}. None of them were written by this run.`,
+    });
+  }
+
   private async saveEntity(validationRunId: string, result: ValidationEntityResultDto, diffs: PendingDiff[]) {
     await this.db.insert(validationEntityResults).values({
       validationRunId,
@@ -793,6 +943,9 @@ export class ValidationService {
       sourceCount: result.sourceCount,
       targetCount: result.targetCount,
       recordAccounting: result.accounting,
+      coverage: result.coverage,
+      duplicates: result.duplicates,
+      duplicateCoverage: result.duplicateCoverage,
       checkedRecords: result.checkedRecords,
       matched: result.matched,
       missing: result.missing,
@@ -845,6 +998,7 @@ export class ValidationService {
       sourceEnvironment: envRef(row.src),
       targetEnvironment: envRef(row.tgt),
       tables: row.vr.tables,
+      depth: row.vr.depth ?? DEFAULT_VALIDATION_DEPTH,
       summary: row.vr.summary ?? null,
       entities: entities.map((e) => ({
         logicalName: e.logicalName,
@@ -855,6 +1009,9 @@ export class ValidationService {
         // Null for a report written before the breakdown was recorded. The old `migratedRecords`
         // column is deliberately not read back: it answered a different question than it claimed.
         accounting: e.recordAccounting ?? null,
+        coverage: e.coverage ?? null,
+        duplicates: e.duplicates ?? null,
+        duplicateCoverage: e.duplicateCoverage ?? null,
         checkedRecords: e.checkedRecords,
         matched: e.matched,
         missing: e.missing,

@@ -1182,6 +1182,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         sourceEnvironmentId: uuid.optional(),
         targetEnvironmentId: uuid.optional(),
         tables: z.array(tableName).max(500).optional(),
+        depth: z.enum(['QUICK', 'STANDARD', 'FULL']).optional(),
       })
       .parse(req.body);
     return s.validation.start(req.ctx, body);

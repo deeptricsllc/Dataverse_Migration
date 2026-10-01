@@ -5,6 +5,12 @@ import type {
   ValidationSummary,
 } from '@shared/domain';
 import { accountedFor, METRIC_DEFINITIONS, writtenByRun, type RecordAccounting } from '@shared/run-metrics';
+import {
+  coveragePercent,
+  describeClean,
+  VALIDATION_DEPTHS,
+  type ValidationCoverage,
+} from '@shared/validation-coverage';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
@@ -17,6 +23,7 @@ import {
   ExportButton,
   Mono,
   PageHeader,
+  Pill,
   Select,
   Spinner,
   Stat,
@@ -67,6 +74,11 @@ function Verdict({
       than re-reading the migration&apos;s own work.
     </>,
   );
+  // What a clean result is allowed to say, derived from how much was examined. "All checks passed"
+  // over a sample is the sentence this exists to prevent.
+  if (clean && s.coverage) {
+    lines.push(<>{describeClean(s.coverage)}</>);
+  }
   if (s.matchedRecords > 0) {
     lines.push(
       <>
@@ -110,8 +122,16 @@ function Verdict({
       </>,
     );
   }
-  if (clean && checked > 0) {
+  if (clean && checked > 0 && s.coverage?.mode === 'FULL') {
     lines.push(<>Nothing is missing, nothing differs, and every reference resolves.</>);
+  }
+  if (s.duplicateRecords > 0) {
+    lines.push(
+      <>
+        <strong className="text-amber-700">{fmtNumber(s.duplicateRecords)}</strong> record(s) share a key
+        value that should identify one record. They are listed by table below.
+      </>,
+    );
   }
   if (s.targetRows > s.sourceRows) {
     lines.push(
@@ -158,6 +178,67 @@ function Verdict({
             <li key={i}>{line}</li>
           ))}
         </ul>
+      </Callout>
+    </div>
+  );
+}
+
+/**
+ * How much of the data this report is actually about.
+ *
+ * Given its own panel rather than a footnote, because it qualifies every other number on the page.
+ * The three states are never styled alike: a sample that found nothing and a check that could not
+ * run are both "no failures found" and neither is "it is correct".
+ */
+function CoveragePanel({ coverage, depth }: { coverage: ValidationCoverage | null; depth: string | null }) {
+  if (!coverage) {
+    return (
+      <Callout tone="info" title="Coverage was not recorded for this report">
+        This report predates coverage being recorded, so how much of the data it examined is not known. Re-run
+        the validation to find out.
+      </Callout>
+    );
+  }
+  const tone = coverage.mode === 'FULL' ? 'success' : coverage.mode === 'SAMPLED' ? 'warning' : 'info';
+  const title =
+    coverage.mode === 'FULL'
+      ? 'Full validation'
+      : coverage.mode === 'SAMPLED'
+        ? `Sampled validation — ${coveragePercent(coverage)}% of eligible records`
+        : 'Not fully verified';
+  const depthMeta = depth ? VALIDATION_DEPTHS[depth as keyof typeof VALIDATION_DEPTHS] : null;
+  return (
+    <div data-testid="validation-coverage">
+      <Callout tone={tone} title={title}>
+        <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-4">
+          <div>
+            <dt className="text-xs text-slate-500">Eligible records</dt>
+            <dd className="font-medium tabular-nums">{fmtNumber(coverage.eligible)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-slate-500">Examined</dt>
+            <dd className="font-medium tabular-nums">{fmtNumber(coverage.examined)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-slate-500">Coverage</dt>
+            <dd className="font-medium tabular-nums">{coveragePercent(coverage)}%</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-slate-500">Depth</dt>
+            <dd className="font-medium">{depthMeta?.label ?? '—'}</dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-xs">
+          {coverage.strategy}
+          {coverage.cap !== null && ` Capped at ${fmtNumber(coverage.cap)} records per table.`}
+        </p>
+        {coverage.mode === 'SAMPLED' && (
+          <p className="mt-1 text-xs">
+            Nothing is claimed about the {fmtNumber(coverage.eligible - coverage.examined)} record(s) that
+            were not examined. Run a full validation to cover them.
+          </p>
+        )}
+        {coverage.reason && <p className="mt-1 text-xs">{coverage.reason}</p>}
       </Callout>
     </div>
   );
@@ -360,6 +441,8 @@ export function ValidationReportPage() {
             />
           </div>
 
+          <CoveragePanel coverage={s.coverage} depth={v.depth} />
+
           <RunAccounting accounting={s.accounting} migrationRunId={v.migrationRunId} />
 
           <Card
@@ -380,6 +463,7 @@ export function ValidationReportPage() {
                   <Th className="text-right">Missing</Th>
                   <Th className="text-right">Different</Th>
                   <Th className="text-right">Broken refs</Th>
+                  <Th className="text-right">Duplicates</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -419,10 +503,29 @@ export function ValidationReportPage() {
                         <Td className={`text-right tabular-nums ${e.brokenReferences ? 'text-red-700' : ''}`}>
                           {fmtNumber(e.brokenReferences)}
                         </Td>
+                        {/*
+                          A dash is not a zero here. "No duplicates" and "we could not look for
+                          duplicates" are different answers, and the column that shows one must not
+                          be read as the other.
+                        */}
+                        <Td className="text-right tabular-nums">
+                          {e.duplicateCoverage?.mode === 'NOT_VERIFIED' ? (
+                            <span
+                              className="text-xs font-medium text-slate-400"
+                              title={e.duplicateCoverage.reason}
+                            >
+                              not verified
+                            </span>
+                          ) : (
+                            <span className={(e.duplicates?.length ?? 0) > 0 ? 'text-amber-700' : ''}>
+                              {fmtNumber((e.duplicates ?? []).reduce((n, d) => n + d.occurrences, 0))}
+                            </span>
+                          )}
+                        </Td>
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={10} className="bg-slate-50/70 px-6 py-3">
+                          <td colSpan={11} className="bg-slate-50/70 px-6 py-3">
                             <ul className="space-y-1.5">
                               {e.checks.map((c) => (
                                 <li key={c.check} className="flex items-start gap-3 text-sm">
@@ -434,6 +537,45 @@ export function ValidationReportPage() {
                                 </li>
                               ))}
                             </ul>
+                            {e.duplicates && e.duplicates.length > 0 && (
+                              <div className="mt-3" data-testid={`duplicates-${e.logicalName}`}>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Repeated {e.duplicates[0]!.columns.join(' + ')}
+                                </p>
+                                <ul className="mt-1 space-y-1 text-sm">
+                                  {e.duplicates.slice(0, 10).map((d) => (
+                                    <li key={d.value} className="flex flex-wrap items-baseline gap-2">
+                                      <Mono className="text-xs">{d.value}</Mono>
+                                      <span className="text-slate-600">
+                                        {fmtNumber(d.occurrences)} records
+                                      </span>
+                                      {d.attributable === true && (
+                                        <Pill tone="amber">this run wrote {d.writtenByThisRun} of them</Pill>
+                                      )}
+                                      {d.attributable === false && (
+                                        <Pill tone="slate">already in the target</Pill>
+                                      )}
+                                      {d.attributable === null && (
+                                        <Pill
+                                          tone="slate"
+                                          title="Too many records to attribute from a sample"
+                                        >
+                                          origin unknown
+                                        </Pill>
+                                      )}
+                                      <span className="text-xs text-slate-400">
+                                        e.g. {d.sampleIds.slice(0, 3).join(', ')}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                                {e.duplicates.length > 10 && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    and {e.duplicates.length - 10} more repeated value(s)
+                                  </p>
+                                )}
+                              </div>
+                            )}
                             <button
                               type="button"
                               className="mt-2 text-xs font-medium text-brand-700 underline"

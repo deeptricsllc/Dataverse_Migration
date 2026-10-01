@@ -24,6 +24,7 @@ import type {
   ColumnDiff,
   RelationshipDiff,
   KeyDiff,
+  DuplicateFindingDto,
   ValidationCheckDto,
   ValidationSummary,
   AutomationInfo,
@@ -62,6 +63,7 @@ import type {
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
+import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -818,6 +820,8 @@ export const validationRuns = pgTable(
       .notNull()
       .references(() => environments.id),
     tables: jsonb('tables').$type<string[]>().notNull(),
+    /** How deep this validation was asked to go. Null predates the setting; read as STANDARD. */
+    depth: text('depth').$type<ValidationDepth>(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'>().notNull().default('QUEUED'),
     outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>(),
     summary: jsonb('summary').$type<ValidationSummary>(),
@@ -854,6 +858,11 @@ export const validationEntityResults = pgTable(
     migratedRecords: integer('migrated_records').notNull().default(0),
     /** Null on reports produced before the breakdown was recorded, which the report says out loud. */
     recordAccounting: jsonb('record_accounting').$type<RecordAccounting>(),
+    /** How much of this table was examined. Null predates coverage being recorded. */
+    coverage: jsonb('coverage').$type<ValidationCoverage>(),
+    /** Repeated key values found, and how thoroughly the search for them ran. */
+    duplicates: jsonb('duplicates').$type<DuplicateFindingDto[]>(),
+    duplicateCoverage: jsonb('duplicate_coverage').$type<ValidationCoverage>(),
     checkedRecords: integer('checked_records').notNull().default(0),
     matched: integer('matched').notNull().default(0),
     missing: integer('missing').notNull().default(0),

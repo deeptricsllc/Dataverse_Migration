@@ -23,6 +23,7 @@ import type {
   WriteRecord,
   ReadOptions,
 } from '../types';
+import type { DuplicateGroup, DuplicateScanOptions } from '../../connectors/types';
 import { DATAVERSE_CAPABILITIES, newerThanWatermark } from '../types';
 import {
   DEMO_ORGANIZATION_ID,
@@ -247,6 +248,61 @@ export class DemoConnection implements DataverseConnection {
       .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(2);
     return rows.find((r) => r.recordId !== excludeId)?.data ?? null;
+  }
+
+  /**
+   * Repeated key values, grouped by the database holding the simulated rows.
+   *
+   * The simulated data lives in Postgres as JSONB, so the grouping is a real `GROUP BY ... HAVING
+   * COUNT(*) > 1` rather than a scan in this process — the same shape the real SQL connectors use,
+   * which is what makes the demo an honest demonstration of the check rather than a mock of it.
+   *
+   * A lookup is compared by the id it points at, matching how every other read here treats one.
+   */
+  async findDuplicateKeys(
+    tableMeta: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]> {
+    if (columns.length === 0) return [];
+    await this.simulate();
+    const t = this.table(tableMeta.logicalName);
+    const keyOf = (field: string) =>
+      sql`coalesce(${demoRecords.data}->${field}->>'id', ${demoRecords.data}->>${field})`;
+    const keyExpr = sql.join(
+      columns.map((c) => keyOf(c)),
+      sql` || ' ' || `,
+    );
+    // NULL is not a duplicate: a thousand unknown values are not one value a thousand times.
+    const notNull = sql.join(
+      columns.map((c) => sql`${keyOf(c)} is not null`),
+      sql` and `,
+    );
+    const rows = await this.db
+      .select({
+        key: sql<string>`${keyExpr}`.as('dup_key'),
+        n: sql<number>`count(*)::int`.as('dup_count'),
+        ids: sql<
+          string[]
+        >`(array_agg(${demoRecords.recordId} order by ${demoRecords.recordId}))[1:${Math.max(1, Math.min(opts.idsPerGroup, 20))}]`.as(
+          'dup_ids',
+        ),
+      })
+      .from(demoRecords)
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), notNull))
+      .groupBy(sql`dup_key`)
+      .having(sql`count(*) > 1`)
+      .orderBy(sql`dup_count desc, dup_key`)
+      .limit(Math.max(1, Math.min(opts.maxGroups, 1000)));
+
+    return rows.map((r) => {
+      const parts = String(r.key).split(' ');
+      const values: Record<string, FieldValue> = {};
+      columns.forEach((c, i) => {
+        values[c] = parts[i] ?? null;
+      });
+      return { values, count: Number(r.n), sampleIds: r.ids ?? [] };
+    });
   }
 
   async findByFields(

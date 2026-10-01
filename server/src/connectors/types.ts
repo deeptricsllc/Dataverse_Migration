@@ -199,6 +199,23 @@ export interface MigrationConnector {
     columns: string[],
   ): Promise<DvRecord | null>;
   /**
+   * Key values that occur more than once, counted by the system that holds the data.
+   *
+   * Optional on purpose. A connector that cannot group reliably leaves it undefined, and the
+   * validation report says NOT VERIFIED rather than PASS — "we did not look" and "we looked and
+   * found none" are different answers and the product must not blur them. Implementing this badly
+   * would be worse than not implementing it.
+   *
+   * The work happens where the data is. Reading a hundred million rows into this process to count
+   * them would be a different kind of wrong answer.
+   */
+  findDuplicateKeys?(
+    table: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]>;
+
+  /**
    * Finds records matching every supplied column value (configured business keys).
    * Returns at most `limit` records so the caller can detect ambiguity instead of guessing.
    */
@@ -224,6 +241,22 @@ export interface MigrationConnector {
 
   /** Releases pooled resources. Connectors without pools do nothing. */
   dispose?(): Promise<void>;
+}
+
+export interface DuplicateScanOptions {
+  /** Stop after this many distinct repeated values. The caller says the total was capped. */
+  maxGroups: number;
+  /** How many record ids to carry back per group, so somebody can go and look at them. */
+  idsPerGroup: number;
+}
+
+export interface DuplicateGroup {
+  /** The key values that repeat, column by column. */
+  values: Record<string, FieldValue>;
+  /** How many records share them. Always greater than one. */
+  count: number;
+  /** A few of those records. Never the whole group: a million duplicates is still a finding. */
+  sampleIds: string[];
 }
 
 export type ConnectorProvider =

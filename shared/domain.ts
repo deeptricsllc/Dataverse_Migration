@@ -3,6 +3,7 @@
  */
 import type { AttributeType, FieldValue, OptionMeta, RequiredLevel } from './metadata';
 import type { RecordAccounting } from './run-metrics';
+import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -1380,6 +1381,15 @@ export interface ValidationEntityResultDto {
   accounting: RecordAccounting | null;
   /** Records actually compared against the source. A sample when the table is large. */
   checkedRecords: number;
+  /**
+   * How much of this table was examined, and how those records were chosen. Null for a report
+   * produced before coverage was recorded, which the report says rather than implying FULL.
+   */
+  coverage: ValidationCoverage | null;
+  /** Repeated key values found in the target, or null when this connector cannot look. */
+  duplicates: DuplicateFindingDto[] | null;
+  /** Coverage of the duplicate check specifically: it can be NOT_VERIFIED while values pass. */
+  duplicateCoverage: ValidationCoverage | null;
   matched: number;
   missing: number;
   different: number;
@@ -1393,6 +1403,12 @@ export interface ValidationSummary {
   targetRows: number;
   /** The run's own accounting, totalled across the validated tables. Null for older reports. */
   accounting: RecordAccounting | null;
+  /** The weakest coverage any validated table can support. Null for older reports. */
+  coverage: ValidationCoverage | null;
+  /** How deep this validation was asked to go. Null for reports that predate the setting. */
+  depth: ValidationDepth | null;
+  /** Records sharing a key value that should be unique, across every validated table. */
+  duplicateRecords: number;
   matchedRecords: number;
   missingRecords: number;
   differentRecords: number;
@@ -1400,6 +1416,29 @@ export interface ValidationSummary {
   pass: number;
   warning: number;
   fail: number;
+}
+
+/**
+ * A key value that occurs more than once where it should occur at most once.
+ *
+ * `attributable` answers the question a migration lead actually asks — did we do this? — and is
+ * only set when the evidence supports an answer: the run's own identity map says how many of these
+ * records it wrote. Null means the duplicates are there and nothing in this run's records proves
+ * who put them there.
+ */
+export interface DuplicateFindingDto {
+  /** The columns that were expected to be unique together. */
+  columns: string[];
+  /** The repeated value, rendered for display. */
+  value: string;
+  /** How many records share it. */
+  occurrences: number;
+  /** A few of the records, for somebody to go and look at. Never the whole group. */
+  sampleIds: string[];
+  /** How many of these records this run wrote, when the identity map can say. */
+  writtenByThisRun: number | null;
+  /** Whether this run appears to have introduced the duplication. Null when unprovable. */
+  attributable: boolean | null;
 }
 
 export interface ValidationRunDto {
@@ -1410,6 +1449,8 @@ export interface ValidationRunDto {
   sourceEnvironment: EnvRef;
   targetEnvironment: EnvRef;
   tables: string[];
+  /** How deep this validation was asked to go. */
+  depth: ValidationDepth;
   summary: ValidationSummary | null;
   entities: ValidationEntityResultDto[];
   errorMessage: string | null;

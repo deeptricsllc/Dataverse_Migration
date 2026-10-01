@@ -25,6 +25,8 @@ import { unsupportedOperation } from '../errors';
 import type {
   ConnectionCheck,
   ConnectionTestResult,
+  DuplicateGroup,
+  DuplicateScanOptions,
   MigrationConnector,
   RecordCount,
   WhoAmI,
@@ -523,6 +525,70 @@ export class SqlConnector implements MigrationConnector {
     const criteria = Object.fromEntries(key.attributes.map((a) => [a, values[a] ?? null]));
     const found = await this.findByFields(table, criteria, columns, 2);
     return found[0] ?? null;
+  }
+
+  /**
+   * Repeated key values, counted by the database.
+   *
+   * `GROUP BY ... HAVING COUNT(*) > 1` is the whole idea, and it runs where the rows are: the
+   * alternative is reading the table into this process to count it, which stops working at exactly
+   * the size where somebody needs the answer.
+   *
+   * Every identifier goes through `quoteIdent`, which refuses anything it does not fully
+   * understand, and no value is ever concatenated — the sample ids come back as data in a second
+   * parameterized read rather than being interpolated into the grouping query.
+   *
+   * NULL is not a duplicate. A column with a thousand empty values has a thousand unknown values,
+   * not one value a thousand times, and uniqueness constraints in these engines agree.
+   */
+  async findDuplicateKeys(
+    table: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]> {
+    if (columns.length === 0) return [];
+    const quoted = columns.map(quoteIdent);
+    const keyList = quoted.join(', ');
+    const notNull = quoted.map((c) => `${c} IS NOT NULL`).join(' AND ');
+    const top = Math.max(1, Math.min(opts.maxGroups, 1000));
+    const groups = await this.query<Record<string, unknown>>(
+      `SELECT TOP (${top}) ${keyList}, COUNT_BIG(1) AS dup_count
+         FROM ${quoteTable(table.logicalName)}
+        WHERE ${notNull}
+        GROUP BY ${keyList}
+       HAVING COUNT_BIG(1) > 1
+        ORDER BY COUNT_BIG(1) DESC, ${keyList}`,
+      {},
+      `find duplicate ${columns.join('+')} in ${table.logicalName}`,
+    );
+    if (groups.length === 0) return [];
+
+    const pk = quoteIdent(table.primaryIdAttribute);
+    const out: DuplicateGroup[] = [];
+    for (const row of groups) {
+      const values: Record<string, FieldValue> = {};
+      const params: Record<string, FieldValue> = {};
+      const where = columns.map((field, n) => {
+        const v = (row[field] ?? null) as FieldValue;
+        values[field] = v;
+        params[`k${n}`] = this.bind(v) as FieldValue;
+        return `${quoteIdent(field)} = @k${n}`;
+      });
+      const ids = await this.query<Record<string, unknown>>(
+        `SELECT TOP (${Math.max(1, Math.min(opts.idsPerGroup, 20))}) ${pk} AS id
+           FROM ${quoteTable(table.logicalName)}
+          WHERE ${where.join(' AND ')}
+          ORDER BY ${pk}`,
+        params,
+        `sample duplicate records in ${table.logicalName}`,
+      );
+      out.push({
+        values,
+        count: Number(row['dup_count'] ?? 0),
+        sampleIds: ids.map((r) => String(r['id'])),
+      });
+    }
+    return out;
   }
 
   async findByFields(
