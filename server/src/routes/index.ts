@@ -1256,10 +1256,12 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     await seedDemoData(s.db, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
-    // Everyone evaluating the product shares this workspace, so a reset also puts the project list
-    // back to the two curated examples. Archived, not deleted: whoever was experimenting can still
-    // find their work behind "Show archived".
+    // Restoring the simulated records invalidates every migration that ran against them, so a
+    // reset is not finished until the examples have been rebuilt against the data that is there
+    // now. Archived, not deleted: whoever was experimenting can still find their work behind
+    // "Show archived". The rebuild runs in the background; it executes two real migrations.
     const { archived } = await s.demoScenarios.tidy(req.ctx);
+    if (config.DEMO_SCENARIOS && config.RUN_WORKER) void s.demoScenarios.ensure(req.ctx);
     await s.audit.record({
       organizationId: req.ctx.organizationId,
       userId: req.ctx.userId,

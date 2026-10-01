@@ -156,8 +156,8 @@ export function SettingsPage() {
                   Reset the demo workspace
                 </Button>
                 <p className="mt-1 text-xs text-slate-500">
-                  Restores the simulated records and puts the project list back to the two worked examples.
-                  Anything else is archived, not deleted, and run history is kept.
+                  Restores the simulated records, archives the projects in this workspace and migrates the two
+                  worked examples again against the restored data. Nothing is deleted and run history is kept.
                 </p>
               </div>
             )}
@@ -195,8 +195,10 @@ export function SettingsPage() {
       >
         <Callout tone="warning">
           This affects only the simulated DEMO environments stored by this application. Everyone evaluating
-          the product shares this workspace, so projects other than the two worked examples are archived —
-          they stay readable behind “Show archived” on the projects page.
+          the product shares this workspace, so every project in it is archived and the two worked examples
+          are migrated again from scratch — restoring the records is what makes that necessary, since the old
+          runs describe data that is no longer there. Archived projects stay readable behind “Show archived”
+          on the projects page, and the rebuild takes a few seconds.
         </Callout>
         {reset.error && (
           <div className="mt-3">

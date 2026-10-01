@@ -56,13 +56,12 @@ export class DemoScenarioService {
    */
   async tidy(ctx: RequestContext): Promise<{ archived: number }> {
     const rows = await this.db
-      .select({ id: projects.id, name: projects.name })
+      .select({ id: projects.id })
       .from(projects)
       .where(and(eq(projects.organizationId, ctx.organizationId), eq(projects.status, 'ACTIVE')));
-    const stray = rows.filter((r) => !DEMO_SCENARIO_PROJECTS.includes(r.name as DemoScenarioProject));
-    for (const row of stray) await this.projects.archive(ctx, row.id);
-    if (stray.length) this.logger.info({ archived: stray.length }, 'Demo workspace tidied');
-    return { archived: stray.length };
+    for (const row of rows) await this.projects.archive(ctx, row.id);
+    if (rows.length) this.logger.info({ archived: rows.length }, 'Demo workspace tidied');
+    return { archived: rows.length };
   }
 
   /**
@@ -83,10 +82,18 @@ export class DemoScenarioService {
   }
 
   private async build(ctx: RequestContext): Promise<void> {
+    // Active, not merely present: a reset archives the old examples and expects new ones built
+    // against the restored records, rather than leaving a report that describes data now gone.
     const [existing] = await this.db
       .select({ id: projects.id })
       .from(projects)
-      .where(and(eq(projects.organizationId, ctx.organizationId), eq(projects.name, DEMO_SUCCESS_PROJECT)));
+      .where(
+        and(
+          eq(projects.organizationId, ctx.organizationId),
+          eq(projects.name, DEMO_SUCCESS_PROJECT),
+          eq(projects.status, 'ACTIVE'),
+        ),
+      );
     if (existing) return;
 
     // A brand new demo organization has no connections until somebody asks for them, and the
