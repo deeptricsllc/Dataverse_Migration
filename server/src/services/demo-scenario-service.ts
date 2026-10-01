@@ -54,6 +54,18 @@ export class DemoScenarioService {
    * than deleted: archived is reversible and still visible behind "Show archived", and this is a
    * tidy-up, not a right to destroy what somebody was in the middle of.
    */
+  /**
+   * Waits for any build already under way.
+   *
+   * A reset wipes the simulated records, and a build that is halfway through writing into them
+   * would have its remaining writes land after the wipe — leaving records nobody asked for and a
+   * second build reporting most of its work as "already there". Resetting means waiting for the
+   * thing currently writing to stop.
+   */
+  async settle(): Promise<void> {
+    await this.building;
+  }
+
   async tidy(ctx: RequestContext): Promise<{ archived: number }> {
     const rows = await this.db
       .select({ id: projects.id })

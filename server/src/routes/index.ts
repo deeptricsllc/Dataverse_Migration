@@ -1253,6 +1253,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.post('/api/demo/reset', async (req) => {
     if (!config.DEMO_MODE || !req.ctx.isDemoOrg) throw forbidden('Demo data can only be reset in DEMO MODE');
     if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can reset demo data');
+    // A build that is mid-migration would write into records this is about to delete.
+    await s.demoScenarios.settle();
     await seedDemoData(s.db, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
