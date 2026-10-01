@@ -1,6 +1,18 @@
-import { createHash } from 'node:crypto';
 import type { Logger } from 'pino';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { AGGREGATE_CAVEAT } from '../../../shared/aggregates';
+import {
+  EVIDENCE_SCHEMA_VERSION,
+  INTEGRITY_DOES_NOT_PROVE,
+  INTEGRITY_PROVES,
+  LINEAGE_COLUMNS,
+  type EvidenceFileRecord,
+  type EvidenceLineageSummary,
+  type EvidenceManifest,
+} from '../../../shared/evidence';
+import type { AppDb } from '../db/client';
+import { migrationRecordMaps, migrationRuns } from '../db/schema';
+import { ZipStream } from '../lib/zip-stream';
 import type { MigrationRunDto, ValidationRunDto } from '../../../shared/domain';
 import { accountedFor, writtenByRun } from '../../../shared/run-metrics';
 import {
@@ -11,7 +23,7 @@ import {
 } from '../../../shared/connector-verification';
 import { coveragePercent, describeCoverage } from '../../../shared/validation-coverage';
 import { csvCell } from '../lib/csv';
-import { writeZip, type ZipEntry } from '../lib/zip';
+import type { ZipEntry } from '../lib/zip';
 import type { RequestContext } from './context';
 import type { MigrationRunService } from './migration-run-service';
 import type { ValidationService } from './validation-service';
@@ -41,46 +53,199 @@ export interface EvidenceBundle {
   manifest: EvidenceManifest;
 }
 
-export interface EvidenceManifest {
-  /** Bumped when the shape changes, so a reader knows what they are holding. */
-  schema: 1;
-  generatedAt: string;
-  run: {
-    id: string;
-    planName: string;
-    projectName: string | null;
-    status: string;
-    startedAt: string | null;
-    completedAt: string | null;
-    source: { name: string; connectionType: string };
-    target: { name: string; connectionType: string };
-  };
-  files: EvidenceFileRecord[];
-  integrity: {
-    algorithm: 'sha256';
-    /** What the hashes do and do not establish, stated so nobody reads more into them. */
-    proves: string;
-    doesNotProve: string;
-  };
+/**
+ * A package written as it is read, for runs too large to hold.
+ *
+ * `manifest` resolves once the manifest is known, which is just before the last byte leaves: the
+ * manifest is the final entry, so by then every other file has been hashed. A caller that needs to
+ * audit the export can await it without waiting for the download to finish.
+ */
+export type { EvidenceManifest, EvidenceFileRecord } from '../../../shared/evidence';
+
+export interface EvidenceStream {
+  filename: string;
+  output: NodeJS.ReadableStream;
+  manifest: Promise<EvidenceManifest>;
 }
 
-export interface EvidenceFileRecord {
-  path: string;
-  bytes: number;
-  sha256: string;
-  /** What a reader can learn from this file. */
-  describes: string;
-}
+/** Lineage rows per chunk. Chosen so one chunk opens in a spreadsheet without complaint. */
+const LINEAGE_CHUNK_ROWS = 50_000;
+/** Rows fetched from the identity map at a time. Bounded regardless of the chunk size. */
+const LINEAGE_PAGE = 500;
 
 export class EvidenceService {
   constructor(
+    private readonly db: AppDb,
     private readonly runs: MigrationRunService,
     private readonly validation: ValidationService,
     private readonly planning: PlanningService,
     private readonly logger: Logger,
   ) {}
 
-  async bundleForRun(ctx: RequestContext, runId: string): Promise<EvidenceBundle> {
+  /**
+   * The same package, streamed.
+   *
+   * Everything but lineage is small and built in memory as before. Lineage is one row per record the
+   * run touched, which on a large migration is the only part that does not fit — so it is read from
+   * the identity map a page at a time and written into chunk files as it goes. The archive is
+   * streamed for the same reason: holding the zip would undo the point of not holding the rows.
+   */
+  async streamBundleForRun(ctx: RequestContext, runId: string): Promise<EvidenceStream> {
+    const prepared = await this.prepare(ctx, runId);
+    const zip = new ZipStream();
+    let settle: (manifest: EvidenceManifest) => void = () => {};
+    let fail: (err: unknown) => void = () => {};
+    const manifest = new Promise<EvidenceManifest>((resolve, reject) => {
+      settle = resolve;
+      fail = reject;
+    });
+
+    // Written in the background while the caller pipes `output` somewhere.
+    void (async () => {
+      try {
+        const describes = new Map<string, string>();
+        for (const item of prepared.entries) {
+          assertNoSecrets(item.entry);
+          await zip.add(item.entry.path, item.entry.data);
+          describes.set(item.entry.path, item.describes);
+        }
+        const lineage = await this.writeLineage(zip, prepared.run.id, prepared.targetNames);
+        for (const path of lineage?.files ?? []) {
+          describes.set(path, 'One row per record this run touched: where it came from and where it went.');
+        }
+        const built = this.manifestFor(prepared, zip.files, lineage, describes);
+        const entry = file('manifest.json', `${JSON.stringify(built, null, 2)}\n`);
+        assertNoSecrets(entry);
+        await zip.add(entry.path, entry.data);
+        settle(built);
+        await zip.finish();
+        this.logger.info(
+          { runId, files: zip.files.length, lineageRows: lineage?.totalRows ?? 0 },
+          'Evidence package streamed',
+        );
+      } catch (err) {
+        fail(err);
+        zip.destroy(err instanceof Error ? err : new Error(String(err)));
+      }
+    })();
+
+    return { filename: `migration-evidence-${prepared.run.id}.zip`, output: zip.output, manifest };
+  }
+
+  /**
+   * Lineage, written a chunk at a time.
+   *
+   * One row per record the run has an identity row for. A FAILED record keeps its source identity and
+   * has no target key, because it was never written — inventing one there is the single lie that
+   * would make the whole file useless. One row of lookahead, so the last chunk is never an empty file
+   * claiming to hold rows.
+   */
+  private async writeLineage(
+    zip: ZipStream,
+    runId: string,
+    targetNames: Map<string, string>,
+  ): Promise<EvidenceLineageSummary | null> {
+    const header = `\uFEFF${LINEAGE_COLUMNS.join(',')}\r\n`;
+    const files: string[] = [];
+    const rowsPerFile: number[] = [];
+    let totalRows = 0;
+    let rowsWithoutTarget = 0;
+
+    const iterator = this.lineageRows(runId, targetNames)[Symbol.asyncIterator]();
+    let next = await iterator.next();
+    while (!next.done) {
+      const path = `lineage/part-${String(files.length + 1).padStart(6, '0')}.csv`;
+      let rows = 0;
+      await zip.add(
+        path,
+        (async function* () {
+          yield header;
+          while (!next.done && rows < LINEAGE_CHUNK_ROWS) {
+            const row = next.value;
+            if (!row[5]) rowsWithoutTarget++;
+            yield `${row.map((v) => csvCell(v)).join(',')}\r\n`;
+            rows++;
+            totalRows++;
+            next = await iterator.next();
+          }
+        })(),
+      );
+      files.push(path);
+      rowsPerFile.push(rows);
+    }
+
+    if (files.length === 0) return null;
+    return { files, totalRows, rowsPerFile, chunkSize: LINEAGE_CHUNK_ROWS, rowsWithoutTarget };
+  }
+
+  /** The identity map as lineage rows, walked by keyset so a chunk boundary changes nothing. */
+  private async *lineageRows(
+    runId: string,
+    targetNames: Map<string, string>,
+  ): AsyncGenerator<(string | number)[]> {
+    const scope = eq(migrationRecordMaps.runId, runId);
+    let cursor: { logicalName: string; sourceId: string } | null = null;
+    // Annotated rather than inferred: the cursor comes out of the page and goes back into the
+    // query, and TypeScript cannot untangle that circle on its own.
+    type LineageRow = {
+      logicalName: string;
+      sourceId: string;
+      targetId: string | null;
+      outcome: string;
+      matchMethod: string | null;
+      attempts: number;
+    };
+    for (;;) {
+      const page: LineageRow[] = await this.db
+        .select({
+          logicalName: migrationRecordMaps.logicalName,
+          sourceId: migrationRecordMaps.sourceId,
+          targetId: migrationRecordMaps.targetId,
+          outcome: migrationRecordMaps.outcome,
+          matchMethod: migrationRecordMaps.matchMethod,
+          attempts: migrationRecordMaps.attempts,
+        })
+        .from(migrationRecordMaps)
+        .where(
+          cursor === null
+            ? scope
+            : and(
+                scope,
+                // Ordered by table then source id, so the pair is the cursor.
+                gt(
+                  sql`(${migrationRecordMaps.logicalName}, ${migrationRecordMaps.sourceId})`,
+                  sql`(${cursor.logicalName}, ${cursor.sourceId})`,
+                ),
+              ),
+        )
+        .orderBy(asc(migrationRecordMaps.logicalName), asc(migrationRecordMaps.sourceId))
+        .limit(LINEAGE_PAGE);
+      if (page.length === 0) return;
+      for (const row of page) {
+        yield [
+          runId,
+          row.attempts,
+          row.logicalName,
+          row.sourceId,
+          targetNames.get(row.logicalName) ?? row.logicalName,
+          row.targetId ?? '',
+          row.outcome,
+          row.matchMethod ?? '',
+        ];
+      }
+      const last = page[page.length - 1]!;
+      cursor = { logicalName: last.logicalName, sourceId: last.sourceId };
+      if (page.length < LINEAGE_PAGE) return;
+    }
+  }
+
+  /**
+   * Everything the package needs, gathered once, so the streamed and in-memory paths cannot drift.
+   *
+   * The two used to build their own file lists, which is how a format grows two definitions. This is
+   * the only place that decides what a package contains.
+   */
+  private async prepare(ctx: RequestContext, runId: string) {
     const run = await this.runs.get(ctx, runId);
     const report = run.latestValidationRunId
       ? await this.validation.get(ctx, run.latestValidationRunId).catch(() => null)
@@ -122,17 +287,37 @@ export class EvidenceService {
       }
     }
 
-    // The manifest is written last because it describes the others, and it is not itself hashed:
-    // a file cannot contain its own digest.
-    const files: EvidenceFileRecord[] = entries.map(({ entry, describes }) => ({
-      path: entry.path,
-      bytes: entry.data.length,
-      sha256: createHash('sha256').update(entry.data).digest('hex'),
-      describes,
-    }));
+    // Which target table each source table was migrated into, from the run's own snapshot rather
+    // than from the plan as it stands now — a plan can be re-mapped after a run.
+    const [row] = await this.db
+      .select({ snapshot: migrationRuns.planSnapshot, attempt: migrationRuns.attempt })
+      .from(migrationRuns)
+      .where(eq(migrationRuns.id, runId));
+    const targetNames = new Map<string, string>(
+      (row?.snapshot?.entities ?? []).map((e) => [e.logicalName, e.targetLogicalName]),
+    );
 
-    const manifest: EvidenceManifest = {
-      schema: 1,
+    return { run, report, plan, entries, targetNames, attempt: row?.attempt ?? 1 };
+  }
+
+  /** The manifest, from files that have already been hashed. */
+  private manifestFor(
+    prepared: { run: Awaited<ReturnType<MigrationRunService['get']>>; attempt: number },
+    hashed: { path: string; bytes: number; sha256: string }[],
+    lineage: EvidenceLineageSummary | null,
+    describes: Map<string, string>,
+  ): EvidenceManifest {
+    const { run } = prepared;
+    const rowsOf = (path: string) => (lineage ? lineage.rowsPerFile[lineage.files.indexOf(path)] : undefined);
+    const files: EvidenceFileRecord[] = hashed.map((f) => ({
+      path: f.path,
+      bytes: f.bytes,
+      sha256: f.sha256,
+      describes: describes.get(f.path) ?? 'No description recorded.',
+      ...(rowsOf(f.path) === undefined ? {} : { rows: rowsOf(f.path) }),
+    }));
+    return {
+      evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION,
       generatedAt: new Date().toISOString(),
       run: {
         id: run.id,
@@ -141,6 +326,7 @@ export class EvidenceService {
         status: run.status,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
+        attempt: prepared.attempt,
         source: {
           name: run.sourceEnvironment.displayName,
           connectionType: run.sourceEnvironment.connectionType ?? 'DATAVERSE',
@@ -151,26 +337,30 @@ export class EvidenceService {
         },
       },
       files,
+      ...(lineage ? { lineage } : {}),
       integrity: {
         algorithm: 'sha256',
-        proves:
-          'Each file listed here hashes to the recorded digest, so a file changed after the bundle was made no longer matches its manifest.',
-        doesNotProve:
-          'Nothing about who made the bundle or when. The manifest is not signed, so somebody who edits a file can recompute its digest and edit this too. It detects accidental change and casual tampering; it is not a cryptographic signature and must not be described as one.',
+        proves: INTEGRITY_PROVES,
+        doesNotProve: INTEGRITY_DOES_NOT_PROVE,
       },
     };
+  }
 
-    const all: ZipEntry[] = [
-      ...entries.map((e) => e.entry),
-      file('manifest.json', `${JSON.stringify(manifest, null, 2)}\n`),
-    ];
-    for (const entry of all) assertNoSecrets(entry);
-
-    this.logger.info({ runId, files: all.length }, 'Evidence bundle generated');
+  /**
+   * The package as one buffer.
+   *
+   * Kept for callers that need the bytes in hand — a test, and anything that wants to hash the whole
+   * archive. It streams underneath, so there is one writer and one lineage implementation; the only
+   * difference is that this one waits and concatenates.
+   */
+  async bundleForRun(ctx: RequestContext, runId: string): Promise<EvidenceBundle> {
+    const streamed = await this.streamBundleForRun(ctx, runId);
+    const parts: Buffer[] = [];
+    for await (const piece of streamed.output) parts.push(piece as Buffer);
     return {
-      filename: `migration-evidence-${run.id}.zip`,
-      zip: writeZip(all),
-      manifest,
+      filename: streamed.filename,
+      zip: Buffer.concat(parts),
+      manifest: await streamed.manifest,
     };
   }
 }

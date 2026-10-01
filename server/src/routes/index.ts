@@ -7,6 +7,7 @@ import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
+import { verifyEvidencePackage } from '../services/evidence-verifier';
 import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
 import { registerProjectRoutes } from './projects';
@@ -709,22 +710,57 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    * A zip rather than a page: the point is something that outlives the deployment, can be attached
    * to a change record and read by somebody who was not there.
    */
+  /**
+   * Streamed rather than built: a package for a large run holds one lineage row per record, and the
+   * download should not require the server to hold the archive. The audit entry is written once the
+   * manifest is known, which is before the last byte leaves.
+   */
   app.get('/api/runs/:id/evidence.zip', EXPENSIVE, async (req, reply) => {
     const { id } = idParams.parse(req.params);
-    const bundle = await s.evidence.bundleForRun(req.ctx, id);
-    await s.audit.record({
-      organizationId: req.ctx.organizationId,
-      userId: req.ctx.userId,
-      action: 'EVIDENCE_EXPORTED',
-      outcome: 'SUCCESS',
-      runId: id,
-      requestId: req.id,
-      details: { files: bundle.manifest.files.length },
-    });
+    const bundle = await s.evidence.streamBundleForRun(req.ctx, id);
+    void bundle.manifest
+      .then((manifest) =>
+        s.audit.record({
+          organizationId: req.ctx.organizationId,
+          userId: req.ctx.userId,
+          action: 'EVIDENCE_EXPORTED',
+          outcome: 'SUCCESS',
+          runId: id,
+          requestId: req.id,
+          details: { files: manifest.files.length, lineageRows: manifest.lineage?.totalRows ?? 0 },
+        }),
+      )
+      .catch(() => {
+        /* The stream reports its own failure to the client; a missing audit line is not worth a crash. */
+      });
     return reply
       .header('content-type', 'application/zip')
       .header('content-disposition', `attachment; filename="${bundle.filename}"`)
-      .send(bundle.zip);
+      .send(bundle.output);
+  });
+
+  /**
+   * Checks a package somebody is holding, which is the only check worth having: re-generating the
+   * package would prove nothing about the copy in their hands.
+   *
+   * The archive arrives base64-encoded in JSON, the same way mapping workbooks do. That bounds it at
+   * the body limit for this route, which is stated in the refusal rather than left to a reader to
+   * discover.
+   */
+  app.post('/api/evidence/verify', { bodyLimit: 96 * 1024 * 1024 }, async (req) => {
+    const body = z.object({ contentBase64: z.string().min(1) }).parse(req.body);
+    const archive = Buffer.from(body.contentBase64, 'base64');
+    const result = verifyEvidencePackage(archive);
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'EVIDENCE_VERIFIED',
+      outcome: result.verdict === 'VALID' ? 'SUCCESS' : 'FAILURE',
+      runId: result.manifest?.run.id ?? null,
+      requestId: req.id,
+      details: { verdict: result.verdict, problems: result.problems.length },
+    });
+    return result;
   });
 
   app.get('/api/runs/:id/errors.csv', async (req, reply) => {

@@ -111,6 +111,7 @@ export type AuditAction =
   // Somebody took a copy of what happened. Worth recording: an evidence package leaves the
   // deployment and is the artefact most likely to be forwarded.
   | 'EVIDENCE_EXPORTED'
+  | 'EVIDENCE_VERIFIED'
   | 'PRINCIPAL_MAPPING_CHANGED'
   | 'PREFLIGHT_REQUESTED'
   | 'PREFLIGHT_COMPLETED'

@@ -169,7 +169,13 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     analysis,
   );
   // What a migration lead keeps after the environments have moved on.
-  const evidence = new EvidenceService(runs, validation, planning, logger.child({ component: 'evidence' }));
+  const evidence = new EvidenceService(
+    db,
+    runs,
+    validation,
+    planning,
+    logger.child({ component: 'evidence' }),
+  );
   // Built on demand in DEMO MODE, by running two real migrations through the engine above.
   const demoScenarios = new DemoScenarioService(
     db,
