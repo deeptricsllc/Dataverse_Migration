@@ -46,6 +46,26 @@ export class DemoScenarioService {
   ) {}
 
   /**
+   * Puts the shared demo workspace back to the two curated examples and nothing else.
+   *
+   * Everyone who tries the product signs into the same workspace, so it accumulates whatever
+   * anybody was experimenting with — and a prospective customer meets somebody else's half-finished
+   * work before they meet the product. Projects that are not the curated ones are archived rather
+   * than deleted: archived is reversible and still visible behind "Show archived", and this is a
+   * tidy-up, not a right to destroy what somebody was in the middle of.
+   */
+  async tidy(ctx: RequestContext): Promise<{ archived: number }> {
+    const rows = await this.db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.organizationId, ctx.organizationId), eq(projects.status, 'ACTIVE')));
+    const stray = rows.filter((r) => !DEMO_SCENARIO_PROJECTS.includes(r.name as DemoScenarioProject));
+    for (const row of stray) await this.projects.archive(ctx, row.id);
+    if (stray.length) this.logger.info({ archived: stray.length }, 'Demo workspace tidied');
+    return { archived: stray.length };
+  }
+
+  /**
    * Builds the scenarios if they are not there. Safe to call on every demo sign-in.
    *
    * Never throws at the caller: a demo that cannot be built is a worse demo, not a broken sign-in.

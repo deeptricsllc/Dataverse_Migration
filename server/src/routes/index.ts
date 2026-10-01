@@ -1256,14 +1256,19 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     await seedDemoData(s.db, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
+    // Everyone evaluating the product shares this workspace, so a reset also puts the project list
+    // back to the two curated examples. Archived, not deleted: whoever was experimenting can still
+    // find their work behind "Show archived".
+    const { archived } = await s.demoScenarios.tidy(req.ctx);
     await s.audit.record({
       organizationId: req.ctx.organizationId,
       userId: req.ctx.userId,
       action: 'DEMO_DATA_RESET',
       outcome: 'SUCCESS',
       requestId: req.id,
+      details: { projectsArchived: archived },
     });
-    return { ok: true };
+    return { ok: true, archived };
   });
 }
 

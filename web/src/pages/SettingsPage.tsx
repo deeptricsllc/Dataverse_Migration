@@ -153,10 +153,11 @@ export function SettingsPage() {
             {settings.data.demoMode && settings.data.organization.isDemo && user.role === 'ADMIN' && (
               <div className="mt-4 border-t border-slate-100 pt-4">
                 <Button variant="danger" size="sm" onClick={() => setResetOpen(true)}>
-                  Reset demo environment data
+                  Reset the demo workspace
                 </Button>
                 <p className="mt-1 text-xs text-slate-500">
-                  Restores the simulated Dataverse records. Run history is kept.
+                  Restores the simulated records and puts the project list back to the two worked examples.
+                  Anything else is archived, not deleted, and run history is kept.
                 </p>
               </div>
             )}
@@ -182,18 +183,20 @@ export function SettingsPage() {
       <Modal
         open={resetOpen}
         onClose={() => setResetOpen(false)}
-        title="Reset demo data?"
+        title="Reset the demo workspace?"
         footer={
           <>
             <Button onClick={() => setResetOpen(false)}>Cancel</Button>
             <Button variant="danger" loading={reset.isPending} onClick={() => reset.mutate()}>
-              Reset demo data
+              Reset the workspace
             </Button>
           </>
         }
       >
         <Callout tone="warning">
-          This affects only the simulated DEMO environments stored by this application.
+          This affects only the simulated DEMO environments stored by this application. Everyone evaluating
+          the product shares this workspace, so projects other than the two worked examples are archived —
+          they stay readable behind “Show archived” on the projects page.
         </Callout>
         {reset.error && (
           <div className="mt-3">
@@ -203,6 +206,59 @@ export function SettingsPage() {
       </Modal>
     </>
   );
+}
+
+/**
+ * What an audit event recorded, as a sentence, with the evidence a click away.
+ *
+ * The column used to be `JSON.stringify(details)` truncated mid-token, so the audit trail — the
+ * feature a regulated customer looks at hardest — read like a log file somebody forgot to format.
+ * Nothing is hidden: the structured record is still there under "details", which is the half an
+ * engineer wants during an incident. The summary is the half everybody else wants.
+ */
+function AuditDetails({ details }: { details: Record<string, unknown> | null }) {
+  const [open, setOpen] = useState(false);
+  if (!details || Object.keys(details).length === 0) return <>—</>;
+  const summary = summariseAudit(details);
+  return (
+    <div>
+      <button
+        type="button"
+        className="text-left hover:underline"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? 'Hide the recorded values' : 'Show the recorded values'}
+      >
+        {summary}
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-48 overflow-auto rounded bg-slate-50 p-2 font-mono text-[10px] leading-relaxed text-slate-600">
+          {JSON.stringify(details, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A short phrase for the values an event carried.
+ *
+ * Deliberately generic: audit details are an open bag whose shape differs per action, and a
+ * hand-written sentence per action would drift out of step with what the server records. Naming
+ * the fields and showing the small ones is honest about that without pretending to more.
+ */
+function summariseAudit(details: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(details)) {
+    if (value === null || value === undefined) continue;
+    if (parts.length >= 3) break;
+    const label = humanize(key).toLowerCase();
+    if (typeof value === 'number' || typeof value === 'boolean') parts.push(`${label} ${value}`);
+    else if (typeof value === 'string') parts.push(value.length <= 40 ? `${label} ${value}` : label);
+    else if (Array.isArray(value)) parts.push(`${value.length} ${label}`);
+    else parts.push(label);
+  }
+  const more = Object.keys(details).length - parts.length;
+  return parts.length ? `${parts.join(' · ')}${more > 0 ? ` · +${more} more` : ''}` : 'details';
 }
 
 interface AuditFilters {
@@ -398,8 +454,8 @@ function AuditTrailCard({
                       <Td>
                         <Mono className="text-[11px]">{a.runId ? a.runId.slice(0, 8) : '—'}</Mono>
                       </Td>
-                      <Td className="max-w-xs truncate text-[11px] text-slate-500">
-                        {a.details ? JSON.stringify(a.details) : '—'}
+                      <Td className="max-w-xs text-[11px] text-slate-500">
+                        <AuditDetails details={a.details} />
                       </Td>
                     </tr>
                   ))}

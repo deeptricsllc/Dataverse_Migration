@@ -17,9 +17,19 @@ import { Callout, Checkbox, cx, EmptyState, Pill } from './ui';
 
 const BOX_W = 208;
 const BOX_H = 68;
-const GAP_X = 104;
+/**
+ * Wide enough for the longest column name a label is allowed to show.
+ *
+ * The label sits in this gap, right-aligned against the arrowhead. At 104 it was narrower than
+ * `dtx_regionid (optional)`, so the text ran back over the box in the previous column and read as
+ * "gionId (optional)". The gap and the cap on the label are one decision, so they live together.
+ */
+const GAP_X = 156;
 const GAP_Y = 22;
 const PAD = 24;
+/** Roughly the width of one character at the label's font size. No text metrics in SVG. */
+const LABEL_CHAR_W = 5.3;
+const MAX_LABEL_CHARS = Math.floor((GAP_X - 18) / LABEL_CHAR_W);
 
 interface Placed extends ErdNodeDto {
   x: number;
@@ -90,17 +100,20 @@ export function ErdDiagram({ erd }: { erd: ErdDto }) {
       const index = placedSoFar.get(edge.to) ?? 0;
       placedSoFar.set(edge.to, index + 1);
       const total = perTarget.get(edge.to) ?? 1;
-      const label = `${edge.attribute}${edge.required ? '' : ' (optional)'}`;
+      const full = `${edge.attribute}${edge.required ? '' : ' (optional)'}`;
+      // Truncated rather than allowed to overrun: an unreadable label on top of another table is
+      // worse than an elided one, and the full name is in the title beneath the cursor.
+      const label = full.length > MAX_LABEL_CHARS ? `${full.slice(0, MAX_LABEL_CHARS - 1)}…` : full;
       return [
         {
           edge,
           key: `${edge.from}-${edge.to}-${edge.attribute}`,
+          full,
           d: edgePath(from, to),
           label,
           labelX: to.x - 10,
           labelY: to.y + BOX_H / 2 + (index - (total - 1) / 2) * 13 + 3,
-          // No text metrics in SVG without measuring, so the plate is sized from the string.
-          plateW: label.length * 5.3 + 8,
+          plateW: label.length * LABEL_CHAR_W + 8,
         },
       ];
     });
@@ -132,7 +145,15 @@ export function ErdDiagram({ erd }: { erd: ErdDto }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white" data-testid="erd">
+      <div
+        className="overflow-x-auto rounded-lg border border-slate-200 bg-white"
+        data-testid="erd"
+        // Tells a pointer device this scrolls, and gives a keyboard one somewhere to land. Without
+        // it the only clue a wide diagram continues is a box cut off at the edge.
+        tabIndex={0}
+        role="group"
+        aria-label="Entity relationship diagram, scrolls horizontally"
+      >
         <svg
           width={width}
           height={height}
@@ -183,10 +204,12 @@ export function ErdDiagram({ erd }: { erd: ErdDto }) {
 
           {/* After every line, so a line crossing a label cannot be drawn through the words. */}
           {showColumns &&
-            drawn.map(({ edge, key, label, labelX, labelY, plateW }) => {
+            drawn.map(({ edge, key, full, label, labelX, labelY, plateW }) => {
               const on = edgeActive(edge);
               return (
                 <g key={key} opacity={on ? 1 : 0.15}>
+                  {/* The whole reference under the cursor, since a long column name is elided. */}
+                  <title>{`${edge.to}.${full} → ${edge.from}`}</title>
                   <rect
                     x={labelX - plateW}
                     y={labelY - 10}
@@ -261,6 +284,9 @@ export function ErdDiagram({ erd }: { erd: ErdDto }) {
             <line x1="0" y1="4" x2="28" y2="4" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="5 4" />
           </svg>
           resolved in a second pass
+        </span>
+        <span className="text-slate-400">
+          {erd.nodes.length} table(s) · scroll sideways for the rest when the diagram is wider than the panel
         </span>
       </div>
 

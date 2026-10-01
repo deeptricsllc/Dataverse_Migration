@@ -453,6 +453,23 @@ describe('evaluateRules', () => {
     expect(issues[0].resolution).toBeTruthy();
   });
 
+  it('reads as English whether one record is affected or many', () => {
+    // The noun was pluralised and the verb was not, so a finding about a single record read
+    // "1 record have no value for NAME". These sentences are the product explaining somebody's own
+    // data back to them, which is exactly where a slip is noticed.
+    const [one] = evaluateRules(baseProfile({ nullCount: 1 }), [required]);
+    expect(one.message).toContain('1 record has no value');
+    expect(one.message).not.toContain('record have');
+
+    const [many] = evaluateRules(baseProfile({ nullCount: 4 }), [required]);
+    expect(many.message).toContain('4 records have no value');
+
+    const [dupe] = evaluateRules(baseProfile({ duplicateCount: 1 }), [
+      { kind: 'UNIQUE', field: 'NAME', origin: 'TARGET_SCHEMA', severity: 'BLOCKER' },
+    ]);
+    expect(dupe.message).toContain('1 record repeats');
+  });
+
   it('says nothing when the data satisfies the rule', () => {
     expect(evaluateRules(baseProfile({ maxLength: 12 }), [required, maxLength])).toEqual([]);
   });

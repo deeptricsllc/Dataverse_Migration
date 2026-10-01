@@ -207,6 +207,14 @@ export function deriveTargetRules(
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+/**
+ * Agrees the verb with the count.
+ *
+ * The noun was already being pluralised and the verb was not, so a finding about a single record
+ * read "1 record have no value for CustomerName". These sentences are the part of the product a
+ * customer reads most closely — they are the explanation of what is wrong with their data.
+ */
+const verb = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /**
  * Turns statistics into findings. Pure: the same profile and rules always produce the same
@@ -253,7 +261,7 @@ export function evaluateRules(
             'REQUIRED_VALUE_MISSING',
             rule.severity,
             affected,
-            `${affected} ${plural(affected, scope, `${scope}s`)} have no value for ${profile.field}, which the target requires.`,
+            `${affected} ${plural(affected, scope, `${scope}s`)} ${verb(affected, 'has', 'have')} no value for ${profile.field}, which the target requires.`,
             'Supply a value in the source, map a default through a DEFAULT_IF_NULL transformation, or exclude these records.',
             samples,
           );
@@ -266,7 +274,7 @@ export function evaluateRules(
             'BLANK_VALUE',
             rule.severity,
             profile.blankCount,
-            `${profile.blankCount} ${plural(profile.blankCount, scope, `${scope}s`)} hold a blank ${profile.field}.`,
+            `${profile.blankCount} ${plural(profile.blankCount, scope, `${scope}s`)} ${verb(profile.blankCount, 'holds', 'hold')} a blank ${profile.field}.`,
             'Trim and convert blanks to null with an EMPTY_TO_NULL transformation, or supply a value.',
             samples,
           );
@@ -282,7 +290,7 @@ export function evaluateRules(
               'STRING_TOO_LONG',
               rule.severity,
               hit.count,
-              `${hit.count} ${plural(hit.count, scope, `${scope}s`)} exceed the target limit of ${max} characters (longest ${profile.maxLength ?? 0}).`,
+              `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'exceeds', 'exceed')} the target limit of ${max} characters (longest ${profile.maxLength ?? 0}).`,
               `Shorten the source values or add a TRUNCATE transformation to ${max} characters, accepting the loss.`,
               samples,
             );
@@ -305,7 +313,7 @@ export function evaluateRules(
             'STRING_TOO_SHORT',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} are shorter than the required ${rule.min} characters.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'is', 'are')} shorter than the required ${rule.min} characters.`,
             'Correct the source values or exclude these records from the migration.',
             samples,
           );
@@ -318,7 +326,7 @@ export function evaluateRules(
             'INVALID_EMAIL',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} hold a value that is not a valid email address.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'holds', 'hold')} a value that is not a valid email address.`,
             'Correct the addresses in the source, or clear them so the target column stays empty.',
             samples,
           );
@@ -331,7 +339,7 @@ export function evaluateRules(
             'INVALID_PHONE',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} hold a value that is not a recognisable phone number.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'holds', 'hold')} a value that is not a recognisable phone number.`,
             'Normalise the numbers in the source before migrating.',
             samples,
           );
@@ -344,7 +352,7 @@ export function evaluateRules(
             'VALUE_OUT_OF_RANGE',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} fall outside the target range ${rule.min ?? '-∞'} to ${rule.max ?? '∞'}.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'falls', 'fall')} outside the target range ${rule.min ?? '-∞'} to ${rule.max ?? '∞'}.`,
             'Correct the values in the source; the target column will reject them.',
             samples,
           );
@@ -357,7 +365,7 @@ export function evaluateRules(
             'DATE_OUT_OF_RANGE',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} fall outside the accepted date range.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'falls', 'fall')} outside the accepted date range.`,
             'Correct the dates in the source or exclude these records.',
             samples,
           );
@@ -370,7 +378,7 @@ export function evaluateRules(
             'VALUE_NOT_ALLOWED',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} hold a value the target does not accept.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'holds', 'hold')} a value the target does not accept.`,
             'Map the unexpected values to target values, or set a default for unmapped values.',
             samples,
           );
@@ -383,7 +391,7 @@ export function evaluateRules(
             'PATTERN_MISMATCH',
             rule.severity,
             hit.count,
-            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} do not match the required pattern.`,
+            `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'does not', 'do not')} match the required pattern.`,
             'Correct the source values so they match the expected format.',
             samples,
           );
@@ -397,7 +405,7 @@ export function evaluateRules(
             'DUPLICATE_KEY',
             rule.severity,
             profile.duplicateCount,
-            `${profile.duplicateCount} ${plural(profile.duplicateCount, scope, `${scope}s`)} repeat a value that must be unique in the target.`,
+            `${profile.duplicateCount} ${plural(profile.duplicateCount, scope, `${scope}s`)} ${verb(profile.duplicateCount, 'repeats', 'repeat')} a value that must be unique in the target.`,
             'De-duplicate the source, or choose a different match key for this table.',
             samples,
           );
