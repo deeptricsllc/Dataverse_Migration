@@ -781,8 +781,18 @@ export class ValidationService {
         written === accountedFor(base.accounting)
           ? ''
           : ` (${written} written by this run, ${base.accounting.unchanged + base.accounting.skipped} already in the target)`;
+      /**
+       * Two reasons a record is not in the target, and both of them fail this check.
+       *
+       * Separating the counts was right — a record the run already reported as failed was never
+       * compared, so adding it to `missing` made the arithmetic wrong. Separating the *verdict*
+       * would have been wrong: a migration that did not deliver three records has not passed,
+       * whatever the reason, and a report that says "passed with warnings" over it is the kind of
+       * green badge this product exists to argue against.
+       */
+      const absent = base.missing + base.failedInRun;
       checks.push(
-        base.missing === 0
+        absent === 0
           ? {
               check: 'RECORD_EXISTENCE',
               outcome: 'PASS',
@@ -791,7 +801,13 @@ export class ValidationService {
           : {
               check: 'RECORD_EXISTENCE',
               outcome: 'FAIL',
-              message: `${base.missing} record(s) missing in target (${failedMaps.length} failed during migration, ${cmp.missing} not found)${sampleNote}`,
+              message:
+                `${absent} record(s) are not in the target` +
+                (base.failedInRun
+                  ? ` — ${base.failedInRun} the run reported as failed` +
+                    (base.missing ? `, ${base.missing} it did not` : '')
+                  : '') +
+                `${sampleNote}`,
             },
       );
     } else {

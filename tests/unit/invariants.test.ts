@@ -157,6 +157,23 @@ describe('invariants that must hold however the numbers arrive', () => {
     expect(failedInRun, 'is reported beside, not added into, the examined set').toBeGreaterThan(0);
   });
 
+  it('a run that did not deliver records never reads as passed', () => {
+    // Separating the counts was right; separating the verdict would not have been. The first fix
+    // quietly turned a FAIL into "passed with warnings" on a run that lost three records, which is
+    // exactly the green badge this product exists to argue against. Absence fails the check
+    // whatever its reason; only the explanation differs.
+    const cases = [
+      { missing: 0, failedInRun: 0, shouldPass: true },
+      { missing: 0, failedInRun: 3, shouldPass: false },
+      { missing: 2, failedInRun: 0, shouldPass: false },
+      { missing: 2, failedInRun: 3, shouldPass: false },
+    ];
+    for (const c of cases) {
+      const absent = c.missing + c.failedInRun;
+      expect(absent === 0, JSON.stringify(c)).toBe(c.shouldPass);
+    }
+  });
+
   it('a capability cannot read as engine verified without being engine provable', () => {
     for (const [type, row] of Object.entries(CONNECTOR_VERIFICATION)) {
       if (type === 'FILE') continue; // no external engine exists to verify against

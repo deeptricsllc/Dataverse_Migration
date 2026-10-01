@@ -63,7 +63,12 @@ function Verdict({
 }) {
   const s = summary;
   const checked = s.matchedRecords + s.missingRecords + s.differentRecords;
-  const clean = s.missingRecords === 0 && s.differentRecords === 0 && s.brokenReferences === 0;
+  // A run that did not deliver records is not a clean result, whatever the reason it gives.
+  const clean =
+    s.missingRecords === 0 &&
+    s.failedInRunRecords === 0 &&
+    s.differentRecords === 0 &&
+    s.brokenReferences === 0;
   const tone = outcome === 'FAIL' ? 'danger' : outcome === 'WARNING' ? 'warning' : 'success';
 
   const lines: ReactNode[] = [];
