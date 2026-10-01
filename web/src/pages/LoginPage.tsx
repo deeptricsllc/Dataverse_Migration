@@ -117,9 +117,9 @@ export function LoginPage() {
                       <MicrosoftLogo /> Continue with Microsoft
                     </a>
                   ) : (
-                    <Callout tone="info" title="Microsoft sign-in is not configured">
-                      Set <code>ENTRA_CLIENT_ID</code> and <code>ENTRA_CLIENT_SECRET</code> (see README →
-                      Microsoft Entra setup) to enable “Continue with Microsoft”.
+                    <Callout tone="info" title="Microsoft sign-in isn’t enabled here">
+                      This environment doesn’t have Microsoft sign-in turned on yet. Use the demo workspace
+                      below to see the whole product, or request access and we’ll set your organization up.
                     </Callout>
                   )}
                   {config.data.demoEnabled && (

@@ -4,6 +4,7 @@ import type {
   ValidationRunDto,
   ValidationSummary,
 } from '@shared/domain';
+import { accountedFor, METRIC_DEFINITIONS, writtenByRun, type RecordAccounting } from '@shared/run-metrics';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, useState, type ReactNode } from 'react';
@@ -122,6 +123,32 @@ function Verdict({
       </>,
     );
   }
+  // Checking a record and writing it are different things, and a report that only gives the first
+  // number invites the reader to assume the run wrote everything it verified.
+  if (s.accounting) {
+    const written = writtenByRun(s.accounting);
+    const alreadyThere = s.accounting.unchanged + s.accounting.skipped;
+    lines.push(
+      written === 0 && alreadyThere > 0 ? (
+        <>
+          This run wrote <strong>nothing</strong>: all <strong>{fmtNumber(alreadyThere)}</strong> record(s) it
+          accounted for were already in the target and were left as they were. What is verified below is the
+          state of that existing data, not work this run did.
+        </>
+      ) : (
+        <>
+          <strong>{fmtNumber(written)}</strong> record(s) were written by this run (
+          {fmtNumber(s.accounting.created)} created, {fmtNumber(s.accounting.updated)} updated)
+          {alreadyThere > 0 ? (
+            <>
+              ; <strong>{fmtNumber(alreadyThere)}</strong> were already in the target and left alone
+            </>
+          ) : null}
+          .
+        </>
+      ),
+    );
+  }
 
   // Callout takes no test id of its own, and a wrapper is cheaper than widening its props.
   return (
@@ -134,6 +161,65 @@ function Verdict({
         </ul>
       </Callout>
     </div>
+  );
+}
+
+/**
+ * What the run did with every record it touched, in the five buckets that do not overlap.
+ *
+ * On the report rather than only on the run page, because this is the screen somebody reads to
+ * decide whether the migration worked, and "28 records verified" means something very different
+ * depending on whether this run put them there.
+ */
+function RunAccounting({
+  accounting,
+  migrationRunId,
+}: {
+  accounting: RecordAccounting | null;
+  migrationRunId: string | null;
+}) {
+  if (!migrationRunId) return null;
+  if (!accounting) {
+    return (
+      <Callout tone="info" title="Per-record accounting was not recorded for this report">
+        This report predates the breakdown of what the run created, updated or left alone. Re-run the
+        validation to get it. The figures above are unaffected.
+      </Callout>
+    );
+  }
+  const written = writtenByRun(accounting);
+  const buckets = [
+    { key: 'created', value: accounting.created, tone: 'green' as const },
+    { key: 'updated', value: accounting.updated, tone: 'green' as const },
+    { key: 'unchanged', value: accounting.unchanged, tone: 'default' as const },
+    { key: 'skipped', value: accounting.skipped, tone: 'default' as const },
+    {
+      key: 'failed',
+      value: accounting.failed,
+      tone: accounting.failed ? ('red' as const) : ('default' as const),
+    },
+  ];
+  return (
+    <Card
+      title="What this run did with each record"
+      subtitle={`${fmtNumber(accountedFor(accounting))} record(s) accounted for · ${fmtNumber(written)} written by this run`}
+      data-testid="run-accounting"
+    >
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        {buckets.map((b) => {
+          const meta = METRIC_DEFINITIONS[b.key as keyof typeof METRIC_DEFINITIONS];
+          return (
+            <Stat
+              key={b.key}
+              label={meta.label}
+              tone={b.tone}
+              value={fmtNumber(b.value)}
+              hint={meta.definition}
+            />
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -233,9 +319,13 @@ export function ValidationReportPage() {
               }
             />
             <Stat
-              label="Migrated"
-              value={fmtNumber(s.migratedRows)}
-              hint="Written by the run being validated"
+              label={METRIC_DEFINITIONS.written.label}
+              value={s.accounting ? fmtNumber(writtenByRun(s.accounting)) : '—'}
+              hint={
+                s.accounting
+                  ? 'Created + updated. Records already in the target are counted below.'
+                  : 'Not recorded for this report'
+              }
             />
             <Stat
               label="Matched"
@@ -274,6 +364,8 @@ export function ValidationReportPage() {
               }}
             />
           </div>
+
+          <RunAccounting accounting={s.accounting} migrationRunId={v.migrationRunId} />
 
           <Card
             title="Results by table"

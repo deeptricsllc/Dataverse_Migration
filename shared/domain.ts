@@ -2,6 +2,7 @@
  * Domain enums and API DTOs shared between server and web.
  */
 import type { AttributeType, FieldValue, OptionMeta, RequiredLevel } from './metadata';
+import type { RecordAccounting } from './run-metrics';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -1371,7 +1372,13 @@ export interface ValidationEntityResultDto {
   outcome: ValidationOutcome;
   sourceCount: number | null;
   targetCount: number | null;
-  migratedRecords: number;
+  /**
+   * What the run did with this table's records, or null for a report produced before the platform
+   * recorded the breakdown. Null means "not recorded", which a report must say rather than show as
+   * a row of zeros.
+   */
+  accounting: RecordAccounting | null;
+  /** Records actually compared against the source. A sample when the table is large. */
   checkedRecords: number;
   matched: number;
   missing: number;
@@ -1384,7 +1391,8 @@ export interface ValidationSummary {
   tablesValidated: number;
   sourceRows: number;
   targetRows: number;
-  migratedRows: number;
+  /** The run's own accounting, totalled across the validated tables. Null for older reports. */
+  accounting: RecordAccounting | null;
   matchedRecords: number;
   missingRecords: number;
   differentRecords: number;

@@ -6,6 +6,7 @@ import type {
   ValidationRunDto,
 } from '@shared/domain';
 import { TERMINAL_RUN_STATUSES } from '@shared/domain';
+import { METRIC_DEFINITIONS, writtenByRun } from '@shared/run-metrics';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Ban, Pause, Play, RotateCw, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
@@ -71,6 +72,7 @@ export function RunDetailPage() {
   const terminal = TERMINAL_RUN_STATUSES.has(r.status);
   const active = r.status === 'RUNNING' || r.status === 'QUEUED';
   const overall = r.status === 'COMPLETED' ? 100 : pct(r.processed, r.total);
+  const written = writtenByRun(r);
   const entitiesDone = r.entities.filter((e) =>
     ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'].includes(e.status),
   ).length;
@@ -228,18 +230,38 @@ export function RunDetailPage() {
             {overall}%
           </span>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <Stat label="Tables" value={`${entitiesDone}/${r.entities.length}`} />
-          <Stat label="Processed" value={fmtNumber(r.processed)} hint={`of ${fmtNumber(r.total)}`} />
-          <Stat label="Created" tone="green" value={fmtNumber(r.created)} />
-          <Stat label="Updated" tone="blue" value={fmtNumber(r.updated)} />
           <Stat
-            label="Unchanged"
+            label={METRIC_DEFINITIONS.processed.label}
+            value={fmtNumber(r.processed)}
+            hint={`of ${fmtNumber(r.total)}`}
+          />
+          {/*
+            The figure the validation report leads with, led with here too. The two screens used to
+            describe the same run with different arithmetic, so the number that answers "did
+            anything actually move" now comes from one place and appears on both.
+          */}
+          <Stat
+            label={METRIC_DEFINITIONS.written.label}
+            tone={written ? 'green' : 'slate'}
+            value={fmtNumber(written)}
+            hint={written ? 'created + updated' : 'nothing was written to the target'}
+          />
+          <Stat label={METRIC_DEFINITIONS.created.label} tone="green" value={fmtNumber(r.created)} />
+          <Stat label={METRIC_DEFINITIONS.updated.label} tone="blue" value={fmtNumber(r.updated)} />
+          <Stat
+            label={METRIC_DEFINITIONS.unchanged.label}
             tone="slate"
             value={fmtNumber(r.unchanged)}
-            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : undefined}
+            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : 'already matched'}
           />
-          <Stat label="Skipped" tone="slate" value={fmtNumber(r.skipped)} />
+          <Stat
+            label={METRIC_DEFINITIONS.skipped.label}
+            tone="slate"
+            value={fmtNumber(r.skipped)}
+            hint={r.skipped ? 'already in the target, left alone' : undefined}
+          />
           <Stat
             label="Failed"
             tone={r.failed ? 'red' : 'default'}

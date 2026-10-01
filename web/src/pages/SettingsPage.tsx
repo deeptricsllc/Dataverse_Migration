@@ -128,7 +128,9 @@ export function SettingsPage() {
             </dl>
             {!settings.data.microsoft.enabled && (
               <p className="mt-3 text-xs text-slate-500">
-                Set ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET on the server. Secrets are never shown here.
+                Microsoft sign-in isn’t enabled for this environment. Contact your DeepTrics contact to
+                connect your tenant. Credentials are held on the server and are never shown here or sent to
+                the browser.
               </p>
             )}
           </Card>

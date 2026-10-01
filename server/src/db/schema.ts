@@ -61,6 +61,7 @@ import type {
   TableProfileDto,
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
+import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -845,7 +846,14 @@ export const validationEntityResults = pgTable(
     outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
     sourceCount: integer('source_count'),
     targetCount: integer('target_count'),
+    /**
+     * Superseded by `recordAccounting`. It held every identity-map row that was not FAILED, which
+     * counted records the run deliberately did not write as records it had migrated. Kept so old
+     * reports are not silently restated, never read back.
+     */
     migratedRecords: integer('migrated_records').notNull().default(0),
+    /** Null on reports produced before the breakdown was recorded, which the report says out loud. */
+    recordAccounting: jsonb('record_accounting').$type<RecordAccounting>(),
     checkedRecords: integer('checked_records').notNull().default(0),
     matched: integer('matched').notNull().default(0),
     missing: integer('missing').notNull().default(0),

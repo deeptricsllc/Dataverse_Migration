@@ -34,6 +34,13 @@ import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
 import { auditFlags, type PlanOptions } from '../../../shared/domain';
+import {
+  accountedFor,
+  countOutcomes,
+  EMPTY_ACCOUNTING,
+  sumAccounting,
+  writtenByRun,
+} from '../../../shared/run-metrics';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { transformField } from './transformation/engine';
@@ -353,7 +360,7 @@ export class ValidationService {
         tablesValidated: results.length,
         sourceRows: results.reduce((n, r) => n + (r.sourceCount ?? 0), 0),
         targetRows: results.reduce((n, r) => n + (r.targetCount ?? 0), 0),
-        migratedRows: results.reduce((n, r) => n + r.migratedRecords, 0),
+        accounting: sumAccounting(results.map((r) => r.accounting ?? EMPTY_ACCOUNTING)),
         matchedRecords: results.reduce((n, r) => n + r.matched, 0),
         missingRecords: results.reduce((n, r) => n + r.missing, 0),
         differentRecords: results.reduce((n, r) => n + r.different, 0),
@@ -428,7 +435,7 @@ export class ValidationService {
       outcome: 'PASS',
       sourceCount: null,
       targetCount: null,
-      migratedRecords: 0,
+      accounting: { ...EMPTY_ACCOUNTING },
       checkedRecords: 0,
       matched: 0,
       missing: 0,
@@ -533,10 +540,14 @@ export class ValidationService {
 
     let pairs: EntityComparisonInput['pairs'];
     const failedMaps = maps.filter((m) => m.outcome === 'FAILED');
-    const migrated = maps.filter((m) => m.outcome !== 'FAILED' && m.targetId);
-    base.migratedRecords = migrated.length;
+    // What the run did, straight from its own record outcomes, in the one shape the whole product
+    // reads. `verifiable` is a different question from "what did this run write": a record the run
+    // skipped is in the target and worth checking, but the run did not write it. Collapsing the two
+    // is what made the report claim 28 records were written by a run that created nothing.
+    base.accounting = countOutcomes(maps.map((m) => m.outcome));
+    const verifiable = maps.filter((m) => m.outcome !== 'FAILED' && m.targetId);
 
-    const sampled = migrated.slice(0, MAX_RECORDS_PER_TABLE);
+    const sampled = verifiable.slice(0, MAX_RECORDS_PER_TABLE);
     if (vr.migrationRunId) {
       const sourceRecords = await this.fetchByIds(
         p.sConn,
@@ -652,16 +663,23 @@ export class ValidationService {
     base.missing = cmp.missing + failedMaps.length;
     base.different = cmp.different;
     const sampleNote =
-      migrated.length > MAX_RECORDS_PER_TABLE
-        ? ` (first ${MAX_RECORDS_PER_TABLE} of ${migrated.length} checked)`
+      verifiable.length > MAX_RECORDS_PER_TABLE
+        ? ` (first ${MAX_RECORDS_PER_TABLE} of ${verifiable.length} checked)`
         : '';
     if (vr.migrationRunId) {
+      const written = writtenByRun(base.accounting);
+      // Says which of those records the run put there and which were already present, because
+      // "they are all in the target" means something different for each.
+      const composition =
+        written === accountedFor(base.accounting)
+          ? ''
+          : ` (${written} written by this run, ${base.accounting.unchanged + base.accounting.skipped} already in the target)`;
       checks.push(
         base.missing === 0
           ? {
               check: 'RECORD_EXISTENCE',
               outcome: 'PASS',
-              message: `All ${pairs.length} migrated record(s) exist in the target${sampleNote}`,
+              message: `All ${pairs.length} record(s) this run accounted for exist in the target${composition}${sampleNote}`,
             }
           : {
               check: 'RECORD_EXISTENCE',
@@ -774,7 +792,7 @@ export class ValidationService {
       outcome: result.outcome,
       sourceCount: result.sourceCount,
       targetCount: result.targetCount,
-      migratedRecords: result.migratedRecords,
+      recordAccounting: result.accounting,
       checkedRecords: result.checkedRecords,
       matched: result.matched,
       missing: result.missing,
@@ -834,7 +852,9 @@ export class ValidationService {
         outcome: e.outcome,
         sourceCount: e.sourceCount,
         targetCount: e.targetCount,
-        migratedRecords: e.migratedRecords,
+        // Null for a report written before the breakdown was recorded. The old `migratedRecords`
+        // column is deliberately not read back: it answered a different question than it claimed.
+        accounting: e.recordAccounting ?? null,
         checkedRecords: e.checkedRecords,
         matched: e.matched,
         missing: e.missing,

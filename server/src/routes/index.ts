@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
+import { writtenByRun } from '../../../shared/run-metrics';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
@@ -852,7 +853,14 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Outcome',
         'Source rows',
         'Target rows',
-        'Migrated',
+        // The run's own accounting, not one derived number: an export that says "migrated" without
+        // saying what that includes is how the spreadsheet and the screen end up disagreeing.
+        'Created',
+        'Updated',
+        'Unchanged',
+        'Skipped',
+        'Failed',
+        'Written by this run',
         'Checked',
         'Matched',
         'Missing',
@@ -865,7 +873,12 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.outcome,
         e.sourceCount,
         e.targetCount,
-        e.migratedRecords,
+        e.accounting?.created ?? '',
+        e.accounting?.updated ?? '',
+        e.accounting?.unchanged ?? '',
+        e.accounting?.skipped ?? '',
+        e.accounting?.failed ?? '',
+        e.accounting ? writtenByRun(e.accounting) : '',
         e.checkedRecords,
         e.matched,
         e.missing,
