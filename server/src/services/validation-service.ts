@@ -42,6 +42,14 @@ import type { EnvironmentService } from './environment-service';
 import type { MetadataService } from './metadata-service';
 import { auditFlags, type PlanOptions } from '../../../shared/domain';
 import {
+  AGGREGATE_CAVEAT,
+  canCompareExtremes,
+  canSum,
+  totalsEqual,
+  type AggregateCheck,
+  type AggregateKind,
+} from '../../../shared/aggregates';
+import {
   accountedFor,
   countOutcomes,
   EMPTY_ACCOUNTING,
@@ -75,6 +83,8 @@ const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
 const MAX_DIFFERENCES_PER_TABLE = 2000;
 /** Distinct repeated values reported per table. The count of records is never capped. */
 const MAX_DUPLICATE_GROUPS = 50;
+/** Columns reconciled by total per table. Each one is two or three queries on both sides. */
+const MAX_AGGREGATE_COLUMNS = 12;
 
 interface PendingDiff {
   sourceRecordId: string | null;
@@ -524,6 +534,7 @@ export class ValidationService {
       coverage: null,
       duplicates: null,
       duplicateCoverage: null,
+      aggregates: null,
       matched: 0,
       missing: 0,
       different: 0,
@@ -900,6 +911,7 @@ export class ValidationService {
     );
 
     await this.scanDuplicates(p, target, base, checks, maps);
+    await this.reconcileAggregates(p, source, target, base, checks, mappings);
 
     return this.saveEntity(vr.id, { ...base, outcome: worst(checks.map((c) => c.outcome)) }, diffs);
   }
@@ -916,6 +928,176 @@ export class ValidationService {
         out.set(r.id.toLowerCase(), r);
     }
     return out;
+  }
+
+  /**
+   * Compares totals across the two sides, where the comparison means something.
+   *
+   * Supplementary evidence, never a substitute: two tables can agree on every total and differ in
+   * every row. What it buys is reach — a hundred million rows can be summed when they cannot be
+   * compared one at a time — so it is offered precisely where record-level validation runs out.
+   *
+   * Scope is where this check goes wrong, and the rule here is strict about it. A total over the
+   * whole target table answers a different question from "did this run move the data correctly"
+   * whenever the target holds anything this run did not write. There is no cheap way to restrict a
+   * SUM to one run's records — the identity map holds the ids, and an IN list of ten million of
+   * them is not a query — so rather than compare the wrong two numbers, this reports NOT VERIFIED
+   * and says why. A pilot migrating into an empty target gets the evidence; a top-up migration is
+   * told plainly that it cannot have it this way.
+   */
+  private async reconcileAggregates(
+    p: { sConn: DataverseConnection; tConn: DataverseConnection },
+    source: TableMetadata,
+    target: TableMetadata,
+    base: ValidationEntityResultDto,
+    checks: ValidationCheckDto[],
+    mappings: { sourceField: string; targetField: string }[],
+  ): Promise<void> {
+    const sourceAggregate = p.sConn.aggregate?.bind(p.sConn);
+    const targetAggregate = p.tConn.aggregate?.bind(p.tConn);
+    const results: AggregateCheck[] = [];
+    const note = (check: AggregateCheck) => results.push(check);
+
+    if (!sourceAggregate || !targetAggregate) {
+      note({
+        kind: 'COUNT',
+        entity: base.logicalName,
+        column: null,
+        sourceValue: null,
+        targetValue: null,
+        outcome: 'NOT_VERIFIED',
+        scope: 'Not attempted.',
+        reason: `${!sourceAggregate ? p.sConn.provider : p.tConn.provider} cannot compute a total without reading the whole table.`,
+      });
+      base.aggregates = results;
+      return;
+    }
+
+    const written = base.accounting ? writtenByRun(base.accounting) : 0;
+    const targetRows = base.targetCount ?? null;
+    // The one scope in which a target total answers the question asked of it.
+    const ownsWholeTarget = targetRows !== null && targetRows === written && written > 0;
+    const scope = ownsWholeTarget
+      ? `All ${written} record(s) in the target were written by this run.`
+      : `The target holds ${targetRows ?? 'an unknown number of'} record(s); this run wrote ${written}.`;
+
+    note({
+      kind: 'COUNT',
+      entity: base.logicalName,
+      column: null,
+      sourceValue: base.sourceCount === null ? null : String(base.sourceCount),
+      targetValue: targetRows === null ? null : String(targetRows),
+      outcome: ownsWholeTarget ? (base.sourceCount === targetRows ? 'PASS' : 'FAIL') : 'NOT_VERIFIED',
+      scope,
+      reason: ownsWholeTarget
+        ? base.sourceCount === targetRows
+          ? 'The target holds as many records as the source.'
+          : 'The target does not hold as many records as the source.'
+        : 'Counts cannot be compared while the target holds records this run did not write.',
+    });
+
+    if (!ownsWholeTarget) {
+      base.aggregates = results;
+      return;
+    }
+
+    // Only columns this run actually mapped, and only the ones whose totals mean the same thing on
+    // both sides. Comparing everything the two schemas happen to share produced guaranteed
+    // failures: `createdon` and `modifiedon` are written by the target platform at insert time, so
+    // their extremes *must* differ, and a report that fails on them trains people to ignore it.
+    const columns = mappings.flatMap((m) => {
+      const attribute = source.attributes.find((a) => a.logicalName === m.sourceField);
+      const twin = target.attributes.find((t) => t.logicalName === m.targetField);
+      if (!attribute || !twin || attribute.isPrimaryId) return [];
+      if (!canSum(attribute) && !canCompareExtremes(attribute)) return [];
+      return [{ attribute, target: m.targetField }];
+    });
+    for (const { attribute, target: targetField } of columns.slice(0, MAX_AGGREGATE_COLUMNS)) {
+      const kinds: AggregateKind[] = [
+        ...(canSum(attribute) ? (['SUM'] as const) : []),
+        ...(canCompareExtremes(attribute) ? (['MIN', 'MAX'] as const) : []),
+      ];
+      const temporal = attribute.type === 'DateTime';
+      // A Money or Decimal column declares how exact it is; totals are compared at that
+      // exactness rather than at whatever precision each side accumulated on the way to the sum.
+      // `sql.scale` for a real column, `precision` for a Dataverse money or decimal attribute,
+      // which is the same fact under a different name.
+      const scale = temporal ? null : (attribute.sql?.scale ?? attribute.precision ?? null);
+      for (const kind of kinds) {
+        try {
+          const [left, right] = await Promise.all([
+            sourceAggregate(source, attribute.logicalName, kind),
+            targetAggregate(target, targetField, kind),
+          ]);
+          if (left === null && right === null) {
+            // Nothing to total. Reporting this as a pass would offer two absences as evidence.
+            note({
+              kind,
+              entity: base.logicalName,
+              column: attribute.logicalName,
+              sourceValue: null,
+              targetValue: null,
+              outcome: 'NOT_VERIFIED',
+              scope,
+              reason: 'Neither side holds any value in this column, so there is nothing to total.',
+            });
+            continue;
+          }
+          // Compared as exact decimals rather than through a float, so a money column with more
+          // digits than a double can hold is still compared truthfully; timestamps are compared as
+          // instants, so two engines rendering one moment differently is not a failure.
+          const same = totalsEqual(left, right, { temporal, scale });
+          // Said in the result, not only in the code: somebody comparing the two printed figures
+          // digit by digit needs to know the comparison was made at the column's own exactness.
+          const atScale =
+            !same || scale === null || kind !== 'SUM'
+              ? ''
+              : ` Compared to ${scale} decimal place(s), which is all this column holds.`;
+          note({
+            kind,
+            entity: base.logicalName,
+            column: attribute.logicalName,
+            sourceValue: left,
+            targetValue: right,
+            outcome: same ? 'PASS' : 'FAIL',
+            scope,
+            reason:
+              (same ? 'The two sides report the same value.' : 'The two sides report different values.') +
+              atScale,
+          });
+        } catch (err) {
+          note({
+            kind,
+            entity: base.logicalName,
+            column: attribute.logicalName,
+            sourceValue: null,
+            targetValue: null,
+            outcome: 'NOT_VERIFIED',
+            scope,
+            reason: errorMessage(err).slice(0, 200),
+          });
+        }
+      }
+    }
+    base.aggregates = results;
+    const failed = results.filter((r) => r.outcome === 'FAIL');
+    const verified = results.filter((r) => r.outcome !== 'NOT_VERIFIED');
+    // Only when something was actually compared. A table whose totals could not be reconciled says
+    // so in the aggregate panel, with its scope and reason, rather than through a warning on the
+    // entity: "we could not compare these two numbers" is not a finding about the migration, and a
+    // top-up run would otherwise never show a clean verdict again.
+    if (verified.length > 0) {
+      checks.push({
+        check: 'AGGREGATES',
+        outcome: failed.length > 0 ? 'FAIL' : 'PASS',
+        message:
+          (failed.length > 0
+            ? `${failed.length} of ${verified.length} total(s) disagree between the two sides: ${failed
+                .map((f) => `${f.kind}${f.column ? `(${f.column})` : ''}`)
+                .join(', ')}.`
+            : `${verified.length} total(s) agree between the two sides.`) + ` ${AGGREGATE_CAVEAT}`,
+      });
+    }
   }
 
   /**
@@ -1038,6 +1220,7 @@ export class ValidationService {
       coverage: result.coverage,
       duplicates: result.duplicates,
       duplicateCoverage: result.duplicateCoverage,
+      aggregates: result.aggregates,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
       matched: result.matched,
@@ -1105,6 +1288,7 @@ export class ValidationService {
         coverage: e.coverage ?? null,
         duplicates: e.duplicates ?? null,
         duplicateCoverage: e.duplicateCoverage ?? null,
+        aggregates: e.aggregates ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,
         matched: e.matched,

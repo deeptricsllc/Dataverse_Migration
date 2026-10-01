@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Logger } from 'pino';
+import { AGGREGATE_CAVEAT } from '../../../shared/aggregates';
 import type { MigrationRunDto, ValidationRunDto } from '../../../shared/domain';
 import { accountedFor, writtenByRun } from '../../../shared/run-metrics';
 import {
@@ -113,6 +114,12 @@ export class EvidenceService {
         entry: file('validation-coverage.json', coverageJson(report)),
         describes: 'What was examined, what was not, and how the examined records were chosen.',
       });
+      if (report.entities.some((e) => (e.aggregates ?? []).length > 0)) {
+        entries.push({
+          entry: file('aggregates.csv', aggregatesCsv(report)),
+          describes: `Totals compared across the two sides, with the scope each figure covers. ${AGGREGATE_CAVEAT}`,
+        });
+      }
     }
 
     // The manifest is written last because it describes the others, and it is not itself hashed:
@@ -284,6 +291,28 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null):
         ``,
       );
     }
+    const aggregates = report.entities.flatMap((e) => e.aggregates ?? []);
+    if (aggregates.length > 0) {
+      const compared = aggregates.filter((a) => a.outcome !== 'NOT_VERIFIED');
+      const disagreed = aggregates.filter((a) => a.outcome === 'FAIL');
+      lines.push(
+        `### Totals compared`,
+        ``,
+        // Said before the number, so the number is read in the right frame rather than afterwards.
+        `${AGGREGATE_CAVEAT}`,
+        ``,
+        compared.length === 0
+          ? `No totals could be compared. ${aggregates[0]!.reason}`
+          : `${compared.length} total(s) were compared across ${report.entities.filter((e) => (e.aggregates ?? []).length > 0).length} table(s). ` +
+              (disagreed.length === 0
+                ? `All of them agree.`
+                : `${disagreed.length} disagree. \`aggregates.csv\` names which.`),
+        ``,
+        `${aggregates.length - compared.length} could not be compared, each with its reason in`,
+        `\`aggregates.csv\`.`,
+        ``,
+      );
+    }
   }
 
   lines.push(
@@ -373,6 +402,32 @@ function validationCsv(report: ValidationRunDto): string {
       (e.duplicates ?? []).reduce((n, d) => n + d.occurrences, 0),
       e.duplicateCoverage?.mode ?? 'NOT RECORDED',
     ]),
+  ];
+  return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+
+/**
+ * Totals, with the scope and the reason on every row.
+ *
+ * The scope column is not decoration. An auditor reading a spreadsheet of matching sums will draw a
+ * conclusion from it, and the only thing that makes that conclusion safe is knowing which records
+ * the two figures covered — so it travels in the row rather than in a header somebody scrolls past.
+ */
+function aggregatesCsv(report: ValidationRunDto): string {
+  const rows = [
+    ['Table', 'Aggregate', 'Column', 'Source value', 'Target value', 'Result', 'Scope', 'Reason'],
+    ...report.entities.flatMap((e) =>
+      (e.aggregates ?? []).map((a) => [
+        a.entity,
+        a.kind,
+        a.column ?? '',
+        a.sourceValue ?? '',
+        a.targetValue ?? '',
+        a.outcome === 'NOT_VERIFIED' ? 'NOT VERIFIED' : a.outcome,
+        a.scope,
+        a.reason,
+      ]),
+    ),
   ];
   return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 }

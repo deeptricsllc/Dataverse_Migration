@@ -150,8 +150,16 @@ describe('connector verification matrix', () => {
     // They share an implementation, and sharing an implementation is not evidence. What differs is
     // everything around the query — Entra authentication, firewall rules, enforced encryption,
     // transient faults, throttling — and none of it is exercised by a local container.
-    for (const capability of ENGINE_PROVABLE) {
-      if (capability === 'connect') continue;
+    // Driven by what the recorded SQL Server run actually proved rather than by the list of what a
+    // run could prove, so a capability the suite has only just learned to exercise does not make
+    // this fail before any server has answered — and does not quietly excuse Azure either.
+    const sqlServerRun = byType.get('SQL_SERVER');
+    expect(sqlServerRun, 'there is a recorded SQL Server run').toBeTruthy();
+    const proved = ENGINE_PROVABLE.filter(
+      (c) => c !== 'connect' && sqlServerRun!.capabilities[c] === 'PASSED',
+    );
+    expect(proved.length, 'the recorded run proved something').toBeGreaterThan(0);
+    for (const capability of proved) {
       expect(verificationFor('SQL_SERVER', capability), `SQL Server ${capability}`).toBe('ENGINE_VERIFIED');
       expect(verificationFor('AZURE_SQL', capability), `Azure SQL ${capability} must not borrow it`).not.toBe(
         'ENGINE_VERIFIED',

@@ -199,6 +199,16 @@ export interface MigrationConnector {
     columns: string[],
   ): Promise<DvRecord | null>;
   /**
+   * A single total over a column, computed by the system that holds the data.
+   *
+   * Optional, like duplicate detection, and for the same reason: a connector that cannot compute
+   * one leaves it undefined and the report says NOT VERIFIED rather than passing. Returned as a
+   * string so an exact decimal survives — routing a money column through a JavaScript number is
+   * how a reconciliation quietly starts rounding.
+   */
+  aggregate?(table: TableMetadata, column: string | null, kind: AggregateKind): Promise<string | null>;
+
+  /**
    * Key values that occur more than once, counted by the system that holds the data.
    *
    * Optional on purpose. A connector that cannot group reliably leaves it undefined, and the
@@ -242,6 +252,8 @@ export interface MigrationConnector {
   /** Releases pooled resources. Connectors without pools do nothing. */
   dispose?(): Promise<void>;
 }
+
+import type { AggregateKind } from '../../../shared/aggregates';
 
 export interface DuplicateScanOptions {
   /** Stop after this many distinct repeated values. The caller says the total was capped. */

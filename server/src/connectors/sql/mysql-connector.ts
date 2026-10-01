@@ -1,3 +1,4 @@
+import type { AggregateKind } from '../../../../shared/aggregates';
 import mysql from 'mysql2/promise';
 import type { Logger } from 'pino';
 import type { AutomationInfo, PrincipalDto, SqlConnectionConfig } from '../../../../shared/domain';
@@ -514,6 +515,24 @@ export class MysqlConnector implements MigrationConnector {
     for (const name of key.attributes) criteria[name] = values[name] ?? null;
     const found = await this.findByFields(table, criteria, columns, 2);
     return found.length === 1 ? found[0] : null;
+  }
+
+  /**
+   * One total, computed by the database.
+   *
+   * Returned as a string: a money column routed through a JavaScript number is how a
+   * reconciliation quietly starts rounding, and the comparison that follows is exact only if the
+   * value arriving here still is. COUNT is the one kind with no column.
+   */
+  async aggregate(table: TableMetadata, column: string | null, kind: AggregateKind): Promise<string | null> {
+    const expression = kind === 'COUNT' ? 'COUNT(*)' : `${kind}(${mysqlQuoteIdent(column!)})`;
+    const rows = await this.query<Record<string, unknown>>(
+      `SELECT CAST(${expression} AS CHAR) AS agg FROM ${this.quoteTable(table.logicalName)}`,
+      {},
+      `aggregate ${kind} over ${table.logicalName}`,
+    );
+    const value = rows[0]?.['agg'];
+    return value === null || value === undefined ? null : String(value);
   }
 
   /**

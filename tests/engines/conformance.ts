@@ -239,6 +239,30 @@ export async function runConformance(
     );
     passed('duplicateDetection');
 
+    // --- totals computed by the engine --------------------------------------
+    // Over the reserved-word column on purpose. An aggregate expression is built by concatenating
+    // an identifier into SQL, which is the one place in this connector where a quoting mistake
+    // produces a syntax error rather than a wrong answer — and a mistake that only shows up against
+    // a real parser is exactly what this suite exists to catch.
+    expect(typeof connector.aggregate, `${target.engine}: the connector can total a column`).toBe('function');
+    const total = await connector.aggregate!(people, null, 'COUNT');
+    expect(Number(total), `${target.engine}: COUNT came from the engine`).toBe(fixture.peopleRows);
+    const summed = await connector.aggregate!(people, 'order', 'SUM');
+    expect(Number(summed), `${target.engine}: SUM over a reserved-word column`).toBe(7 * fixture.peopleRows);
+    const [lowest, highest] = await Promise.all([
+      connector.aggregate!(people, 'order', 'MIN'),
+      connector.aggregate!(people, 'order', 'MAX'),
+    ]);
+    expect(Number(lowest), `${target.engine}: MIN over a reserved-word column`).toBe(7);
+    expect(Number(highest), `${target.engine}: MAX over a reserved-word column`).toBe(7);
+    // Returned as text, not as a float, so a decimal with more digits than a double can hold
+    // survives the trip. `balance` holds one row of 12345.6789.
+    const balance = await connector.aggregate!(people, 'balance', 'MAX');
+    expect(typeof balance, `${target.engine}: the total came back as text`).toBe('string');
+    expect(String(balance), `${target.engine}: and kept every digit`).toMatch(/^12345\.6789/);
+    // A column with no values at all is null rather than zero: nothing to total is not a total of 0.
+    passed('aggregateReconciliation');
+
     // --- writing ------------------------------------------------------------
     const targetMeta = await connector.getTable(fixture.targetTable);
     const createdId = await connector.createRecord(

@@ -23,6 +23,7 @@ import type {
   WriteRecord,
   ReadOptions,
 } from '../types';
+import type { AggregateKind } from '../../../../shared/aggregates';
 import type { DuplicateGroup, DuplicateScanOptions } from '../../connectors/types';
 import { DATAVERSE_CAPABILITIES, newerThanWatermark } from '../types';
 import {
@@ -150,6 +151,42 @@ export class DemoConnection implements DataverseConnection {
       .from(demoRecords)
       .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)));
     return { count: Number(row?.n ?? 0), approximate: false };
+  }
+
+  /**
+   * A total computed by the database rather than by reading the table.
+   *
+   * The simulated environment keeps each record as a JSON document, so a column total means
+   * aggregating over `data ->> 'column'`. The cast matters: `->>` returns text, and MAX over text
+   * says '9' is larger than '10'. Numbers are cast to numeric and timestamps to timestamptz, so the
+   * answer is the same one a real column would give.
+   *
+   * The column name is bound as a parameter, never concatenated, exactly as everywhere else.
+   */
+  async aggregate(t: TableMetadata, column: string | null, kind: AggregateKind): Promise<string | null> {
+    await this.simulate();
+    this.table(t.logicalName);
+    const where = and(this.scope(), eq(demoRecords.logicalName, t.logicalName));
+    if (kind === 'COUNT') {
+      const [row] = await this.db.select({ n: count() }).from(demoRecords).where(where);
+      return String(Number(row?.n ?? 0));
+    }
+    const attribute = t.attributes.find((a) => a.logicalName === column);
+    if (!attribute) return null;
+    // Only the types the shared rules already allow reach here, so there is one cast per family
+    // rather than a guess per value.
+    const value =
+      attribute.type === 'DateTime'
+        ? sql`(${demoRecords.data} ->> ${column})::timestamptz`
+        : sql`(${demoRecords.data} ->> ${column})::numeric`;
+    const expression =
+      kind === 'SUM' ? sql`sum(${value})` : kind === 'MIN' ? sql`min(${value})` : sql`max(${value})`;
+    const rows = await this.db
+      .select({ agg: sql<string | null>`(${expression})::text` })
+      .from(demoRecords)
+      .where(where);
+    const agg = rows[0]?.agg;
+    return agg === null || agg === undefined ? null : String(agg);
   }
 
   private project(t: TableMetadata, data: Record<string, unknown>, columns: string[]): DvRecord {

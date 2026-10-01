@@ -1,3 +1,4 @@
+import { AGGREGATE_CAVEAT, type AggregateCheck } from '@shared/aggregates';
 import type {
   DifferenceType,
   ValidationDifferenceDto,
@@ -280,6 +281,59 @@ function CoveragePanel({ coverage, depth }: { coverage: ValidationCoverage | nul
  * decide whether the migration worked, and "28 records verified" means something very different
  * depending on whether this run put them there.
  */
+/**
+ * Totals compared across the two sides.
+ *
+ * Shown with its scope attached to every row, because this is the one panel in the report somebody
+ * will quote out of context. A SUM that agrees is worth reading; a SUM that agrees over a target
+ * holding records this run never wrote is worth nothing, and the only thing separating the two is
+ * the sentence next to the number. The caveat sits under the table in the same type as the numbers,
+ * not in a tooltip.
+ */
+function AggregatePanel({ aggregates, entity }: { aggregates: AggregateCheck[]; entity: string }) {
+  if (aggregates.length === 0) return null;
+  const unverified = aggregates.filter((a) => a.outcome === 'NOT_VERIFIED');
+  return (
+    <div className="mt-3" data-testid={`aggregates-${entity}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Totals compared</p>
+      {aggregates.length === unverified.length ? (
+        // Nothing was compared. Saying which figure was unavailable and why beats an empty table
+        // that reads as "no problems found".
+        <p className="mt-1 max-w-3xl text-sm text-slate-600">
+          No totals could be compared. {unverified[0]!.reason} {unverified[0]!.scope}
+        </p>
+      ) : (
+        <ul className="mt-1 space-y-1 text-sm">
+          {aggregates.map((a) => (
+            <li key={`${a.kind}-${a.column ?? 'rows'}`} className="flex flex-wrap items-baseline gap-2">
+              <span className="w-28 flex-none text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {a.kind}
+                {a.column ? ` · ${a.column}` : ''}
+              </span>
+              {a.outcome === 'NOT_VERIFIED' ? (
+                <Pill tone="slate" title={a.reason}>
+                  not verified
+                </Pill>
+              ) : (
+                <>
+                  <Mono className="text-xs">{a.sourceValue ?? '—'}</Mono>
+                  <ArrowRight className="h-3 w-3 text-slate-400" aria-hidden />
+                  <Mono className={`text-xs ${a.outcome === 'FAIL' ? 'text-red-700' : ''}`}>
+                    {a.targetValue ?? '—'}
+                  </Mono>
+                  {a.outcome === 'FAIL' && <Pill tone="red">differs</Pill>}
+                </>
+              )}
+              <span className="text-xs text-slate-400">{a.scope}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 max-w-3xl text-xs text-slate-500">{AGGREGATE_CAVEAT}</p>
+    </div>
+  );
+}
+
 function RunAccounting({
   accounting,
   migrationRunId,
@@ -614,6 +668,9 @@ export function ValidationReportPage() {
                                   </p>
                                 )}
                               </div>
+                            )}
+                            {e.aggregates && (
+                              <AggregatePanel aggregates={e.aggregates} entity={e.logicalName} />
                             )}
                             <button
                               type="button"

@@ -5,6 +5,7 @@ import type { AttributeType, FieldValue, OptionMeta, RequiredLevel } from './met
 import type { RecordAccounting } from './run-metrics';
 import type { WorkspaceRole } from './authorization';
 import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
+import type { AggregateCheck } from './aggregates';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -1381,7 +1382,18 @@ export type DifferenceType =
   | 'PRE_EXISTING_DIFFERENCE';
 
 export interface ValidationCheckDto {
-  check: 'SCHEMA' | 'ROW_COUNT' | 'RECORD_EXISTENCE' | 'FIELD_VALUES' | 'REFERENCES';
+  check:
+    | 'SCHEMA'
+    | 'ROW_COUNT'
+    | 'RECORD_EXISTENCE'
+    | 'FIELD_VALUES'
+    | 'REFERENCES'
+    /**
+     * Totals compared across the two sides. Kept apart from ROW_COUNT because they answer different
+     * questions: ROW_COUNT compares whole tables, this compares figures over the records this run
+     * wrote, and a report that merged them would let a pass on one read as a pass on the other.
+     */
+    | 'AGGREGATES';
   outcome: ValidationOutcome;
   message: string;
 }
@@ -1415,6 +1427,11 @@ export interface ValidationEntityResultDto {
   coverage: ValidationCoverage | null;
   /** Repeated key values found in the target, or null when this connector cannot look. */
   duplicates: DuplicateFindingDto[] | null;
+  /**
+   * Totals compared across the two sides. Supplementary evidence: totals agreeing does not prove
+   * the records agree. Null for a report produced before aggregates were computed.
+   */
+  aggregates: AggregateCheck[] | null;
   /** Coverage of the duplicate check specifically: it can be NOT_VERIFIED while values pass. */
   duplicateCoverage: ValidationCoverage | null;
   matched: number;

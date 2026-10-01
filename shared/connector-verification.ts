@@ -98,6 +98,7 @@ export type ConnectorCapabilityKey =
   | 'migration'
   | 'validation'
   | 'duplicateDetection'
+  | 'aggregateReconciliation'
   | 'fullValidation'
   | 'rollbackInventory'
   | 'retryResume';
@@ -115,6 +116,7 @@ export const CAPABILITY_LABELS: Record<ConnectorCapabilityKey, string> = {
   migration: 'Migration',
   validation: 'Validation',
   duplicateDetection: 'Duplicate detection',
+  aggregateReconciliation: 'Totals reconciled by the database',
   fullValidation: 'Full (uncapped) validation',
   rollbackInventory: 'Rollback inventory',
   retryResume: 'Retry and resume',
@@ -137,6 +139,7 @@ export const ENGINE_PROVABLE: readonly ConnectorCapabilityKey[] = [
   'upsert',
   'relationshipDiscovery',
   'duplicateDetection',
+  'aggregateReconciliation',
 ];
 
 export type VerificationRow = Partial<Record<ConnectorCapabilityKey, VerificationLevel>>;
@@ -154,13 +157,14 @@ const ALL = (level: VerificationLevel): VerificationRow => ({
   migration: level,
   validation: level,
   duplicateDetection: level,
+  aggregateReconciliation: level,
   fullValidation: level,
   rollbackInventory: level,
   retryResume: level,
 });
 
 /**
- * The nine capabilities the conformance suite can demonstrate, raised together.
+ * The ten capabilities the conformance suite can demonstrate, raised together.
  *
  * Together because they are proved by one run against one server: a suite that reached the schema
  * also connected, and one that wrote also read. Splitting them would invite promoting a row the
@@ -168,6 +172,19 @@ const ALL = (level: VerificationLevel): VerificationRow => ({
  */
 const engineVerified = (): VerificationRow =>
   Object.fromEntries(ENGINE_PROVABLE.map((k) => [k, 'ENGINE_VERIFIED' as const]));
+
+/**
+ * Capabilities the conformance suite now exercises but no recorded hosted run has yet proved.
+ *
+ * The suite asserting something and a server having answered are different facts, and this file
+ * states the second. A capability sits here from the moment the test is written until a hosted
+ * engines run writes PASSED into `evidence/engine-verification.json`; then it comes out and the
+ * matrix test checks the claim against that evidence. Raising it early is the one shortcut that
+ * would make every other level in this file worth nothing.
+ */
+const AWAITING_EVIDENCE: VerificationRow = {
+  aggregateReconciliation: 'IMPLEMENTED',
+};
 
 const READ_ONLY_SOURCE = {
   write: 'NOT_SUPPORTED',
@@ -194,9 +211,9 @@ const TRANSFORMS = { transformations: 'IMPLEMENTED' } as const;
  * passed into `evidence/engine-verification.json`.
  */
 export const CONNECTOR_VERIFICATION: Partial<Record<ConnectionType, VerificationRow>> = {
-  POSTGRES: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
-  SQL_SERVER: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
-  MYSQL: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified() },
+  POSTGRES: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
+  SQL_SERVER: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
+  MYSQL: { ...ALL('IMPLEMENTED'), ...TRANSFORMS, ...engineVerified(), ...AWAITING_EVIDENCE },
   /**
    * Azure SQL shares SQL Server's implementation, and sharing an implementation is not evidence.
    * What differs is everything around the query — Entra authentication, firewall rules, enforced
@@ -211,24 +228,35 @@ export const CONNECTOR_VERIFICATION: Partial<Record<ConnectionType, Verification
     // No grouping query we will stand behind without a tenant to try it on, so a report says NOT
     // VERIFIED for this table rather than passing it.
     duplicateDetection: 'NOT_SUPPORTED',
+    // Nor an aggregate one. FetchXML can total a column, but only within an aggregate row limit it
+    // silently stops at, which is the opposite of what a reconciliation is for.
+    aggregateReconciliation: 'NOT_SUPPORTED',
   },
   /**
    * The file connector has no external engine: its storage is the platform's own database and the
    * journeys upload real files through the real import path. There is nothing further to verify it
    * against, which is why it is the one connector already at the top of its own ladder.
    */
-  FILE: { ...ALL('ENGINE_VERIFIED'), ...READ_ONLY_SOURCE, transformations: 'IMPLEMENTED' },
+  FILE: {
+    ...ALL('ENGINE_VERIFIED'),
+    ...READ_ONLY_SOURCE,
+    transformations: 'IMPLEMENTED',
+    // Staged files are read into the platform's own tables, and nothing totals them in place.
+    aggregateReconciliation: 'NOT_SUPPORTED',
+  },
   ONEDRIVE: {
     ...ALL('IMPLEMENTED'),
     ...TRANSFORMS,
     ...READ_ONLY_SOURCE,
     connect: 'REQUIRES_CONFIGURATION',
+    aggregateReconciliation: 'NOT_SUPPORTED',
   },
   SHAREPOINT: {
     ...ALL('IMPLEMENTED'),
     ...TRANSFORMS,
     ...READ_ONLY_SOURCE,
     connect: 'REQUIRES_CONFIGURATION',
+    aggregateReconciliation: 'NOT_SUPPORTED',
   },
 };
 

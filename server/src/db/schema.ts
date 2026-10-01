@@ -64,6 +64,7 @@ import type {
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
+import type { AggregateCheck } from '../../../shared/aggregates';
 import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
@@ -869,6 +870,8 @@ export const validationEntityResults = pgTable(
     /** Repeated key values found, and how thoroughly the search for them ran. */
     duplicates: jsonb('duplicates').$type<DuplicateFindingDto[]>(),
     duplicateCoverage: jsonb('duplicate_coverage').$type<ValidationCoverage>(),
+    /** Totals compared across the two sides, with the scope each comparison covered. */
+    aggregates: jsonb('aggregates').$type<AggregateCheck[]>(),
     checkedRecords: integer('checked_records').notNull().default(0),
     /** Records the run reported as failed. Kept apart from `missing`, which is our own finding. */
     failedInRun: integer('failed_in_run').notNull().default(0),
