@@ -1,4 +1,5 @@
 import type { AuthConfigDto } from '@shared/domain';
+import { PRODUCT_NAME, VENDOR_NAME } from '@shared/product';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Boxes } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -24,9 +25,7 @@ function Shell({ title, lead, children }: { title: string; lead: string; childre
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600">
               <Boxes className="h-4 w-4 text-white" aria-hidden />
             </span>
-            <span className="text-sm font-semibold text-slate-900">
-              Data Analysis &amp; Migration Platform
-            </span>
+            <span className="text-sm font-semibold text-slate-900">{PRODUCT_NAME}</span>
           </Link>
           <Link
             to="/"
@@ -218,9 +217,8 @@ export function TermsPage() {
     <Shell title="Terms of use" lead="The terms on which this service is offered while it is in evaluation.">
       <Section heading="What this is">
         <p>
-          The Data Analysis &amp; Migration Platform, provided by DeepTrics. It is offered for evaluation and
-          pilot use. It is not yet a generally available product, and it is provided without a service level
-          commitment.
+          The {PRODUCT_NAME}, provided by {VENDOR_NAME}. It is offered for evaluation and pilot use. It is not
+          yet a generally available product, and it is provided without a service level commitment.
         </p>
       </Section>
 

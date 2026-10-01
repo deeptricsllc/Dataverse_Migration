@@ -1,4 +1,5 @@
 import type { AuthConfigDto } from '@shared/domain';
+import { PRODUCT_NAME, VENDOR_NAME } from '@shared/product';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -286,7 +287,7 @@ export function LandingPage() {
               <Boxes className="h-5 w-5 text-white" aria-hidden />
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-white">Data Analysis &amp; Migration Platform</div>
+              <div className="text-sm font-semibold text-white">{PRODUCT_NAME}</div>
               <div className="text-[11px] text-slate-400">by DeepTrics</div>
             </div>
           </div>
@@ -761,7 +762,7 @@ export function LandingPage() {
               <Boxes className="h-4 w-4 text-white" aria-hidden />
             </div>
             <span>
-              Data Analysis &amp; Migration Platform <span className="text-slate-600">· by DeepTrics</span>
+              {PRODUCT_NAME} <span className="text-slate-600">· by {VENDOR_NAME}</span>
             </span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-5">

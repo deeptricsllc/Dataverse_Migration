@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../shared/product';
 import { buildApp } from './app';
 import { loadConfig } from './config';
 import { createDatabase, migrateWhenReachable } from './db/client';
@@ -31,7 +32,7 @@ if (!config.RUN_WORKER && database.kind === 'pglite') {
 await app.listen({ host: config.HOST, port: config.PORT });
 logger.info(
   { url: config.APP_BASE_URL, demoMode: config.DEMO_MODE, microsoftEnabled: config.microsoftEnabled },
-  'Data Analysis and Migration Platform started',
+  `${PRODUCT_NAME} started`,
 );
 if (worker) await worker.start();
 scheduler?.start();

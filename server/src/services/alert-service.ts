@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '../../../shared/product';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config';
 import { scrubSecrets } from '../logger';
@@ -63,7 +64,7 @@ function summarize(event: AlertEvent): string {
         event.failed ? ` with ${event.failed} failed record(s)` : ''
       }`;
     case 'TEST':
-      return `Test alert from the Data Analysis & Migration Platform, sent by ${event.requestedBy}`;
+      return `Test alert from the ${PRODUCT_NAME}, sent by ${event.requestedBy}`;
   }
 }
 

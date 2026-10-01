@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { post, setCsrfToken } from '../lib/api';
 import { useSession, useWorkspace } from '../lib/session';
+import { PRODUCT_NAME, PRODUCT_SHORT_NAME, VENDOR_NAME } from '@shared/product';
 import { cx } from './ui';
 
 const NAV = [
@@ -199,8 +200,8 @@ export function Layout() {
             <Boxes className="h-4.5 w-4.5 text-white" aria-hidden />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight text-white">DeepTrics</div>
-            <div className="text-[11px] leading-tight text-slate-400">Analysis & Migration</div>
+            <div className="text-sm font-semibold leading-tight text-white">{VENDOR_NAME}</div>
+            <div className="text-[11px] leading-tight text-slate-400">{PRODUCT_SHORT_NAME}</div>
           </div>
         </div>
         <nav className="mt-2 flex-1 space-y-0.5 px-3" aria-label="Main">
@@ -250,7 +251,7 @@ export function Layout() {
         )}
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-slate-900">Data Analysis & Migration Platform</span>
+            <span className="text-sm font-semibold text-slate-900">{PRODUCT_NAME}</span>
             {realTenantReadOnly && !user.organization.isDemo && (
               <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-sky-900">
                 READ ONLY

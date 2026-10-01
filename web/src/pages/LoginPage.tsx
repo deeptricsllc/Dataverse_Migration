@@ -1,4 +1,5 @@
 import type { AuthConfigDto } from '@shared/domain';
+import { PRODUCT_NAME } from '@shared/product';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Boxes, Check, FlaskConical, Lock } from 'lucide-react';
 import { useState } from 'react';
@@ -53,7 +54,7 @@ export function LoginPage() {
             <Boxes className="h-6 w-6" aria-hidden />
           </div>
           <div>
-            <div className="text-lg font-semibold leading-tight">Data Analysis &amp; Migration Platform</div>
+            <div className="text-lg font-semibold leading-tight">{PRODUCT_NAME}</div>
             <div className="text-sm text-slate-400">by DeepTrics</div>
           </div>
         </Link>
@@ -87,9 +88,7 @@ export function LoginPage() {
               <Boxes className="h-5 w-5 text-white" aria-hidden />
             </div>
             <div>
-              <div className="font-semibold leading-tight text-slate-900">
-                Data Analysis &amp; Migration Platform
-              </div>
+              <div className="font-semibold leading-tight text-slate-900">{PRODUCT_NAME}</div>
               <div className="text-xs text-slate-500">by DeepTrics</div>
             </div>
           </Link>
