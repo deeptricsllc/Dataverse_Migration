@@ -13,7 +13,14 @@ import type {
   ValidationRunDto,
   ValidationSummary,
 } from '../../../shared/domain';
-import { LOOKUP_TYPES, isLookupValue, type DvRecord, type TableMetadata } from '../../../shared/metadata';
+import {
+  LOOKUP_TYPES,
+  isLookupValue,
+  type AttributeMeta,
+  type DvRecord,
+  type FieldValue,
+  type TableMetadata,
+} from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
 import {
   environments,
@@ -109,6 +116,39 @@ export interface EntityComparisonInput {
  * formatting-only differences (line endings, trailing whitespace, GUID case, precision,
  * date formatting) do not register as mismatches.
  */
+/**
+ * Which kind of difference this is.
+ *
+ * Three outcomes with three different fixes, and they used to be one. A value that is simply gone
+ * points at the source or a required column; a value cut short points at a column too narrow for
+ * the data, which is the dangerous one because the record still looks right; anything else is a
+ * mapping or transformation question.
+ *
+ * Truncation is only claimed when the evidence is unambiguous: the target holds a strict prefix of
+ * what was expected, and its length is exactly the column's declared maximum. A shorter value that
+ * merely happens to start the same way is a mismatch, not a truncation.
+ */
+export function classifyDifference(
+  target: AttributeMeta,
+  expected: FieldValue | null,
+  actual: FieldValue | undefined,
+): DifferenceType {
+  const expectedEmpty = expected === null || expected === undefined || expected === '';
+  const actualEmpty = actual === null || actual === undefined || actual === '';
+  if (!expectedEmpty && actualEmpty) return 'VALUE_LOST';
+  if (
+    typeof expected === 'string' &&
+    typeof actual === 'string' &&
+    target.maxLength != null &&
+    actual.length === target.maxLength &&
+    expected.length > actual.length &&
+    expected.startsWith(actual)
+  ) {
+    return 'VALUE_TRUNCATED';
+  }
+  return 'VALUE_MISMATCH';
+}
+
 export function compareRecords(input: EntityComparisonInput): {
   matched: number;
   missing: number;
@@ -182,7 +222,9 @@ export function compareRecords(input: EntityComparisonInput): {
           // The transformed value is what should be in the target, so that is what is reported.
           sourceValue: converted.ok ? displayValue(tAttr, expectedValue) : displayValue(sAttr, sv),
           targetValue: displayValue(tAttr, tv),
-          differenceType: preExisting ? 'PRE_EXISTING_DIFFERENCE' : 'VALUE_MISMATCH',
+          differenceType: preExisting
+            ? 'PRE_EXISTING_DIFFERENCE'
+            : classifyDifference(tAttr, expectedValue, tv),
           outcome: preExisting ? 'WARNING' : 'FAIL',
         });
       }
@@ -734,16 +776,25 @@ export class ValidationService {
         message: `${pairs.length - cmp.missing} of ${pairs.length} source record(s) found in target by identifier${cmp.missing ? `; ${cmp.missing} missing` : ''}`,
       });
     }
-    const valueFails = cmp.diffs.filter(
-      (d) => d.differenceType === 'VALUE_MISMATCH' || d.differenceType === 'LOOKUP_MISMATCH',
-    ).length;
-    const preExisting = cmp.diffs.filter((d) => d.differenceType === 'PRE_EXISTING_DIFFERENCE').length;
+    const countOf = (type: DifferenceType) => cmp.diffs.filter((d) => d.differenceType === type).length;
+    const lost = countOf('VALUE_LOST');
+    const truncated = countOf('VALUE_TRUNCATED');
+    const valueFails = countOf('VALUE_MISMATCH') + countOf('LOOKUP_MISMATCH') + lost + truncated;
+    const preExisting = countOf('PRE_EXISTING_DIFFERENCE');
+    // Named separately because they are different problems: a value gone, a value cut off by a
+    // column too narrow for it, and a value that is simply wrong each send somebody somewhere else.
+    const breakdown = [
+      lost > 0 ? `${lost} value(s) did not arrive` : null,
+      truncated > 0 ? `${truncated} value(s) were cut off by a narrower target column` : null,
+    ]
+      .filter(Boolean)
+      .join('; ');
     checks.push(
       valueFails > 0
         ? {
             check: 'FIELD_VALUES',
             outcome: 'FAIL',
-            message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)`,
+            message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)${breakdown ? ` — ${breakdown}` : ''}`,
           }
         : preExisting > 0
           ? {

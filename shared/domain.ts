@@ -1358,8 +1358,25 @@ export interface RollbackPreviewDto {
 // ---------------------------------------------------------------------------
 
 export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
+/**
+ * Why a record does not match.
+ *
+ * `VALUE_LOST` and `VALUE_TRUNCATED` were split out of `VALUE_MISMATCH` because they are different
+ * problems with different fixes. A value that arrived wrong is usually a mapping or a
+ * transformation; a value that arrived empty is usually a required column the source could not
+ * fill; a value that arrived shortened is a column too narrow for the data, which is the one that
+ * silently destroys information and still looks plausible.
+ */
 export type DifferenceType =
-  'MISSING_IN_TARGET' | 'VALUE_MISMATCH' | 'LOOKUP_MISMATCH' | 'BROKEN_REFERENCE' | 'PRE_EXISTING_DIFFERENCE';
+  | 'MISSING_IN_TARGET'
+  | 'VALUE_MISMATCH'
+  /** The source had a value after transformation; the target has none. */
+  | 'VALUE_LOST'
+  /** The target holds a prefix of the expected value, in a column too narrow to hold it. */
+  | 'VALUE_TRUNCATED'
+  | 'LOOKUP_MISMATCH'
+  | 'BROKEN_REFERENCE'
+  | 'PRE_EXISTING_DIFFERENCE';
 
 export interface ValidationCheckDto {
   check: 'SCHEMA' | 'ROW_COUNT' | 'RECORD_EXISTENCE' | 'FIELD_VALUES' | 'REFERENCES';

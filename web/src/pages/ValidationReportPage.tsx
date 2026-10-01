@@ -630,6 +630,8 @@ export function ValidationReportPage() {
                       ...(
                         [
                           'MISSING_IN_TARGET',
+                          'VALUE_LOST',
+                          'VALUE_TRUNCATED',
                           'VALUE_MISMATCH',
                           'LOOKUP_MISMATCH',
                           'BROKEN_REFERENCE',

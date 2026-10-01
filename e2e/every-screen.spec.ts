@@ -14,12 +14,12 @@ const TOP_LEVEL: { path: string; proof: RegExp }[] = [
   { path: '/', proof: /Welcome, Demo/ },
   { path: '/projects', proof: /^Projects$/ },
   { path: '/environments', proof: /Connections/ },
-  { path: '/compare', proof: /Compare/ },
+  { path: '/compare', proof: /Schema comparison/ },
   { path: '/users', proof: /User mapping/ },
   { path: '/migration', proof: /Migration plans/ },
   { path: '/validation', proof: /Validation/ },
   { path: '/runs', proof: /Runs/ },
-  { path: '/diagnostics', proof: /Diagnostics/ },
+  { path: '/diagnostics', proof: /Microsoft connection checks/ },
   { path: '/settings', proof: /Settings/ },
 ];
 

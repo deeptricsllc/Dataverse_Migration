@@ -236,7 +236,10 @@ test('diagnostics report read-only checks without testing writes', async ({ page
   await page.getByRole('button', { name: 'Continue with demo account' }).click();
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
 
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Diagnostics' }).click();
+  await page
+    .getByRole('navigation', { name: 'Main' })
+    .getByRole('link', { name: 'Microsoft checks' })
+    .click();
   await page.getByTestId('run-diagnostics').click();
   await expect(page.getByTestId('diagnostic-authentication')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('diagnostic-discovery')).toContainText(/environment/i);

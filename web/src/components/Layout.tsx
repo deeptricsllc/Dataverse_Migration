@@ -28,12 +28,18 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/environments', label: 'Connections', icon: Database },
-  { to: '/compare', label: 'Compare', icon: GitCompareArrows },
+  // "Compare" and the "Comparison & validation" project kind were two different features
+  // sharing a word: this one compares schemas, that one reconciles records. Routes are
+  // unchanged so existing links keep working.
+  { to: '/compare', label: 'Schema comparison', icon: GitCompareArrows },
   { to: '/users', label: 'User mapping', icon: Users },
   { to: '/migration', label: 'Migration', icon: Truck },
   { to: '/validation', label: 'Validation', icon: ShieldCheck },
   { to: '/runs', label: 'Runs', icon: History },
-  { to: '/diagnostics', label: 'Diagnostics', icon: Stethoscope },
+  // Read-only checks of the Microsoft connection specifically, in a product that also
+  // migrates SQL Server, PostgreSQL, MySQL and files. "Diagnostics" promised the whole
+  // platform and delivered one provider.
+  { to: '/diagnostics', label: 'Microsoft checks', icon: Stethoscope },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

@@ -47,7 +47,7 @@ export function DiagnosticsPage() {
   return (
     <>
       <PageHeader
-        title="Diagnostics"
+        title="Microsoft connection checks"
         description="Read-only checks of the Microsoft connection. Nothing here writes to Dataverse; write permission is never probed."
         actions={
           <Button
