@@ -31,7 +31,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import { StagedSourceCard } from '../components/StagedSourceCard';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
   Callout,
@@ -349,7 +348,13 @@ export function EnvironmentsPage() {
 
   return (
     <>
-      <WizardSteps current={1} />
+      {/*
+        No step indicator here. Connections is a platform area — somebody adding a database or
+        rotating a credential is not at step 1 of 9 of a migration, and saying they are made every
+        workspace-level task look like part of a flow they had not started. The guided path into
+        the flow is the "Continue to Analyze" action below, which appears once a source and target
+        are chosen.
+      */}
       <PageHeader
         title="Connections"
         description={
