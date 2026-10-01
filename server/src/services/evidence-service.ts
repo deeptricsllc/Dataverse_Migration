@@ -28,6 +28,7 @@ import type { RequestContext } from './context';
 import type { MigrationRunService } from './migration-run-service';
 import type { ValidationService } from './validation-service';
 import type { PlanningService } from './planning-service';
+import type { ReadinessService } from './readiness-service';
 
 /**
  * Everything a migration lead should still have in six months.
@@ -79,6 +80,7 @@ export class EvidenceService {
     private readonly runs: MigrationRunService,
     private readonly validation: ValidationService,
     private readonly planning: PlanningService,
+    private readonly readiness: ReadinessService,
     private readonly logger: Logger,
   ) {}
 
@@ -285,6 +287,27 @@ export class EvidenceService {
           describes: `Totals compared across the two sides, with the scope each figure covers. ${AGGREGATE_CAVEAT}`,
         });
       }
+    }
+
+    /**
+     * What was known before the run, and what somebody decided to run past.
+     *
+     * Re-assessed now rather than stored at execution time, which is a deliberate limitation worth
+     * stating: the findings are current, the *overrides* are the ones that were recorded on the plan.
+     * A reader comparing them to the run should read the overrides as the decisions and the findings
+     * as the plan's state when the package was made.
+     */
+    const readiness = await this.readiness.assess(ctx, run.planId).catch(() => null);
+    if (readiness) {
+      entries.push({
+        entry: file(
+          'readiness.json',
+          `${JSON.stringify(readiness, null, 2)}
+`,
+        ),
+        describes:
+          'The pre-migration assessment: blockers, warnings, and any blocker accepted explicitly, with who accepted it and why.',
+      });
     }
 
     // Which target table each source table was migrated into, from the run's own snapshot rather

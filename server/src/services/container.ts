@@ -11,6 +11,7 @@ import { AnalysisService } from './analysis-service';
 import { DataComparisonService } from './data-comparison-service';
 import { DemoScenarioService } from './demo-scenario-service';
 import { EvidenceService } from './evidence-service';
+import { ReadinessService } from './readiness-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
 import { EnvironmentService } from './environment-service';
@@ -68,12 +69,16 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
+  // One answer to "should we press the button", assembled from findings that already exist. Built
+  // before the run service because the run service asks it before starting anything.
+  const readiness = new ReadinessService(db, planning, audit, logger.child({ component: 'readiness' }));
   const runs = new MigrationRunService(
     db,
     config,
     planning,
     transformations,
     environments,
+    readiness,
     queue,
     audit,
     logger,
@@ -174,6 +179,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     runs,
     validation,
     planning,
+    readiness,
     logger.child({ component: 'evidence' }),
   );
   // Built on demand in DEMO MODE, by running two real migrations through the engine above.
@@ -246,6 +252,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     connectionAdmin,
     insights,
     evidence,
+    readiness,
     demoScenarios,
     createWorker,
   };

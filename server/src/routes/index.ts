@@ -743,6 +743,36 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    * download should not require the server to hold the archive. The audit entry is written once the
    * manifest is known, which is before the last byte leaves.
    */
+  /** What somebody has to decide before this plan runs, assembled from findings that already exist. */
+  app.get('/api/plans/:id/readiness', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.readiness.assess(req.ctx, id);
+  });
+
+  /**
+   * Accepts one overridable blocker. One finding, one reason, one person — there is deliberately no
+   * form of this that accepts a list.
+   */
+  app.post('/api/plans/:id/readiness/override', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({
+        code: z.string().min(1).max(100),
+        object: z.string().max(400).nullable(),
+        reason: z.string().min(10).max(1000),
+      })
+      .parse(req.body);
+    return s.readiness.override(req.ctx, id, body);
+  });
+
+  app.delete('/api/plans/:id/readiness/override', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({ code: z.string().min(1).max(100), object: z.string().max(400).nullable() })
+      .parse(req.body);
+    return s.readiness.clearOverride(req.ctx, id, body);
+  });
+
   app.get('/api/runs/:id/evidence.zip', EXPENSIVE, async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const bundle = await s.evidence.streamBundleForRun(req.ctx, id);

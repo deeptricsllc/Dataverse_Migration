@@ -59,6 +59,9 @@ const MUTATION_PERMISSIONS: [RegExp, Permission][] = [
   // Starting, stopping and resuming a migration. An operator may; a validator may not.
   [/^\/api\/plans\/[^/]+\/execute$/, 'migration:control'],
   [/^\/api\/runs\/[^/]+\/(cancel|pause|resume|retry|rerun)$/, 'migration:control'],
+  // Accepting a readiness blocker authorises a migration to run that otherwise would not, which is
+  // the same authority as starting one — and not a validator's.
+  [/^\/api\/plans\/[^/]+\/readiness\/override$/, 'migration:control'],
   // Destroys a stored credential and the configuration other people's plans depend on.
   [/^\/api\/connections\/[^/]+$/, 'connections:delete'],
   // Keeps writing when nobody is watching.

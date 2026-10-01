@@ -6,6 +6,7 @@ import type { RecordAccounting } from './run-metrics';
 import type { WorkspaceRole } from './authorization';
 import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
 import type { AggregateCheck } from './aggregates';
+import type { ReadinessOverride } from './readiness';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -944,6 +945,13 @@ export interface PlanOptions {
    * rule afterwards invalidates it and has to be accepted again.
    */
   lossyAcknowledgement: LossyAcknowledgementDto | null;
+  /**
+   * Readiness blockers somebody accepted explicitly, each naming the finding and the object.
+   *
+   * Stored on the plan rather than on the run, because the decision is about the plan and survives a
+   * retry. Written into the evidence package so a reader sees what was accepted, by whom and why.
+   */
+  readinessOverrides?: ReadinessOverride[];
 }
 
 export interface LossyAcknowledgementDto {

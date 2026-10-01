@@ -112,6 +112,8 @@ export type AuditAction =
   // deployment and is the artefact most likely to be forwarded.
   | 'EVIDENCE_EXPORTED'
   | 'EVIDENCE_VERIFIED'
+  | 'READINESS_BLOCKER_OVERRIDDEN'
+  | 'READINESS_OVERRIDE_WITHDRAWN'
   | 'PRINCIPAL_MAPPING_CHANGED'
   | 'PREFLIGHT_REQUESTED'
   | 'PREFLIGHT_COMPLETED'

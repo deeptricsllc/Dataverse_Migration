@@ -32,6 +32,7 @@ import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { PlanningService } from './planning-service';
+import type { ReadinessService } from './readiness-service';
 import type { TransformationService } from './transformation/transformation-service';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { envRef } from './env-ref';
@@ -45,6 +46,7 @@ export class MigrationRunService {
     private readonly planning: PlanningService,
     private readonly transformations: TransformationService,
     private readonly environmentsSvc: EnvironmentService,
+    private readonly readiness: ReadinessService,
     private readonly queue: JobQueue,
     private readonly audit: AuditService,
     private readonly logger: Logger,
@@ -125,6 +127,23 @@ export class MigrationRunService {
         `The plan has ${plan.blockerCount} unresolved blocker(s)`,
         plan.issues.filter((i) => i.severity === 'BLOCKER'),
       );
+    }
+    /**
+     * The readiness gate.
+     *
+     * Plan validation above refuses what cannot work. This refuses what *can* work and should not
+     * happen by accident: a table whose resume path cannot recover an interruption, a connector
+     * capability the matrix says is absent. Each one is accepted individually, by name, with a reason
+     * — there is no form of this that accepts a list, because a button that dismisses six findings is
+     * a button nobody read.
+     */
+    const readiness = await this.readiness.assess(ctx, planId);
+    if (readiness.verdict === 'BLOCKED' || readiness.verdict === 'BLOCKED_PENDING_OVERRIDE') {
+      const accepted = new Set(readiness.overrides.map((o) => `${o.code}::${o.object ?? ''}`));
+      const outstanding = readiness.findings.filter(
+        (f) => f.severity === 'BLOCKER' && !accepted.has(`${f.code}::${f.object?.name ?? ''}`),
+      );
+      throw new AppError(409, 'READINESS_BLOCKED', readiness.summary, outstanding);
     }
     // The gate scales with the consequence: see `needsTypedConfirmation`. Production still means
     // typing the name; a sandbox means an explicit, deliberate click that named the target.
