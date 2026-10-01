@@ -86,7 +86,13 @@ export function DashboardPage() {
               label="Analysis projects"
               value={fmtNumber(d.projects.analysis)}
               tone="violet"
-              hint={d.analyses.active > 0 ? `${d.analyses.active} running` : `${d.analyses.completed} run`}
+              hint={
+                d.analyses.active > 0
+                  ? `${d.analyses.active} running`
+                  : d.projects.analysis === 0 && d.analyses.completed > 0
+                    ? `${d.analyses.completed} run, in archived projects`
+                    : `${d.analyses.completed} run`
+              }
               onClick={() => navigate('/projects')}
             />
             <Stat
@@ -113,7 +119,7 @@ export function DashboardPage() {
               hint={
                 d.migrationRuns.active > 0
                   ? `${d.migrationRuns.active} active`
-                  : `${d.migrationRuns.withErrors + d.migrationRuns.failed} with problems`
+                  : `${d.migrationRuns.completed} clean · ${d.migrationRuns.withErrors + d.migrationRuns.failed} with problems`
               }
               tone={d.migrationRuns.active > 0 ? 'amber' : 'default'}
               onClick={() => navigate('/runs')}
@@ -125,7 +131,9 @@ export function DashboardPage() {
               hint={
                 d.schedules.needsAttention > 0
                   ? `${d.schedules.needsAttention} need attention`
-                  : `${d.schedules.total} in total`
+                  : d.schedules.total > 0
+                    ? `${d.schedules.total} in total`
+                    : 'none set up yet'
               }
             />
           </div>
