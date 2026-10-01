@@ -108,6 +108,19 @@ test('the landing page works on a phone', async ({ page }) => {
   const overflow = Number(
     await page.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth'),
   );
-  expect(overflow).toBeLessThanOrEqual(1);
+  // Naming the culprit, because "45 pixels too wide" sends whoever sees this failure hunting
+  // through the whole page, and the element that sticks out is already known to the browser.
+  const culprits = (await page.evaluate(`(() => {
+    const limit = document.documentElement.clientWidth;
+    return Array.from(document.querySelectorAll('*'))
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { right: Math.round(r.right), width: Math.round(r.width), tag: el.tagName.toLowerCase(), cls: String(el.className || '').slice(0, 120) };
+      })
+      .filter((c) => c.right > limit + 1)
+      .sort((a, b) => b.right - a.right)
+      .slice(0, 5);
+  })()`)) as { right: number; width: number; tag: string; cls: string }[];
+  expect(overflow, `widest elements past the viewport: ${JSON.stringify(culprits)}`).toBeLessThanOrEqual(1);
   await expect(page.getByTestId('try-demo-quiet')).toBeVisible();
 });
