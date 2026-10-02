@@ -47,12 +47,13 @@ something not yet built, it says so in its own first paragraph.
 What was actually run, and what it proved. These are cited by claims elsewhere; the files in `evidence/`
 are the raw record and a drift check in CI compares them against what the repository says.
 
-| Document                                                     |                                                                                                      |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [HARNESS_CHECKLIST.md](HARNESS_CHECKLIST.md)                 | **Start here.** Exactly what to provide to turn SIMULATED into VERIFIED, in the order worth doing it |
-| [HARNESS_READINESS.md](HARNESS_READINESS.md)                 | What the two harnesses do, and why they stop where they stop                                         |
-| [REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md) | The read-only certification against a real Microsoft tenant, step by step                            |
-| [MANUAL_RECONCILIATION.md](MANUAL_RECONCILIATION.md)         | Five scenarios reconciled by hand on deployed QA, including the arithmetic                           |
+| Document                                                     |                                                                                                                                               |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| [HARNESS_CHECKLIST.md](HARNESS_CHECKLIST.md)                 | **Start here.** Exactly what to provide to turn SIMULATED into VERIFIED, in the order worth doing it                                          |
+| [HARNESS_READINESS.md](HARNESS_READINESS.md)                 | What the two harnesses do, and why they stop where they stop                                                                                  |
+| [REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md) | The read-only certification against a real Microsoft tenant, step by step                                                                     |
+| [MANUAL_RECONCILIATION.md](MANUAL_RECONCILIATION.md)         | Five scenarios reconciled by hand on deployed QA, including the arithmetic                                                                    |
+| [SECURITY_AUDIT.md](SECURITY_AUDIT.md)                       | The release-candidate security review: findings by severity, what was checked and found sound, and what an external review would still be for |
 
 ## 4. Operations and setup
 
