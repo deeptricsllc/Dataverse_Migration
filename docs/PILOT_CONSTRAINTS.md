@@ -55,7 +55,7 @@ including what a fix would be and why it belongs in its own phase.
 | The numbers on every screen agree                                                                  | One canonical metric vocabulary; a test that compares the run screen and the validation report                                             |
 | Validation never claims more than it checked                                                       | FULL / SAMPLED / NOT_VERIFIED on every result, with eligible and examined counts; a check that examined nothing is a warning, never a pass |
 | Resume does not re-do or duplicate completed work                                                  | 13 chaos tests with failures injected at known points                                                                                      |
-| Validation does not grow with the table                                                            | Measured: peak heap 64 MB at 50k records, 68 MB at 500k                                                                                    |
+| Validation does not grow with the table                                                            | Measured: peak heap 52 MB at 50k records, 67 MB at 500k, 74 MB at 1,500,000                                                                |
 | An evidence package can be checked                                                                 | A verifier with 11 corruption tests, and wording that states what a digest does and does not prove                                         |
 | Authorization is server-side                                                                       | Four roles enforced before any handler runs; tested through the API with valid sessions, not by hidden buttons                             |
 
@@ -63,12 +63,13 @@ including what a fix would be and why it belongs in its own phase.
 
 ## Scale
 
-| Per table           | Status                                                                     |
-| ------------------- | -------------------------------------------------------------------------- |
-| Up to 10,000        | Measured end to end                                                        |
-| 10,000 – 500,000    | The platform's own cost is measured and flat; the connectors are the limit |
-| 500,000 – 5,000,000 | Extrapolated. Plan for it, measure before promising a window               |
-| Above 5,000,000     | **Unknown.** Nothing of that size has been run                             |
+| Per table             | Status                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| Up to 10,000          | Measured end to end                                                                       |
+| 10,000 – 500,000      | The platform's own cost is measured and roughly flat; the connectors are the limit        |
+| 500,000 – 1,500,000   | Measured. The platform's own write rate **falls** as the table grows, and memory does not |
+| 1,500,000 – 5,000,000 | Extrapolated, and downward. Plan for it, measure before promising a window                |
+| Above 5,000,000       | **Unknown.** Nothing of that size has been run                                            |
 
 Full envelope, with what is MEASURED, EXTRAPOLATED and UNKNOWN: `docs/SCALE_ENVELOPE.md`.
 

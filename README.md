@@ -86,15 +86,32 @@ Every source kind, what differs between them and what each is tested against:
 Connecting a database: [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md),
 [docs/AZURE_SQL_SETUP.md](docs/AZURE_SQL_SETUP.md) and [docs/POSTGRES_SETUP.md](docs/POSTGRES_SETUP.md).
 
+**All documentation, classified by whether it describes the product as it is or as it was:**
+[docs/README.md](docs/README.md).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/MICROSOFT_SETUP.md](docs/MICROSOFT_SETUP.md) and
 [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) (how to test against a real
 Microsoft tenant without writing to it).
 
-> **Not yet certified against a real Microsoft tenant or a real SQL Server.** Every integration in
-> this repository is written against the vendor's current documentation and is covered by tests
-> using simulated systems, but none of it has been exercised against a real tenant or database.
-> Follow [docs/REAL_TENANT_CERTIFICATION.md](docs/REAL_TENANT_CERTIFICATION.md) and section 8 of
-> [docs/SQL_SERVER_SETUP.md](docs/SQL_SERVER_SETUP.md) before trusting it with customer data.
+> **What has been proven against a real server, and what has not.**
+>
+> **PostgreSQL, MySQL and SQL Server are verified against real servers** in continuous integration —
+> schema, reads, writes, upsert, relationships, duplicate detection, aggregates, and the crash-consistency
+> protocol — and `evidence/engine-verification.json` records each capability with the server version that
+> answered. A test refuses any claim the evidence does not back.
+>
+> **Dataverse has never been exercised against a real environment.** Everything this repository knows
+> about it comes from a simulator written to match Microsoft's documentation, which proves a great deal
+> about the planner and the engine and nothing whatever about Dataverse. Every Dataverse capability says
+> `SIMULATED`.
+>
+> **Azure SQL has not been exercised either**, and does not inherit SQL Server's status: they share a
+> driver, and sharing an implementation is not evidence. What differs is Entra authentication, firewall
+> rules, enforced encryption and transient faults — the parts most likely to break a connection.
+>
+> The harnesses for both are written and skip cleanly until configured.
+> [docs/HARNESS_CHECKLIST.md](docs/HARNESS_CHECKLIST.md) is exactly what to provide;
+> [docs/VERIFICATION.md](docs/VERIFICATION.md) is what each level means.
 
 ## Quick start (demo, no external dependencies)
 

@@ -207,6 +207,17 @@ const STATUS_LABELS: Record<string, string> = {
   TARGET_ONLY: 'Target only',
   COMPLETED_WITH_ERRORS: 'Completed with errors',
   AUTO_MAPPED: 'Auto-mapped',
+  /**
+   * `NEEDS_RECONCILIATION` would read as "Needs reconciliation", and in this product that sentence
+   * already means something else: a Comparison project *reconciles two datasets record by record*, and
+   * validation *reconciles totals* between the two sides. Neither is what this status is about.
+   *
+   * What it is about: some writes cannot be accounted for, and a person has to settle them before the
+   * run can go on. So the badge says that instead of borrowing a word with two other jobs. The enum keeps
+   * its name — it is in a database column and in evidence packages already written — and the label is
+   * where the ambiguity gets fixed. See docs/TERMINOLOGY.md.
+   */
+  NEEDS_RECONCILIATION: 'Unresolved writes',
 };
 
 export function StatusBadge({

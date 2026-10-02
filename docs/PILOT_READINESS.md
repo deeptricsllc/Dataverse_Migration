@@ -131,8 +131,11 @@ VERIFIED in an afternoon of plumbing, and the claims would then be worth somethi
 
 ## 4. Scale
 
-Classified by tracing the architecture, not by benchmarking. Nothing here has been run at volume and
-this document does not claim it has.
+Classified by tracing the architecture, and since this was written, partly **measured**: the platform's
+own bookkeeping has been run to 1,500,000 records and the figures are in
+[SCALE_ENVELOPE.md](SCALE_ENVELOPE.md), which is the source of truth for anything numeric about scale.
+What remains unmeasured is marked as such below, and nothing here is a claim about a customer's source or
+target — that throughput belongs to those systems.
 
 ### Safe
 
@@ -149,21 +152,21 @@ this document does not claim it has.
 
 ### Needs testing
 
-| Area                    | Concern                                                                                                                                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity map growth     | One row per processed record, forever. A 100-million-row migration is a 100-million-row table with a unique index on `(run, table, source id)`. Correct, and nobody has measured the insert rate or the disk. |
-| Validation `fetchByIds` | Chunks at 200 ids per call; fine at a 5,000 cap, unmeasured if the cap rises.                                                                                                                                 |
-| Demo workspace creation | ~1,250 seeded rows plus two real migrations per anonymous sign-in. Unthrottled.                                                                                                                               |
-| PGlite in production    | The embedded database is used when `DATABASE_URL` is unset. Fine for a laptop, not for a pilot.                                                                                                               |
+| Area                    | Concern                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity map growth     | One row per processed record, forever. A 100-million-row migration is a 100-million-row table with a unique index on `(run, table, source id)`. The **insert rate is now measured** to 1,500,000 rows, and it falls as the table grows — 11,183/s at 500k, 5,763/s at 1.5M against embedded PGlite. **Disk is still unmeasured**, and so is the same test against a real PostgreSQL server, which is what would say whether the slowdown is ours or PGlite's. |
+| Validation `fetchByIds` | Chunks at 200 ids per call; fine at a 5,000 cap, unmeasured if the cap rises.                                                                                                                                                                                                                                                                                                                                                                                 |
+| Demo workspace creation | ~1,250 seeded rows plus two real migrations per anonymous sign-in. Unthrottled.                                                                                                                                                                                                                                                                                                                                                                               |
+| PGlite in production    | The embedded database is used when `DATABASE_URL` is unset. Fine for a laptop, not for a pilot.                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Scale risk
 
-| Area                  | Concern                                                                                                          | Suggested fix                                                    |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Audit `details`       | Unbounded JSONB per event, written on every consequential action. A run with a large options payload repeats it. | Cap the serialised size and store a reference for the remainder. |
-| Record-map CSV export | `limit: 100_000` in one response.                                                                                | Stream it, or paginate with a continuation.                      |
-| Validation storage    | Differences are capped per table but not per run; 500 tables × 2,000 = a million rows.                           | Cap per run as well, and say so in the report.                   |
-| Table count           | Plans accept up to 500 tables; dependency analysis is in-memory over the whole set. 1,500 tables is untested.    | Measure before promising.                                        |
+| Area                      | Concern                                                                                                                                                                                                 | Suggested fix                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| ~~Audit `details`~~       | **Fixed.** Bounded to 8,000 serialised characters, each value shortened on its own so the shape survives, and every string now passed through the secret scrubber on the way in.                        | —                                              |
+| ~~Record-map CSV export~~ | **Fixed.** Streamed as the rows are found, so the response does not hold the file. One export still takes a whole page in memory — `lossy-records.csv` at `limit: 100_000` — and that one is unchanged. | Stream the lossy-records export too.           |
+| Validation storage        | Differences are capped per table but not per run; 500 tables × 2,000 = a million rows.                                                                                                                  | Cap per run as well, and say so in the report. |
+| Table count               | Plans accept up to 500 tables; dependency analysis is in-memory over the whole set. 1,500 tables is untested.                                                                                           | Measure before promising.                      |
 
 ### Architectural limit
 
