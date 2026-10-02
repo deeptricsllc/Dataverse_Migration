@@ -351,6 +351,248 @@ describe.skipIf(!tenantUrl)('Dataverse against a real environment', () => {
       passed('alternateKeyUpsert');
     }, 300_000);
 
+    /**
+     * The gaps this harness had. Every one is on the brief's list and none was covered before, the most
+     * notable being the crash-consistency protocol — which was designed after this file was written.
+     *
+     * Each case either passes, or records NOT_ATTEMPTED with a reason. A test that silently skips is
+     * indistinguishable from one that passed, and this file's whole purpose is to produce evidence
+     * somebody raises a verification claim on.
+     *
+     * **None of this has been executed.** Every Dataverse capability in
+     * `shared/connector-verification.ts` is `SIMULATED` and stays there until a recorded run says
+     * otherwise.
+     */
+
+    /** The first page of a table, through the generator the product uses. */
+    const firstPage = async (meta: TableMetadata, columns: string[]): Promise<DvRecord[]> => {
+      for await (const page of conn.queryRecords(meta, columns, { pageSize: 1 })) return page;
+      return [];
+    };
+
+    it('writes a lookup, and reads back a reference rather than a null', async () => {
+      /**
+       * A relationship is what a migration gets wrong most expensively: a lookup that silently lands as
+       * null leaves a record that exists and means nothing.
+       */
+      const lookup = table.attributes.find(
+        (a) => a.type === 'Lookup' && a.isValidForCreate && (a.targets?.length ?? 0) > 0,
+      );
+      if (!lookup) {
+        notAttempted('relationshipWrite', `${WRITE_TABLE} has no writable lookup column`);
+        return;
+      }
+      const targetName = lookup.targets![0]!;
+      const targetTable = await conn.getTable(targetName);
+      const [existing] = await firstPage(targetTable, [targetTable.primaryIdAttribute]);
+      if (!existing) {
+        notAttempted('relationshipWrite', `${targetName} holds no record to point a lookup at`);
+        return;
+      }
+      const id = await conn.createRecord(
+        table,
+        {
+          values: {
+            [primaryName()]: stamp(),
+            [lookup.logicalName]: { logicalName: targetName, id: existing.id },
+          },
+        },
+        writeOptions(),
+      );
+      created.push({ table, id });
+      const [readBack] = await conn.retrieveByIds(table, [id], [lookup.logicalName]);
+      expect(readBack?.values[lookup.logicalName], 'the lookup came back as a reference').toBeTruthy();
+      passed('relationshipWrite');
+    }, 300_000);
+
+    it('applies a reference a first pass could not, which is what the deferred second pass is for', async () => {
+      /**
+       * A self-referencing lookup is the case the two-pass path exists for: the record a lookup points at
+       * may not exist yet when the record holding it is written. The engine defers those and resolves
+       * them afterwards, so the two records are created in that order here on purpose.
+       */
+      const selfLookup = table.attributes.find(
+        (a) => a.type === 'Lookup' && a.isValidForUpdate && (a.targets ?? []).includes(table.logicalName),
+      );
+      if (!selfLookup) {
+        notAttempted('deferredRelationship', `${WRITE_TABLE} has no self-referencing lookup`);
+        return;
+      }
+      const childId = await conn.createRecord(
+        table,
+        { values: { [primaryName()]: stamp() } },
+        writeOptions(),
+      );
+      created.push({ table, id: childId });
+      const parentId = await conn.createRecord(
+        table,
+        { values: { [primaryName()]: stamp() } },
+        writeOptions(),
+      );
+      created.push({ table, id: parentId });
+      await conn.updateRecord(
+        table,
+        childId,
+        { values: { [selfLookup.logicalName]: { logicalName: table.logicalName, id: parentId } } },
+        writeOptions(),
+      );
+      const [readBack] = await conn.retrieveByIds(table, [childId], [selfLookup.logicalName]);
+      expect(readBack?.values[selfLookup.logicalName], 'the deferred reference was applied').toBeTruthy();
+      passed('deferredRelationship');
+    }, 300_000);
+
+    it('says what it can and cannot do about who owns a record', async () => {
+      /**
+       * Owner mapping is a claim about authority, so it is the last thing to assume. This records whether
+       * the nominated table is user-owned and whether the column is writable, rather than asserting a
+       * behaviour that depends on the signed-in user's privileges.
+       */
+      const owner = table.attributes.find((a) => a.type === 'Owner' || a.logicalName === 'ownerid');
+      if (!owner) {
+        notAttempted('ownerMapping', `${WRITE_TABLE} is not user-owned, so it has no owner to map`);
+        return;
+      }
+      if (!owner.isValidForCreate) {
+        notAttempted('ownerMapping', `${owner.logicalName} is not writable on create here`);
+        return;
+      }
+      const users = await conn.listPrincipals('systemuser');
+      if (users.length === 0) {
+        notAttempted('ownerMapping', 'no user was readable to assign ownership to');
+        return;
+      }
+      const id = await conn.createRecord(
+        table,
+        {
+          values: {
+            [primaryName()]: stamp(),
+            [owner.logicalName]: { logicalName: 'systemuser', id: users[0]!.id },
+          },
+        },
+        writeOptions(),
+      );
+      created.push({ table, id });
+      const [readBack] = await conn.retrieveByIds(table, [id], [owner.logicalName]);
+      expect(readBack?.values[owner.logicalName], 'ownership was assigned and read back').toBeTruthy();
+      passed('ownerMapping');
+    }, 300_000);
+
+    it('says whether the created-on date can be preserved, and does not pretend when it cannot', async () => {
+      /**
+       * `overriddencreatedon` is the only way a migration keeps a record's original date, and it works
+       * only on create and only with the privilege. The answer is recorded rather than asserted, because
+       * whether this environment honours it is the question.
+       */
+      if (!PRIVILEGED) {
+        notAttempted('createdOnPreservation', 'TENANT_TEST_PRIVILEGED is not set');
+        return;
+      }
+      if (!table.attributes.some((a) => a.logicalName === 'overriddencreatedon')) {
+        notAttempted('createdOnPreservation', `${WRITE_TABLE} has no overriddencreatedon column`);
+        return;
+      }
+      const wanted = '2001-02-03T04:05:06Z';
+      const id = await conn.createRecord(
+        table,
+        { values: { [primaryName()]: stamp(), overriddencreatedon: wanted } },
+        writeOptions(),
+      );
+      created.push({ table, id });
+      const [readBack] = await conn.retrieveByIds(table, [id], ['createdon']);
+      const actual = String(readBack?.values['createdon'] ?? '');
+      if (actual.startsWith('2001-02-03')) {
+        passed('createdOnPreservation');
+      } else {
+        evidence.capabilities['createdOnPreservation'] = 'FAILED';
+        evidence.notes.push(
+          `createdOnPreservation: sent overriddencreatedon=${wanted} and createdon came back as ${actual}. The privilege may be missing, or this environment may not honour it.`,
+        );
+      }
+    }, 300_000);
+
+    it('records that modified-by cannot be preserved, which is a limitation and not a defect', async () => {
+      /**
+       * Dataverse has no `overriddenmodifiedon` and no way to attribute a modification to somebody else,
+       * so a migration always appears as the modifier whatever it does about created-by. Recorded against
+       * this environment's own metadata, so a reader of the evidence is not left to discover it from a
+       * surprising audit trail.
+       */
+      expect(
+        table.attributes.some((a) => a.logicalName === 'overriddenmodifiedon'),
+        'Dataverse exposes no overriddenmodifiedon',
+      ).toBe(false);
+      evidence.capabilities['modifiedByPreservation'] = 'NOT_ATTEMPTED';
+      evidence.notes.push(
+        'modifiedByPreservation: not possible. Dataverse has no overriddenmodifiedon and no way to attribute a modification to another user, so a migration always appears as the modifier. Confirmed against this environment’s metadata.',
+      );
+    }, 300_000);
+
+    it('says whether plug-in execution can be bypassed, without assuming the privilege', async () => {
+      /**
+       * Bypassing custom business logic needs a specific privilege, and sending the header without it is
+       * refused. Which of those happened is what gets recorded: "we can bypass" and "we are not allowed
+       * to bypass" are both useful, and only one of them is a capability.
+       */
+      try {
+        const id = await conn.createRecord(
+          table,
+          { values: { [primaryName()]: stamp() } },
+          { ...writeOptions(), bypassCustomBusinessLogic: true },
+        );
+        created.push({ table, id });
+        passed('pluginBypass');
+      } catch (err) {
+        evidence.capabilities['pluginBypass'] = 'NOT_ATTEMPTED';
+        evidence.notes.push(
+          `pluginBypass: refused by the environment — ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}. Most likely the signed-in user lacks the privilege, which is a configuration fact rather than a product defect.`,
+        );
+      }
+    }, 300_000);
+
+    it('totals a column server-side, or records that the connector cannot', async () => {
+      /**
+       * Aggregate reconciliation is supplementary evidence and depends on the connector totalling
+       * server-side. Dataverse's aggregate support is a subset with a record limit it stops at rather
+       * than pages past — the shape that produces a confident wrong answer — so this asks whether the
+       * capability is implemented rather than assuming OData syntax implies behaviour.
+       */
+      if (!conn.aggregate) {
+        notAttempted('aggregates', 'the Dataverse connector does not implement server-side aggregates');
+        return;
+      }
+      const total = await conn.aggregate(table, null, 'COUNT');
+      expect(total, 'the connector answered with a total').toBeTruthy();
+      passed('aggregates');
+    }, 300_000);
+
+    it('leaves a written record findable by both kinds of recovery evidence', async () => {
+      /**
+       * The crash-consistency protocol, against a real target. This harness predates the protocol, which
+       * is why it was missing.
+       *
+       * Without killing a process, what can be checked is the thing reconciliation depends on: that a
+       * record the platform wrote is findable again — by the identifier the target returned
+       * (`PRESERVED_ID`, the strongest evidence) and by its business key (`BUSINESS_KEY`, the fallback
+       * when the identifier was the thing that was lost). If neither works, reconciliation after a real
+       * crash has nothing to work with and the protocol's guarantee does not hold here.
+       */
+      const name = stamp();
+      const id = await conn.createRecord(table, { values: { [primaryName()]: name } }, writeOptions());
+      created.push({ table, id });
+
+      const [byId] = await conn.retrieveByIds(table, [id], [primaryName()]);
+      expect(byId, 'a record the platform created is findable by the id it returned').toBeTruthy();
+      expect(byId!.values[primaryName()]).toBe(name);
+
+      const byKey = await conn.findByFields(table, { [primaryName()]: name }, [primaryName()], 5);
+      expect(
+        byKey.length,
+        'and findable by its business key, which is what reconciliation uses when the id was lost',
+      ).toBeGreaterThan(0);
+      expect(byKey[0]!.id.toLowerCase()).toBe(id.toLowerCase());
+      passed('crashRecoveryEvidence');
+    }, 300_000);
+
     it('leaves every record it created discoverable, because it cannot remove them', async () => {
       /**
        * The cleanup contract, and the limit on it.

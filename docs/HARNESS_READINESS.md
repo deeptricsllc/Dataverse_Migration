@@ -1,5 +1,9 @@
 # What is ready, and what you have to provide
 
+> **The handover list lives in [HARNESS_CHECKLIST.md](HARNESS_CHECKLIST.md).** This page explains what the
+> harnesses do and why they stop where they stop; that one is the exact set of things somebody has to
+> supply, in the order worth doing them. Neither harness has ever been executed.
+
 **Written for:** whoever will supply a Dataverse environment or an Azure SQL database so the platform
 can stop saying `SIMULATED` and `REQUIRES_CONFIGURATION` about them.
 

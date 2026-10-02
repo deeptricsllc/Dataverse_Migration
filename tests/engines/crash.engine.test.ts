@@ -14,6 +14,7 @@ import { runCrashConformance, type CrashFixture } from './crash';
  * Skipped unless the engine's URL is set, exactly like the other conformance suites:
  *
  *   TEST_POSTGRES_URL=postgres://... TEST_MYSQL_URL=mysql://... TEST_MSSQL_URL=sqlserver://... npm run test:engines
+ *   TEST_AZURE_SQL_URL=sqlserver://...  npm run test:engines    (a separate claim from SQL Server)
  *
  * Writes `evidence/crash-verification.json`, which the final report cites.
  */
@@ -260,6 +261,108 @@ describe.skipIf(!process.env.TEST_MSSQL_URL)('crash consistency against real SQL
             await pool.request().query(`DROP TABLE IF EXISTS ${SCHEMA}.${table}`);
           }
           await pool.request().query(`DROP SCHEMA IF EXISTS ${SCHEMA}`);
+        },
+        countByKey: async (table, key) => {
+          const result = await pool
+            .request()
+            .input('code', key)
+            .query<{ n: number }>(`SELECT count(*) AS n FROM ${table} WHERE [code] = @code`);
+          return Number(result.recordset[0]!.n);
+        },
+        countAll: async (table) => {
+          const result = await pool.request().query<{ n: number }>(`SELECT count(*) AS n FROM ${table}`);
+          return Number(result.recordset[0]!.n);
+        },
+      },
+      (type, cfg, password) => t.services.connections.sqlConnectorFor(type, cfg, password),
+    );
+    results.push(result);
+    expect(result.notes.length).toBeGreaterThan(3);
+  }, 600_000);
+});
+
+// ---------------------------------------------------------------------------
+// Azure SQL
+// ---------------------------------------------------------------------------
+/**
+ * The same protocol against Azure SQL, which is a separate claim from SQL Server.
+ *
+ * Azure SQL shares the `mssql` driver and most of the T-SQL surface, and sharing an implementation is not
+ * evidence — `shared/connector-verification.ts` keeps `AZURE_SQL` apart from `SQL_SERVER` for exactly
+ * that reason. What differs here is the parts that matter to this protocol: the connection is always
+ * encrypted, the service has its own idea of a transient fault, and a retry that crosses a failover is
+ * where "did my write land" stops being hypothetical.
+ *
+ * Never executed. `TEST_AZURE_SQL_URL` has not been set in this repository.
+ */
+describe.skipIf(!process.env.TEST_AZURE_SQL_URL)('crash consistency against real Azure SQL', () => {
+  let t: TestApp;
+  let pool: import('mssql').ConnectionPool;
+  const SCHEMA_AZ = 'dvm_crash_az';
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    const sql = (await import('mssql')).default;
+    const url = new URL(process.env.TEST_AZURE_SQL_URL!);
+    pool = await new sql.ConnectionPool({
+      server: url.hostname,
+      port: Number(url.port) || 1433,
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      // Azure SQL requires encryption and presents a real certificate; neither is optional.
+      options: { encrypt: true, trustServerCertificate: false },
+    }).connect();
+  }, 180_000);
+
+  afterAll(async () => {
+    await pool?.close().catch(() => undefined);
+    await t?.close();
+  });
+
+  it('behaves as the protocol assumes', async () => {
+    const url = new URL(process.env.TEST_AZURE_SQL_URL!);
+    const config: SqlConnectionConfig = {
+      host: url.hostname,
+      port: Number(url.port) || 1433,
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      authType: 'SQL_LOGIN',
+      username: decodeURIComponent(url.username),
+      encrypt: true,
+      trustServerCertificate: false,
+      transport: 'DIRECT',
+      schemas: [SCHEMA_AZ],
+    };
+    const result = await runCrashConformance(
+      {
+        engine: 'azuresql',
+        type: 'AZURE_SQL',
+        config,
+        password: decodeURIComponent(url.password),
+        provision: async (): Promise<CrashFixture> => {
+          for (const table of ['keyed', 'unkeyed']) {
+            await pool.request().query(`DROP TABLE IF EXISTS ${SCHEMA_AZ}.${table}`);
+          }
+          await pool.request().query(`DROP SCHEMA IF EXISTS ${SCHEMA_AZ}`);
+          await pool.request().query(`CREATE SCHEMA ${SCHEMA_AZ}`);
+          await pool.request().query(`
+            CREATE TABLE ${SCHEMA_AZ}.keyed (
+              [id]        uniqueidentifier NOT NULL CONSTRAINT PK_crash_az_keyed PRIMARY KEY DEFAULT newid(),
+              [code]      nvarchar(100) NOT NULL CONSTRAINT UQ_crash_az_code UNIQUE,
+              [full_name] nvarchar(400) NULL
+            )`);
+          await pool.request().query(`
+            CREATE TABLE ${SCHEMA_AZ}.unkeyed (
+              [id]    bigint IDENTITY(1,1) CONSTRAINT PK_crash_az_unkeyed PRIMARY KEY,
+              [label] nvarchar(200) NULL
+            )`);
+          return { keyedTable: `${SCHEMA_AZ}.keyed`, unkeyedTable: `${SCHEMA_AZ}.unkeyed` };
+        },
+        teardown: async () => {
+          for (const table of ['keyed', 'unkeyed']) {
+            await pool.request().query(`DROP TABLE IF EXISTS ${SCHEMA_AZ}.${table}`);
+          }
+          await pool.request().query(`DROP SCHEMA IF EXISTS ${SCHEMA_AZ}`);
         },
         countByKey: async (table, key) => {
           const result = await pool
