@@ -7,6 +7,7 @@ import type { WorkspaceRole } from './authorization';
 import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
 import type { AggregateCheck } from './aggregates';
 import type { ReadinessOverride } from './readiness';
+import type { UniquenessCheck } from './uniqueness';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -1427,6 +1428,12 @@ export interface ValidationCheckDto {
     | 'FIELD_VALUES'
     | 'REFERENCES'
     /**
+     * Repeated key values in the target. Its own name rather than a FIELD_VALUES result, because it
+     * answers a different question — not "is this record right" but "is there more than one of it" —
+     * and because what it proves depends entirely on which key was grouped on. See `uniqueness`.
+     */
+    | 'UNIQUENESS'
+    /**
      * Totals compared across the two sides. Kept apart from ROW_COUNT because they answer different
      * questions: ROW_COUNT compares whole tables, this compares figures over the records this run
      * wrote, and a report that merged them would let a pass on one read as a pass on the other.
@@ -1480,6 +1487,12 @@ export interface ValidationEntityResultDto {
   aggregates: AggregateCheck[] | null;
   /** Coverage of the duplicate check specifically: it can be NOT_VERIFIED while values pass. */
   duplicateCoverage: ValidationCoverage | null;
+  /**
+   * Which kind of uniqueness the duplicate scan tested, and therefore what finding none proves.
+   * Null on reports produced before the basis was recorded — which a report must say rather than let
+   * a primary-key scan be read as evidence of business uniqueness.
+   */
+  uniqueness: UniquenessCheck | null;
   matched: number;
   missing: number;
   different: number;
@@ -1499,6 +1512,16 @@ export interface ValidationSummary {
   depth: ValidationDepth | null;
   /** Records sharing a key value that should be unique, across every validated table. */
   duplicateRecords: number;
+  /**
+   * How many validated tables had their *business-level* uniqueness tested — grouped on a key the
+   * target does not simply enforce for us.
+   *
+   * Zero alongside `duplicateRecords: 0` is the case worth stating out loud: every table was counted
+   * over its own primary key, which can never repeat, so the report establishes nothing about whether
+   * the data is unique. Without this number a clean summary reads as "no duplicates" when what was
+   * proven is "no duplicate primary keys". Null on reports produced before it was recorded.
+   */
+  businessUniquenessVerifiedTables: number | null;
   matchedRecords: number;
   missingRecords: number;
   /** Records the run reported as failed. Not a validation finding; the run already knew. */

@@ -22,6 +22,7 @@ import {
   type FieldValue,
   type TableMetadata,
 } from '../../../shared/metadata';
+import { basisFor, describeUniqueness } from '../../../shared/uniqueness';
 import type { AppDb } from '../db/client';
 import {
   environments,
@@ -455,6 +456,9 @@ export class ValidationService {
           (n, r) => n + (r.duplicates ?? []).reduce((m, d) => m + d.occurrences, 0),
           0,
         ),
+        businessUniquenessVerifiedTables: results.filter(
+          (r) => r.uniqueness?.provesBusinessUniqueness === true,
+        ).length,
         matchedRecords: results.reduce((n, r) => n + r.matched, 0),
         missingRecords: results.reduce((n, r) => n + r.missing, 0),
         failedInRunRecords: results.reduce((n, r) => n + r.failedInRun, 0),
@@ -539,6 +543,7 @@ export class ValidationService {
       coverage: null,
       duplicates: null,
       duplicateCoverage: null,
+      uniqueness: null,
       aggregates: null,
       matched: 0,
       missing: 0,
@@ -1288,32 +1293,49 @@ export class ValidationService {
     /** The identity rows for this run and table, as a predicate rather than as rows. */
     mapScope: SQL | null,
   ): Promise<void> {
-    // What was supposed to be unique: the key the plan matched records on, or the table's own
-    // primary id when nothing else was configured. Inventing a uniqueness expectation the customer
-    // never stated would produce findings about data that was always allowed to repeat.
+    /**
+     * What was supposed to be unique: the key the plan matched records on, or the table's own primary
+     * id when nothing else was configured. Inventing a uniqueness expectation the customer never
+     * stated would produce findings about data that was always allowed to repeat.
+     *
+     * The fallback is the important case. A scan of the target's own primary key finds nothing,
+     * because the target refuses a repeat of it by itself — so reporting that as "no duplicates"
+     * restates the platform's guarantee and says nothing about the data. The basis is recorded
+     * alongside the finding so the report can tell the two apart.
+     */
     const snapshot = p.snapshotEntity;
-    const columns =
-      snapshot?.matchStrategy === 'BUSINESS_KEY' && snapshot.businessKeyFields.length
-        ? snapshot.businessKeyFields
-        : snapshot?.matchStrategy === 'ALTERNATE_KEY' && snapshot.alternateKey
+    const configured = basisFor({
+      matchStrategy: snapshot?.matchStrategy,
+      businessKeyFields: snapshot?.businessKeyFields ?? [],
+      alternateKeyColumns:
+        snapshot?.matchStrategy === 'ALTERNATE_KEY' && snapshot.alternateKey
           ? (target.keys.find((k) => k.logicalName === snapshot.alternateKey)?.attributes ?? [])
-          : [target.primaryIdAttribute];
-    if (columns.length === 0) {
-      base.duplicateCoverage = notVerified(0, 'No key was configured for this table.');
+          : [],
+    });
+    const basis = configured?.basis ?? 'PRIMARY_KEY';
+    const columns = configured?.columns ?? [target.primaryIdAttribute];
+    /** Records the not-verified case once, so no branch can forget to say which it was. */
+    const unverified = (examined: number, reason: string, outcome: ValidationOutcome = 'WARNING') => {
+      base.duplicateCoverage = notVerified(examined, reason);
+      base.uniqueness = describeUniqueness('NOT_VERIFIED', columns.filter(Boolean), { reason });
+      checks.push({
+        check: 'UNIQUENESS',
+        outcome,
+        message: `Duplicate keys: not verified. ${reason}`,
+      });
+    };
+
+    if (columns.length === 0 || !columns[0]) {
+      unverified(0, 'No key was configured for this table, and it has no primary id to fall back to.');
       return;
     }
 
     const scan = p.tConn.findDuplicateKeys?.bind(p.tConn);
     if (!scan) {
-      base.duplicateCoverage = notVerified(
+      unverified(
         base.targetCount ?? 0,
         `${p.tConn.provider} cannot count repeated values without reading the whole table, so this check did not run.`,
       );
-      checks.push({
-        check: 'FIELD_VALUES',
-        outcome: 'WARNING',
-        message: `Duplicate keys: not verified. ${base.duplicateCoverage.reason}`,
-      });
       return;
     }
 
@@ -1321,12 +1343,7 @@ export class ValidationService {
     try {
       groups = await scan(target, columns, { maxGroups: MAX_DUPLICATE_GROUPS, idsPerGroup: 5 });
     } catch (err) {
-      base.duplicateCoverage = notVerified(base.targetCount ?? 0, errorMessage(err).slice(0, 200));
-      checks.push({
-        check: 'FIELD_VALUES',
-        outcome: 'WARNING',
-        message: `Duplicate keys: not verified. ${base.duplicateCoverage.reason}`,
-      });
+      unverified(base.targetCount ?? 0, errorMessage(err).slice(0, 200));
       return;
     }
 
@@ -1371,6 +1388,8 @@ export class ValidationService {
         attributable: complete ? mine > 0 : null,
       };
     });
+    const uniqueness = describeUniqueness(basis, columns);
+    base.uniqueness = uniqueness;
     base.duplicateCoverage = fullCoverage(
       base.targetCount ?? 0,
       `Counted by ${p.tConn.provider}, grouping on ${columns.join(' + ')}.`,
@@ -1378,17 +1397,24 @@ export class ValidationService {
 
     const total = base.duplicates.reduce((n, d) => n + d.occurrences, 0);
     if (base.duplicates.length === 0) {
+      /**
+       * Nothing repeated. Whether that is worth anything depends entirely on what was grouped on, so
+       * the two cases get different sentences: one reports a result, the other reports that the
+       * question was not really asked.
+       */
       checks.push({
-        check: 'FIELD_VALUES',
+        check: 'UNIQUENESS',
         outcome: 'PASS',
-        message: `No repeated values of ${columns.join(' + ')} in the target.`,
+        message: uniqueness.provesBusinessUniqueness
+          ? `No repeated values of ${columns.join(' + ')} in the target. ${uniqueness.proves}`
+          : uniqueness.proves,
       });
       return;
     }
     const ours = base.duplicates.some((d) => d.attributable === true);
     const capped = base.duplicates.length >= MAX_DUPLICATE_GROUPS ? ` (first ${MAX_DUPLICATE_GROUPS})` : '';
     checks.push({
-      check: 'FIELD_VALUES',
+      check: 'UNIQUENESS',
       outcome: ours ? 'FAIL' : 'WARNING',
       message: ours
         ? `${base.duplicates.length} value(s) of ${columns.join(' + ')} are repeated across ${total} record(s)${capped}, and this run wrote at least one record in a repeated group.`
@@ -1420,6 +1446,7 @@ export class ValidationService {
       coverage: result.coverage,
       duplicates: result.duplicates,
       duplicateCoverage: result.duplicateCoverage,
+      uniqueness: result.uniqueness,
       aggregates: result.aggregates,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
@@ -1489,6 +1516,7 @@ export class ValidationService {
         coverage: e.coverage ?? null,
         duplicates: e.duplicates ?? null,
         duplicateCoverage: e.duplicateCoverage ?? null,
+        uniqueness: e.uniqueness ?? null,
         aggregates: e.aggregates ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,

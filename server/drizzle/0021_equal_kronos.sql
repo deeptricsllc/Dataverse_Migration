@@ -1,0 +1,1 @@
+ALTER TABLE "validation_entity_results" ADD COLUMN "uniqueness" jsonb;

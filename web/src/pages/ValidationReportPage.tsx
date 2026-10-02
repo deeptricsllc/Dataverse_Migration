@@ -163,6 +163,28 @@ function Verdict({
       </>,
     );
   }
+  /*
+    Saying nothing here would let a clean report be read as "no duplicates". If every table was
+    counted over its own primary key, nothing repeated because nothing could — the target refuses a
+    repeated primary key by itself — so the report has to say which claim it is actually making.
+  */
+  if (s.duplicateRecords === 0 && s.businessUniquenessVerifiedTables === 0 && s.tablesValidated > 0) {
+    lines.push(
+      <>
+        No <strong>duplicate primary keys</strong> were found, which the target guarantees in any case.
+        Business-level uniqueness was <strong>not verified</strong>: no table in this run has an alternate or
+        business key configured, so nothing here shows whether the same real-world record arrived twice. Set a
+        match key on the plan to have that checked.
+      </>,
+    );
+  } else if (s.duplicateRecords === 0 && s.businessUniquenessVerifiedTables === null) {
+    lines.push(
+      <>
+        This report predates recording which key the duplicate check grouped on, so what the zero above proves
+        is not known.
+      </>,
+    );
+  }
   if (s.targetRows > s.sourceRows) {
     lines.push(
       <>
@@ -610,8 +632,33 @@ export function ValidationReportPage() {
                               not verified
                             </span>
                           ) : (
-                            <span className={(e.duplicates?.length ?? 0) > 0 ? 'text-amber-700' : ''}>
-                              {fmtNumber((e.duplicates ?? []).reduce((n, d) => n + d.occurrences, 0))}
+                            <span className="inline-flex items-center justify-end gap-1.5">
+                              <span className={(e.duplicates?.length ?? 0) > 0 ? 'text-amber-700' : ''}>
+                                {fmtNumber((e.duplicates ?? []).reduce((n, d) => n + d.occurrences, 0))}
+                              </span>
+                              {/*
+                                A zero here means only as much as the key it was counted over. On the
+                                target's own primary key the count is always zero, because the target
+                                refuses a repeat by itself — so without this marker the column reads
+                                as "no duplicates" when the product only proved "no duplicate primary
+                                keys". Read aloud in the tooltip rather than left to be inferred.
+                              */}
+                              {e.uniqueness && !e.uniqueness.provesBusinessUniqueness && (
+                                <span
+                                  className="rounded bg-slate-200 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600"
+                                  title={e.uniqueness.proves}
+                                >
+                                  pk only
+                                </span>
+                              )}
+                              {!e.uniqueness && (
+                                <span
+                                  className="text-[10px] font-medium uppercase tracking-wide text-slate-400"
+                                  title="This report predates recording which key the duplicate check grouped on, so what the count proves is not known."
+                                >
+                                  basis not recorded
+                                </span>
+                              )}
                             </span>
                           )}
                         </Td>

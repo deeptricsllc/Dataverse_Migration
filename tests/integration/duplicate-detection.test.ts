@@ -153,4 +153,85 @@ describe('duplicate keys in the target', () => {
       expect(clean?.message, 'a sampled result never claims everything matched').not.toMatch(/^All /);
     }
   }, 300_000);
+  /**
+   * The claim a clean duplicate check is allowed to make.
+   *
+   * With no alternate or business key configured, the scan falls back to the target's own primary id
+   * and finds nothing — because the target refuses a repeated primary key by itself. Reporting that as
+   * "no duplicates" restates the platform's guarantee and says nothing about whether the same
+   * real-world record arrived twice. These two cases are the same migration under two match
+   * strategies, so the only thing that differs is what the report is entitled to say.
+   */
+  const withMatchStrategy = async (
+    table: string,
+    body: { matchStrategy: string; businessKeyFields?: string[]; alternateKey?: string | null },
+  ) => {
+    const plan = await api.post<MigrationPlanDto>('/api/plans', {
+      name: `Uniqueness ${body.matchStrategy} ${Date.now()}`,
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: uat.id,
+      tables: [table],
+    });
+    const full = await api.get<MigrationPlanDto>(`/api/plans/${plan.id}`);
+    const entity = full.entities[0]!;
+    await api.patch(`/api/plans/${plan.id}/entities/${entity.id}`, {
+      alternateKey: null,
+      businessKeyFields: [],
+      ...body,
+    });
+    const started = await api.post<MigrationRunDto>(`/api/plans/${plan.id}/execute`, {
+      confirmSourceName: dev.displayName,
+      confirmTargetName: uat.displayName,
+      acknowledgeWarnings: true,
+    });
+    await worker.drain(180_000);
+    const validation = await api.post<ValidationRunDto>('/api/validations', {
+      migrationRunId: started.id,
+      depth: 'FULL',
+    });
+    await worker.drain(180_000);
+    const report = await api.get<ValidationRunDto>(`/api/validations/${validation.id}`);
+    return { report, entity: report.entities.find((e) => e.logicalName === table)! };
+  };
+
+  it('says a primary-key-only check proved nothing about the data, rather than passing silently', async () => {
+    const { report, entity } = await withMatchStrategy('dtx_office', { matchStrategy: 'PRIMARY_ID' });
+
+    expect(entity.uniqueness, 'the basis is recorded, not left to be inferred').toBeTruthy();
+    expect(entity.uniqueness!.basis).toBe('PRIMARY_KEY');
+    expect(entity.uniqueness!.enforcedByTarget).toBe(true);
+    expect(entity.uniqueness!.provesBusinessUniqueness).toBe(false);
+
+    // The scan genuinely ran over the whole table — this is not a coverage gap.
+    expect(entity.duplicateCoverage?.mode).toBe('FULL');
+    expect(entity.duplicates).toEqual([]);
+
+    // And the sentence does not say what was not proven.
+    const check = entity.checks.find((c) => c.check === 'UNIQUENESS')!;
+    expect(check, 'a duplicate finding has its own check, not FIELD_VALUES').toBeTruthy();
+    expect(check.message, 'never implies the data is unique').not.toMatch(/No repeated values/);
+    expect(check.message).toMatch(/does not show that the business data is unique/i);
+
+    // The run-level summary carries the same limit, so a reader of the headline is not misled either.
+    expect(report.summary!.duplicateRecords).toBe(0);
+    expect(report.summary!.businessUniquenessVerifiedTables).toBe(0);
+  }, 300_000);
+
+  it('says a business-key check did prove it, over the same table and the same data', async () => {
+    const { report, entity } = await withMatchStrategy('dtx_office', {
+      matchStrategy: 'BUSINESS_KEY',
+      businessKeyFields: ['dtx_name'],
+    });
+
+    expect(entity.uniqueness!.basis).toBe('BUSINESS_KEY');
+    expect(entity.uniqueness!.enforcedByTarget, 'nothing in the target enforces this one').toBe(false);
+    expect(entity.uniqueness!.provesBusinessUniqueness).toBe(true);
+    expect(entity.uniqueness!.columns).toEqual(['dtx_name']);
+
+    const check = entity.checks.find((c) => c.check === 'UNIQUENESS')!;
+    expect(check.outcome).toBe('PASS');
+    expect(check.message).toMatch(/No repeated values of dtx_name/);
+
+    expect(report.summary!.businessUniquenessVerifiedTables).toBe(1);
+  }, 300_000);
 });

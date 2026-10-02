@@ -66,6 +66,39 @@ from metadata, and every column mapped to the same type. The first attempt at th
 catch the quoting mutation — the fixtures used only quote-safe names — so every fixture now carries
 a reserved-word column (`order`) and a mixed-case one.
 
+### A claim about uniqueness is only as good as the key it was counted over
+
+A duplicate check is the only check that can catch a migration which wrote every record twice: value
+comparison cannot see it, because each source record finds a target record holding exactly the right
+values — just not only one of them. So the check matters. But _which columns_ it grouped on decides
+what finding nothing proves, and those were being reported as one thing.
+
+With no alternate or business key configured, the scan falls back to the target's own primary id. It
+finds nothing, every time, because the target refuses a repeated primary key by itself. Reported as
+"no duplicates", next to a row of passes, that restates the platform's guarantee and says nothing
+about the data.
+
+So every duplicate finding now carries the basis it was counted over, and the report distinguishes
+four answers:
+
+| Basis                    | Enforced by the target | Proves business uniqueness | What a clean result means                                                |
+| ------------------------ | ---------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `PRIMARY_KEY`            | Yes                    | **No**                     | Only that the target kept its own promise. Nothing about the data.       |
+| `ALTERNATE_KEY`          | Yes                    | Yes                        | No two target records share a key the customer declared.                 |
+| `BUSINESS_KEY`           | No                     | Yes                        | A real test: nothing enforced this, and the migration did not duplicate. |
+| `COMPOSITE_BUSINESS_KEY` | No                     | Yes                        | The same, over several columns together.                                 |
+| `NOT_VERIFIED`           | —                      | **No**                     | The check did not run. The reason says why.                              |
+
+`shared/uniqueness.ts` holds the vocabulary and writes the sentence, so the words a customer reads
+and the words a test asserts are the same words. Under `PRIMARY_KEY` the report never prints "no
+repeated values"; it prints what was checked and what that does not establish. The run-level summary
+carries `businessUniquenessVerifiedTables`, and when it is zero the report says so in the headline
+rather than letting a clean verdict be read as a uniqueness result.
+
+`tests/unit/uniqueness.test.ts` holds the vocabulary; two cases in
+`tests/integration/duplicate-detection.test.ts` run the same table under both match strategies, so the
+only thing that differs between them is what the report is entitled to say.
+
 ---
 
 ## 3. What the real-engine suite covers
