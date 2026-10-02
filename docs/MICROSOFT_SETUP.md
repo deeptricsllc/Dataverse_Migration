@@ -17,9 +17,14 @@ writing anything to Dataverse.
 
 1. Open <https://entra.microsoft.com> → **Identity → Applications → App registrations → New registration**.
 2. **Name:** `DeepTrics Dataverse Migration` (any name).
-3. **Supported account types**
-   - SaaS for many customers: **Accounts in any organizational directory (Multitenant)**, with `ENTRA_TENANT_ID=organizations`.
-   - DeepTrics only: **Single tenant**, with `ENTRA_TENANT_ID=<your tenant GUID>`.
+3. **Supported account types** — this choice and `ENTRA_TENANT_ID` must agree, or sign-in fails at
+   Microsoft with `AADSTS700016`:
+   - One directory (the usual choice, and the right one for a pilot): **Single tenant**, with
+     `ENTRA_TENANT_ID=<this directory's tenant GUID>`. Guests invited into that directory can still
+     sign in; people in their own directories cannot.
+   - SaaS across many customers: **Accounts in any organizational directory (Multitenant)**, with
+     `ENTRA_TENANT_ID=organizations` — and each customer's administrator must grant consent before
+     anyone there can sign in.
 4. **Redirect URI:** platform **Web**, value:
    - Local (built app, `npm start`): `http://localhost:3000/api/auth/callback`
    - Local dev server (`npm run dev`): `http://localhost:5173/api/auth/callback` (also set `APP_BASE_URL=http://localhost:5173`)
@@ -56,19 +61,72 @@ Then click **Grant admin consent for <tenant>** (requires a Global/Privileged Ro
 
 ## 4. Configure the server
 
+Three independent decisions. Treating any two of them as one is the single most common way a
+deployment ends up with a sign-in nobody can complete, so they are listed apart.
+
+**Who this application is.** Nothing else identifies it.
+
 ```dotenv
 ENTRA_CLIENT_ID=<application (client) id>
 ENTRA_CLIENT_SECRET=<client secret value>
-ENTRA_TENANT_ID=organizations        # or your tenant GUID
-APP_BASE_URL=http://localhost:3000   # must match the redirect URI host
-SESSION_SECRET=<48+ random characters>   # openssl rand -base64 48
-# Optional hardening
-ALLOWED_TENANT_IDS=<deeptrics tenant guid>
-ADMIN_EMAILS=srinivas@deeptrics.com
+APP_BASE_URL=https://<your-domain>      # the redirect URI is derived from this
+SESSION_SECRET=<48+ random characters>  # openssl rand -base64 48
 ```
+
+**Which directory Microsoft authenticates against** — the _authority_. This is a question put to
+Microsoft and answered before any request reaches this product.
+
+```dotenv
+# A single-tenant registration: the directory GUID that OWNS the registration.
+ENTRA_TENANT_ID=<directory (tenant) id of the app registration>
+
+# Only for a multi-tenant registration that each customer has admin-consented:
+# ENTRA_TENANT_ID=organizations
+```
+
+> **`organizations` is not a safe default.** It tells Microsoft to resolve the directory from
+> whoever is signing in, not from this deployment. With a **single-tenant** registration, every
+> person whose home directory is not the registration's own is refused by Microsoft with
+> **`AADSTS700016`** — on Microsoft's own page, before this product sees anything, so no error
+> message we write can improve it. Find the right value in **Entra admin center → App registrations
+> → your app → Overview → Directory (tenant) ID**.
+
+**Which directories this product then admits** — _admission_. This is our decision, taken after
+Microsoft has authenticated somebody, on a tenant id that is already proven.
+
+```dotenv
+ACCESS_MODE=GATED                       # the default
+ALLOWED_TENANT_IDS=<directory guid>[,<directory guid>...]
+ADMIN_EMAILS=you@example.com            # who operates the deployment
+```
+
+> **Under `GATED`, `ALLOWED_TENANT_IDS` is required, not hardening.** An empty list admits
+> **nobody** — it does not admit everybody. Microsoft will authenticate people successfully and this
+> product will then refuse every one of them. Entries must be directory **GUIDs**: a domain name
+> such as `contoso.com` can never match the tenant id Microsoft returns, so it silently excludes the
+> organization it was meant to admit. Set `ACCESS_MODE=OPEN_BETA` only to deliberately admit any
+> work or school directory.
+
+An admission list is never an authority. Listing a customer's directory in `ALLOWED_TENANT_IDS` does
+not — and must not — send authentication there; that would ask one customer's directory to vouch for
+another customer's user.
 
 Restart the server. The login page now shows **Continue with Microsoft**. Demo mode can stay
 enabled alongside it (`DEMO_MODE=true`) or be turned off.
+
+### Check it before anybody tries to sign in
+
+The server describes its own sign-in configuration on startup, worst finding first. A deployment
+nobody can sign in to says so on its first line:
+
+```
+[BLOCKS_SIGN_IN] GATED_WITH_EMPTY_ALLOW_LIST: ... GATED with an empty list admits nobody ...
+[WARNING] AUTHORITY_RESOLVES_USER_HOME_DIRECTORY: ... will be refused with AADSTS700016 ...
+```
+
+The same report is available to a platform operator (an address in `ADMIN_EMAILS`) at
+`GET /api/platform/auth-configuration`. It states whether each secret is present and never what any
+secret is.
 
 For the first connection to a real tenant, also set `REAL_TENANT_READ_ONLY=true`. Every read keeps
 working; every Dataverse write is refused by the server, so nothing can be changed while you are
@@ -141,15 +199,18 @@ Verify these against current Microsoft documentation before production use in so
 
 ## 8. Troubleshooting
 
-| Symptom                                             | Cause / fix                                                                                                |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `AADSTS50011` redirect URI mismatch                 | The registered redirect URI must exactly equal `ENTRA_REDIRECT_URI` / `${APP_BASE_URL}/api/auth/callback`. |
-| `AADSTS65001` / consent required                    | Grant admin consent for Dynamics CRM `user_impersonation`.                                                 |
-| Login succeeds, no environments                     | The user has no Dataverse security role in any environment, or the tenant has no Dataverse environments.   |
-| Test connection: "not a member of the organization" | Add the user to the environment with a security role.                                                      |
-| "Sign in again" errors in runs                      | The refresh token expired or was revoked (password reset, Conditional Access). Sign in and use **Retry**.  |
-| `REAL_TENANT_READ_ONLY` when starting a migration   | The deployment is in read-only certification mode. This is deliberate; see REAL_TENANT_CERTIFICATION.md.   |
-| Impersonation check fails despite the privilege     | `prvActOnBehalfOfAnotherUser` must be assigned directly to the user, not through a team.                   |
+| Symptom                                                                                      | Cause / fix                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AADSTS700016` "Application with identifier ... was not found in the directory ..."          | The authority is resolving the signing-in user's directory, and the registration is not in it. Set `ENTRA_TENANT_ID` to the registration's own **Directory (tenant) ID**, or make the registration multi-tenant and have that directory grant admin consent. Happens on Microsoft's page, before this product is reached. |
+| Microsoft sign-in succeeds, then "Your organization is not enabled for this environment yet" | `ACCESS_MODE=GATED` and the directory is not in `ALLOWED_TENANT_IDS`. The refused tenant id is in the server log. An empty list refuses everybody.                                                                                                                                                                        |
+| **Continue with Microsoft** does not appear at all                                           | Only one of `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` is set, so Microsoft sign-in is off. The startup log says so.                                                                                                                                                                                                       |
+| `AADSTS50011` redirect URI mismatch                                                          | The registered redirect URI must exactly equal `ENTRA_REDIRECT_URI` / `${APP_BASE_URL}/api/auth/callback`.                                                                                                                                                                                                                |
+| `AADSTS65001` / consent required                                                             | Grant admin consent for Dynamics CRM `user_impersonation`.                                                                                                                                                                                                                                                                |
+| Login succeeds, no environments                                                              | The user has no Dataverse security role in any environment, or the tenant has no Dataverse environments.                                                                                                                                                                                                                  |
+| Test connection: "not a member of the organization"                                          | Add the user to the environment with a security role.                                                                                                                                                                                                                                                                     |
+| "Sign in again" errors in runs                                                               | The refresh token expired or was revoked (password reset, Conditional Access). Sign in and use **Retry**.                                                                                                                                                                                                                 |
+| `REAL_TENANT_READ_ONLY` when starting a migration                                            | The deployment is in read-only certification mode. This is deliberate; see REAL_TENANT_CERTIFICATION.md.                                                                                                                                                                                                                  |
+| Impersonation check fails despite the privilege                                              | `prvActOnBehalfOfAnotherUser` must be assigned directly to the user, not through a team.                                                                                                                                                                                                                                  |
 
 The **Diagnostics** page runs all of these checks in one place and explains each failure, without
 ever displaying a token or a raw response.

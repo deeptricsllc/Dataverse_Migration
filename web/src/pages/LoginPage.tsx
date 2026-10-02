@@ -1,5 +1,6 @@
 import type { AuthConfigDto } from '@shared/domain';
 import { PRODUCT_NAME } from '@shared/product';
+import { signInFailureMessage } from '@shared/sign-in-failures';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Boxes, Check, FlaskConical, Lock } from 'lucide-react';
 import { useState } from 'react';
@@ -30,7 +31,9 @@ const POINTS = [
 export function LoginPage() {
   const [params] = useSearchParams();
   const returnTo = safeReturnTo(params.get('returnTo'));
-  const error = params.get('error');
+  // A code, never a sentence: the page decides the wording, so a crafted link cannot put words
+  // under our “Sign-in failed” heading.
+  const errorCode = params.get('error');
   const session = useSessionQuery();
   const config = useQuery({
     queryKey: ['auth-config'],
@@ -99,9 +102,9 @@ export function LoginPage() {
               Analyse, map, migrate and validate — with your organizational account.
             </p>
             <div className="mt-6 space-y-3">
-              {error && (
+              {errorCode && (
                 <Callout tone="danger" title="Sign-in failed">
-                  {error}
+                  {signInFailureMessage(errorCode)}
                 </Callout>
               )}
               {config.isLoading && <Spinner />}

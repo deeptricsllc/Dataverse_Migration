@@ -1,5 +1,6 @@
 import { PRODUCT_NAME } from '../../shared/product';
 import { buildApp } from './app';
+import { describeAuthConfiguration, formatAuthConfiguration } from './auth/auth-configuration';
 import { loadConfig } from './config';
 import { createDatabase, migrateWhenReachable } from './db/client';
 import { createLogger } from './logger';
@@ -7,6 +8,28 @@ import { createServices } from './services/container';
 
 const config = loadConfig();
 const logger = createLogger(config.LOG_LEVEL, config.LOG_PRETTY);
+
+/**
+ * Say what sign-in will do, before anybody tries it.
+ *
+ * Both ways the QA deployment's sign-in was broken — an authority that resolved the user's own
+ * directory rather than the application's, and GATED admission with an empty allow list — were
+ * invisible in the logs and obvious in the configuration. A deployment that nobody can sign in to
+ * now says so on its first line rather than on somebody's first attempt.
+ */
+{
+  const auth = describeAuthConfiguration(config);
+  const [summary, ...issues] = formatAuthConfiguration(auth);
+  logger.info(summary);
+  for (const line of issues) {
+    if (line.startsWith('[BLOCKS_SIGN_IN]')) logger.error(line);
+    else if (line.startsWith('[WARNING]')) logger.warn(line);
+    else logger.info(line);
+  }
+  if (!auth.anySignInPossible) {
+    logger.error('Nobody can sign in to this deployment with its current configuration.');
+  }
+}
 
 const database = await createDatabase({
   databaseUrl: config.DATABASE_URL,

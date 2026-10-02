@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { normaliseRole } from '../../../shared/authorization';
+import { signInFailureCode } from '../../../shared/sign-in-failures';
+import { describeAuthConfiguration } from '../auth/auth-configuration';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { Readable } from 'node:stream';
@@ -112,13 +114,13 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         })
         .parse(req.query);
       if (q.error || !q.code || !q.state) {
-        req.log.warn({ error: q.error }, 'Microsoft sign-in returned an error');
-        const reason = encodeURIComponent(
-          q.error === 'access_denied'
-            ? 'Consent was declined or access was denied.'
-            : 'Microsoft sign-in did not complete.',
+        // The description is logged and never shown: it is where Microsoft puts AADSTS codes.
+        req.log.warn(
+          { error: q.error, description: q.error_description },
+          'Microsoft sign-in returned an error',
         );
-        return reply.redirect(`/login?error=${reason}`);
+        const code = q.error === 'access_denied' ? 'ACCESS_DENIED' : 'INCOMPLETE';
+        return reply.redirect(`/login?error=${code}`);
       }
       try {
         const { userId, returnTo } = await s.auth.completeMicrosoftSignIn(
@@ -129,9 +131,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
         return reply.redirect(returnTo);
       } catch (err) {
-        const message = err instanceof AppError ? err.message : 'Microsoft sign-in failed.';
+        // Whatever went wrong, the browser is told one of a closed set of codes. An MSAL failure
+        // carries Microsoft's own text, which belongs in the log and nowhere near a visitor.
         if (!(err instanceof AppError)) req.log.error({ err }, 'Microsoft sign-in failed');
-        return reply.redirect(`/login?error=${encodeURIComponent(message)}`);
+        const code = signInFailureCode(err instanceof AppError ? err.code : undefined);
+        return reply.redirect(`/login?error=${code}`);
       }
     },
   );
@@ -203,6 +207,20 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       return { ok: false, reason: 'No ALERT_WEBHOOK_URL is configured, so nothing is announced.' };
     }
     return s.alerts.deliver({ kind: 'TEST', requestedBy: req.ctx.displayName });
+  });
+
+  /**
+   * What sign-in is configured to do, and who it will refuse.
+   *
+   * Operator-only, because the findings name environment variables in order to be actionable. A
+   * prospect who cannot sign in gets a sentence and a way forward; the person who can fix it gets
+   * this. No secret value is included — only whether each one is present.
+   */
+  app.get('/api/platform/auth-configuration', async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('The sign-in configuration is for the operators of this deployment.');
+    }
+    return describeAuthConfiguration(config);
   });
 
   app.patch('/api/access-requests/:id', async (req) => {

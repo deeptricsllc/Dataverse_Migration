@@ -120,7 +120,9 @@ describe('Microsoft sign-in endpoints', () => {
     expect(bad.headers.location).toMatch(/^\/login\?error=/);
     expect(bad.headers['set-cookie']).toBeUndefined();
     const denied = await t.app.inject({ method: 'GET', url: '/api/auth/callback?error=access_denied' });
-    expect(decodeURIComponent(denied.headers.location as string)).toContain('Consent was declined');
+    // A code, not a sentence: the page owns the wording, so a link cannot choose it. The wording
+    // itself, and that it names nothing internal, is `tests/integration/sign-in-paths.test.ts`.
+    expect(denied.headers.location).toBe('/login?error=ACCESS_DENIED');
   });
 
   it('blocks open redirects in returnTo', async () => {
