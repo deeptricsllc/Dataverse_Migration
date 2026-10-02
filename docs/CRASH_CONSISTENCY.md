@@ -269,3 +269,81 @@ Coverage treats them as what they are: an unresolved record is not eligible for 
 nothing to compare), and the eligible count says so. The verdict is `FAIL` with a message naming the
 count, because a migration whose outcome is unknown for even one record has not been shown to have
 worked.
+
+---
+
+## 9. What the engines said
+
+`evidence/crash-verification.json`, from hosted CI run 36959413133, against PostgreSQL 16, MySQL 8.4 and
+SQL Server 2022. Each fact is the one the protocol depends on, and each was asked of the server with every
+count taken through the raw driver rather than through the connector that wrote it.
+
+| Asked                                                                          | PostgreSQL           | MySQL                      | SQL Server           |
+| ------------------------------------------------------------------------------ | -------------------- | -------------------------- | -------------------- |
+| A committed row is findable by its business key                                | yes                  | yes                        | yes                  |
+| A repeat on a unique key is refused                                            | yes, as `VALIDATION` | yes, as `DUPLICATE_RECORD` | yes, as `VALIDATION` |
+| …and the refusal classifies as definite, not ambiguous                         | yes                  | yes                        | yes                  |
+| Two identical inserts with no unique key both succeed and cannot be told apart | yes                  | yes                        | yes                  |
+| A repeated update is idempotent                                                | yes                  | yes                        | yes                  |
+| An update to a missing row creates nothing                                     | yes                  | yes                        | yes                  |
+
+The third row is the evidence for `RECONCILIATION_REQUIRED`: it is not an assumption about what a database
+cannot do, it is a demonstration that it cannot.
+
+**What is simulated:** the process is not killed in CI, because there is no way to kill it mid-statement
+and still assert anything afterwards. The failure _moment_ is simulated by stopping after a write. The
+server, the driver, the statements, the constraints and the row counts are real.
+
+## 10. What it costs
+
+`evidence/crash-overhead.json`. The same migration twice in one process, once with the intent step and
+once with exactly that step removed:
+
+|                 | 4,021 records   | 8,021 records   |
+| --------------- | --------------- | --------------- |
+| Without intents | 442 records/sec | 483 records/sec |
+| With intents    | 442 records/sec | 463 records/sec |
+| Wall clock      | −0.1%           | +4.2%           |
+
+A few percent at most, and the two runs bracket it closely enough that most of the difference is
+run-to-run variation on the machine. The structural figure is firmer: **0.005 extra identity-map
+statements per record**, because the intents are one statement per batch rather than one per record, and
+**no extra rows at all** — the intent row becomes the result row.
+
+Against a real connector the proportional cost is smaller than this, not larger: these runs talk to an
+in-process database, where the platform's own bookkeeping is a visible share of the work.
+
+## 11. The destructive drill
+
+Deployed QA, synthetic data, the process genuinely killed with `railway restart` while a migration was
+writing — unreachable for thirteen seconds at 395 of 3,000 records, then reclaimed by the new container.
+
+After recovery:
+
+```
+run              COMPLETED   processed 3,000   unresolved 0
+identity rows    3,000       distinct source ids 3,000   appearing twice 0
+                             distinct target ids 3,000   appearing twice 0
+target           3,000 records; row counts match; no repeated productnumber
+validation       FULL coverage, 3,000 examined, 3,000 matched, 0 missing, 0 unresolved
+evidence         VALID, schema 3, lineage 3,000 rows
+```
+
+**Every source record is accounted for exactly once, and the target holds no duplicates.**
+
+Two things stated rather than glossed:
+
+- The run reports `skipped 3,000` rather than `created 3,000`, because an earlier drill in the same
+  workspace had already created those records and the business key matched them. Correct, and worth
+  saying so the numbers are not read as a contradiction.
+- `recovery.unresolved` is 0 and `reconciledAutomatically` is 0, so this particular kill did not land
+  between a target write and its identity row. The drill proves the resume is safe and the accounting is
+  exact; the _reconciliation_ path itself is proven by the crash matrix and the real-engine suite, not by
+  this drill.
+
+**An earlier drill, before the fix, is why this section exists.** The same kill on the same data produced
+a run reporting that it had created **six** of 3,000 records. The target was correct — the matcher found
+each record and the conflict rules skipped it — but every already-migrated record had been re-processed
+and its `CREATED` row overwritten with `SKIPPED`, because identifiers are stored lowercased and the resume
+filter compared the source's own casing. The evidence was wrong by a factor of five hundred, which for a
+product whose claim is "here is what actually happened" is as serious as the duplicate would have been.
