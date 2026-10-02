@@ -110,7 +110,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: engine-verification-evidence
-          path: evidence/engine-verification.json
+          path: |
+            evidence/engine-verification.json
+            evidence/crash-verification.json
           retention-days: 90
 
       # The committed evidence is what the capability matrix is checked against, so it has to keep

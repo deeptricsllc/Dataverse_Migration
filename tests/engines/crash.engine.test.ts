@@ -13,7 +13,7 @@ import { runCrashConformance, type CrashFixture } from './crash';
  *
  * Skipped unless the engine's URL is set, exactly like the other conformance suites:
  *
- *   TEST_PG_URL=postgres://... TEST_MYSQL_URL=mysql://... TEST_MSSQL_URL=sqlserver://... npm run test:engines
+ *   TEST_POSTGRES_URL=postgres://... TEST_MYSQL_URL=mysql://... TEST_MSSQL_URL=sqlserver://... npm run test:engines
  *
  * Writes `evidence/crash-verification.json`, which the final report cites.
  */
@@ -44,14 +44,14 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 // PostgreSQL
 // ---------------------------------------------------------------------------
-describe.skipIf(!process.env.TEST_PG_URL)('crash consistency against real PostgreSQL', () => {
+describe.skipIf(!process.env.TEST_POSTGRES_URL)('crash consistency against real PostgreSQL', () => {
   let t: TestApp;
   let pool: import('pg').Pool;
 
   beforeAll(async () => {
     t = await createTestApp();
     const pg = (await import('pg')).default;
-    pool = new pg.Pool({ connectionString: process.env.TEST_PG_URL });
+    pool = new pg.Pool({ connectionString: process.env.TEST_POSTGRES_URL });
   }, 180_000);
 
   afterAll(async () => {
@@ -61,11 +61,11 @@ describe.skipIf(!process.env.TEST_PG_URL)('crash consistency against real Postgr
 
   it('behaves as the protocol assumes', async () => {
     const config: SqlConnectionConfig = {
-      host: new URL(process.env.TEST_PG_URL!).hostname,
-      port: Number(new URL(process.env.TEST_PG_URL!).port) || 5432,
-      database: decodeURIComponent(new URL(process.env.TEST_PG_URL!).pathname.replace(/^\//, '')),
+      host: new URL(process.env.TEST_POSTGRES_URL!).hostname,
+      port: Number(new URL(process.env.TEST_POSTGRES_URL!).port) || 5432,
+      database: decodeURIComponent(new URL(process.env.TEST_POSTGRES_URL!).pathname.replace(/^\//, '')),
       authType: 'SQL_LOGIN',
-      username: decodeURIComponent(new URL(process.env.TEST_PG_URL!).username),
+      username: decodeURIComponent(new URL(process.env.TEST_POSTGRES_URL!).username),
       encrypt: false,
       trustServerCertificate: true,
       transport: 'DIRECT',
@@ -76,7 +76,7 @@ describe.skipIf(!process.env.TEST_PG_URL)('crash consistency against real Postgr
         engine: 'postgresql',
         type: 'POSTGRES',
         config,
-        password: decodeURIComponent(new URL(process.env.TEST_PG_URL!).password),
+        password: decodeURIComponent(new URL(process.env.TEST_POSTGRES_URL!).password),
         provision: async (): Promise<CrashFixture> => {
           await pool.query(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
           await pool.query(`CREATE SCHEMA ${SCHEMA}`);
