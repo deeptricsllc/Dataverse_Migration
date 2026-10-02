@@ -6,6 +6,7 @@ import {
   type AuditEventDto,
   type AuditPageDto,
 } from '../../../shared/domain';
+import { scrubSecrets } from '../logger';
 import type { AppDb } from '../db/client';
 import { auditEvents, environments, users } from '../db/schema';
 import { alias } from 'drizzle-orm/pg-core';
@@ -37,11 +38,25 @@ const MAX_VALUE_CHARS = 1_000;
  */
 export function boundDetails(details: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!details) return null;
-  const serialised = safeLength(details);
-  if (serialised <= MAX_DETAIL_CHARS) return details;
+
+  /**
+   * Scrubbed before anything else, and whether or not it needs shortening.
+   *
+   * The audit trail is the one place a secret would be most durable if it got in: rows are kept
+   * deliberately, exported, and read by people who are not the person who wrote them. Nothing
+   * deliberately puts a credential here — a connection event records `passwordChanged: true`, not the
+   * password — but an audit payload is free-form and the free-form thing most likely to carry one is an
+   * error message, which is exactly where a connection string ends up. So the same scrubber the logs
+   * and the error responses use runs over every string on the way in. Defence in depth: it is not
+   * where the protection is supposed to come from, it is the layer that holds when the first one is
+   * forgotten.
+   */
+  const scrubbed = scrubValue(details) as Record<string, unknown>;
+  const serialised = safeLength(scrubbed);
+  if (serialised <= MAX_DETAIL_CHARS) return scrubbed;
 
   const bounded: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(details)) {
+  for (const [key, value] of Object.entries(scrubbed)) {
     bounded[key] = boundValue(value);
   }
   bounded['_truncated'] = {
@@ -55,6 +70,21 @@ export function boundDetails(details: Record<string, unknown> | null): Record<st
 
 /** How deep the walk goes. A structure deeper than this is summarised rather than followed. */
 const MAX_DEPTH = 8;
+
+/** Applies the secret scrubber to every string in a structure, leaving the shape alone. */
+function scrubValue(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return scrubSecrets(value);
+  if (depth >= MAX_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((v) => scrubValue(v, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = scrubValue(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
 
 function boundValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') {

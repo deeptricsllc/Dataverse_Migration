@@ -114,7 +114,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     identity,
     logger,
   );
-  const connectionAdmin = new ConnectionService(db, connections, audit, logger);
+  const connectionAdmin = new ConnectionService(config, db, connections, audit, logger);
   const profiling = new ProfilingService(db, environments, metadata, connections, logger);
   const projectsSvc = new ProjectService(db, environments, audit, logger);
   const analysis = new AnalysisService(

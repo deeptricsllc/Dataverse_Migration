@@ -11,7 +11,10 @@ import { boundDetails } from '../../server/src/services/audit-service';
 describe('audit detail bounds', () => {
   it('leaves an ordinary event exactly as it was', () => {
     const details = { basis: 'EXACT', tables: 7, records: 177, blockers: 1 };
-    expect(boundDetails(details)).toBe(details);
+    // A copy rather than the same object, because every string now goes through the secret scrubber on
+    // the way in. What a reader of the audit row sees is unchanged, which is what this is about.
+    expect(boundDetails(details)).toEqual(details);
+    expect(boundDetails(details)).not.toHaveProperty('_truncated');
   });
 
   it('keeps every key when it has to shorten something', () => {
@@ -63,5 +66,47 @@ describe('audit detail bounds', () => {
 
   it('leaves null alone', () => {
     expect(boundDetails(null)).toBeNull();
+  });
+  it('scrubs a secret out of an audit payload, whether or not it needed shortening', () => {
+    /**
+     * The audit trail is the most durable place a secret could land: rows are kept deliberately,
+     * exported, and read by people who did not write them. Nothing deliberately puts a credential in a
+     * payload — a connection event records `passwordChanged: true` — but the free-form thing most likely
+     * to carry one is an error message, which is exactly where a connection string ends up.
+     */
+    const small = boundDetails({
+      action: 'ENVIRONMENT_CONNECTION_TESTED',
+      error: 'failed to connect: postgres://admin:hunter2@db.internal:5432/app',
+    })!;
+    expect(JSON.stringify(small)).not.toContain('hunter2');
+    expect(String(small['error'])).toContain('[REDACTED]');
+    // The shape survives: the key is still there and still says what went wrong.
+    expect(String(small['error'])).toContain('failed to connect');
+    expect(small['action']).toBe('ENVIRONMENT_CONNECTION_TESTED');
+
+    // And on the path that also shortens, so neither pass can be the only one that scrubs.
+    const large = boundDetails({
+      filler: 'f'.repeat(9000),
+      error: 'Login failed; Password=hunter2; Server=db.internal',
+      token: 'Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+    })!;
+    const serialised = JSON.stringify(large);
+    expect(serialised).not.toContain('hunter2');
+    expect(serialised).not.toContain('abcdefghijklmnopqrstuvwxyz');
+    expect(large['_truncated'], 'and it was shortened as well').toBeTruthy();
+  });
+
+  it('scrubs inside nested structures and arrays', () => {
+    const bounded = boundDetails({
+      attempts: [
+        { host: 'db.internal', message: 'postgres://u:s3cret@db.internal/app' },
+        { host: 'db2.internal', message: 'fine' },
+      ],
+      nested: { deeper: { message: 'client_secret=abc123def' } },
+    })!;
+    const serialised = JSON.stringify(bounded);
+    expect(serialised).not.toContain('s3cret');
+    expect(serialised).not.toContain('abc123def');
+    expect(serialised, 'and keeps everything that was not a secret').toContain('db2.internal');
   });
 });

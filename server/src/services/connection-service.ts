@@ -7,6 +7,7 @@ import type {
   SqlConnectionConfig,
   SqlConnectionType,
 } from '../../../shared/domain';
+import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import {
   connectionSecrets,
@@ -18,6 +19,7 @@ import {
 import type { ConnectionFactory } from '../dataverse/factory';
 import { toDataverseError } from '../dataverse/errors';
 import { AppError, badRequest, notFound } from '../lib/errors';
+import { checkOutboundHost } from '../lib/network-policy';
 import { requireAdmin } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
@@ -67,6 +69,7 @@ const PROVIDERS: Record<SqlConnectionType, EnvironmentProvider> = {
 
 export class ConnectionService {
   constructor(
+    private readonly config: AppConfig,
     private readonly db: AppDb,
     private readonly connections: ConnectionFactory,
     private readonly audit: AuditService,
@@ -75,6 +78,18 @@ export class ConnectionService {
 
   private toConfig(input: SqlConnectionInput): SqlConnectionConfig {
     if (!input.host.trim()) throw badRequest('A server/host is required');
+    /**
+     * Where this deployment is willing to dial. The host comes from a signed-in user and the server
+     * connects to it, so without this a tenant could reach the hosting environment's own loopback
+     * services or its instance metadata endpoint. Private ranges are still allowed: a database on 10.x
+     * behind a tunnel is the normal case rather than an attack.
+     */
+    const verdict = checkOutboundHost(input.host, {
+      allowInternal: this.config.ALLOW_INTERNAL_CONNECTIONS,
+    });
+    if (!verdict.allowed) {
+      throw badRequest(`This environment will not connect to that server: ${verdict.reason}.`);
+    }
     if (!input.database.trim()) throw badRequest('A database name is required');
     if (input.authType === 'SQL_LOGIN' && !input.username?.trim()) {
       throw badRequest('A username is required for SQL authentication');

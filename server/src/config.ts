@@ -116,6 +116,19 @@ const schema = z.object({
    */
   REAL_TENANT_READ_ONLY: bool(false),
 
+  /**
+   * Whether this deployment may open a connection to a loopback or link-local address.
+   *
+   * Off by default. A migration platform dials a host a signed-in user supplied, so without a bound
+   * that is a way to reach the hosting environment's own services and its instance metadata endpoint.
+   * Private ranges stay allowed, because a customer's database on 10.x behind a tunnel is the normal
+   * case rather than an attack; what this opens is the narrow set of obviously-internal destinations.
+   *
+   * Turn it on for local development against a database on your own machine, and in continuous
+   * integration against containers. See `server/src/lib/network-policy.ts`.
+   */
+  ALLOW_INTERNAL_CONNECTIONS: bool(false),
+
   RUN_WORKER: bool(true),
   WORKER_POLL_MS: z.coerce.number().int().positive().default(1000),
   /** How often the worker looks for a migration schedule that is due. */
