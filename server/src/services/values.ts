@@ -1,3 +1,4 @@
+import { decimalsEqual } from '../../../shared/aggregates';
 import { isLookupValue, type AttributeMeta, type FieldValue } from '../../../shared/metadata';
 
 export type TransformResult = { ok: true; value: FieldValue } | { ok: false; error: string };
@@ -80,10 +81,24 @@ export function normalizeForCompare(
     case 'State':
     case 'Status': {
       const n = Number(value);
-      return Number.isFinite(n) ? round(n, attr.precision ?? 10) : String(value);
+      return Number.isFinite(n) ? round(n, decimalPlaces(attr) ?? 10) : String(value);
     }
-    case 'Boolean':
-      return Boolean(value);
+    case 'Boolean': {
+      /**
+       * Not `Boolean(value)`.
+       *
+       * `Boolean('false')` is true, so a target returning a bit column as the text 'false' compared
+       * equal to a source `true` — a difference reported as a match, which is the direction that
+       * matters. The recognised spellings are the ones engines actually emit; anything else is
+       * returned as text so two unrecognised values are compared literally rather than guessed at.
+       */
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0;
+      const s = String(value).trim().toLowerCase();
+      if (TRUE_WORDS.has(s)) return true;
+      if (FALSE_WORDS.has(s)) return false;
+      return s;
+    }
     case 'DateTime': {
       const s = String(value);
       if (attr.dateTimeBehavior === 'DateOnly') return s.slice(0, 10);
@@ -102,19 +117,52 @@ export function normalizeForCompare(
   }
 }
 
+/** Types whose values are exact, so two of them are equal or they are not. */
+const EXACT_NUMERIC = new Set(['Integer', 'BigInt', 'Decimal', 'Money']);
+
 export function valuesEqual(
   attr: AttributeMeta,
   a: FieldValue | undefined,
   b: FieldValue | undefined,
 ): boolean {
+  /**
+   * An exact column is compared exactly, when both sides give us the digits.
+   *
+   * Everything used to go through `Number`, which cannot hold a BIGINT near 2^53 or a wide decimal:
+   * `9000000000000001` and `9000000000000000` compared equal. Drivers return those columns as strings
+   * precisely so the digits survive, and `decimalsEqual` compares them as scaled integers.
+   *
+   * Only when both sides are strings. A number in hand has already lost whatever it was going to
+   * lose, and routing it through here would imply a precision it does not have.
+   */
+  if (EXACT_NUMERIC.has(attr.type) && typeof a === 'string' && typeof b === 'string') {
+    return decimalsEqual(a.trim() === '' ? null : a, b.trim() === '' ? null : b);
+  }
   const na = normalizeForCompare(attr, a);
   const nb = normalizeForCompare(attr, b);
   if (typeof na === 'number' && typeof nb === 'number') {
-    const tolerance = attr.precision != null ? 10 ** -attr.precision / 2 : 1e-9;
+    const places = decimalPlaces(attr);
+    const tolerance = places != null ? 10 ** -places / 2 : 1e-9;
     return Math.abs(na - nb) <= tolerance;
   }
   return na === nb;
 }
+
+/**
+ * How many decimal places the column actually holds.
+ *
+ * `precision` means two different things depending on where the metadata came from: for a Dataverse
+ * money or decimal attribute it is the number of decimal places, and for a SQL column it is the total
+ * number of digits with the places in `sql.scale`. Reading `precision` for a SQL `numeric(18,2)` gave
+ * a tolerance of 10^-18 — so differences smaller than a hundredth, which that column cannot even
+ * store, were reported as mismatches.
+ */
+function decimalPlaces(attr: AttributeMeta): number | null {
+  return attr.sql?.scale ?? attr.precision ?? null;
+}
+
+const TRUE_WORDS = new Set(['true', '1', 'yes', 'y', 't']);
+const FALSE_WORDS = new Set(['false', '0', 'no', 'n', 'f', '']);
 
 const MAX_DISPLAY = 256;
 

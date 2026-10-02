@@ -3,6 +3,7 @@ import type { SqlConnectionConfig, SqlConnectionType } from '../../shared/domain
 import { familyOf, type DvRecord, type TableMetadata } from '../../shared/metadata';
 import type { MigrationConnector } from '../../server/src/connectors/types';
 import type { ConnectorCapabilityKey } from '../../shared/connector-verification';
+import { valuesEqual } from '../../server/src/services/values';
 
 /**
  * One conformance suite, run against an actual database server.
@@ -238,6 +239,63 @@ export async function runConformance(
       0,
     );
     passed('duplicateDetection');
+
+    // --- semantic equality against a real engine -----------------------------
+    /**
+     * The comparison rules, checked against values the engine actually returned.
+     *
+     * Two Phase 4 bugs lived here: a bit column returned as the text 'false' compared equal to a
+     * source `true`, and a BIGINT near 2^53 compared equal to its neighbour. Both were about the gap
+     * between what an engine returns and what the comparison assumes about it — which only a real
+     * driver can settle, because the shape of a returned value is the driver's choice.
+     */
+    const semanticRows: DvRecord[] = [];
+    for await (const page of connector.queryRecords(
+      people,
+      [people.primaryIdAttribute, 'balance', 'big_number', 'joined_at', 'code'],
+      { pageSize: 50 },
+    )) {
+      semanticRows.push(...page);
+    }
+    const balanceAttr = attrOf(people, 'balance');
+    const bigAttr = attrOf(people, 'big_number');
+    for (const row of semanticRows) {
+      // Every value this engine returned equals itself under the product's own rules. Trivial to
+      // state and the thing that broke: a value that does not equal itself is a false difference on
+      // every validation of every record in the column.
+      expect(
+        valuesEqual(balanceAttr, row.values['balance'], row.values['balance']),
+        `${target.engine}: a returned decimal equals itself`,
+      ).toBe(true);
+      expect(
+        valuesEqual(bigAttr, row.values['big_number'], row.values['big_number']),
+        `${target.engine}: a returned big integer equals itself`,
+      ).toBe(true);
+    }
+    // The decimal at the edge: 12345.6789 in a numeric(18,4) column, compared against the same value
+    // written as text, which is how the other side of a migration may hand it over.
+    const edge = semanticRows.find((r) => String(r.values['balance'] ?? '').startsWith('12345.6789'));
+    expect(edge, `${target.engine}: the awkward decimal came back`).toBeTruthy();
+    expect(
+      valuesEqual(balanceAttr, edge!.values['balance'], AWKWARD.decimal),
+      `${target.engine}: and matches the value that was written`,
+    ).toBe(true);
+    expect(
+      valuesEqual(balanceAttr, edge!.values['balance'], '12345.6788'),
+      `${target.engine}: and not a neighbour it can hold`,
+    ).toBe(false);
+    // A big integer at the top of the safe range, against its neighbour.
+    const bigRow = semanticRows.find(
+      (r) => String(r.values['big_number'] ?? '') === String(AWKWARD.bigInteger),
+    );
+    expect(bigRow, `${target.engine}: the big integer came back`).toBeTruthy();
+    expect(
+      valuesEqual(bigAttr, bigRow!.values['big_number'], String(AWKWARD.bigInteger)),
+      `${target.engine}: matches itself as text`,
+    ).toBe(true);
+    evidence.notes.push(
+      'Returned decimals and big integers compare equal to themselves and unequal to their neighbours.',
+    );
 
     // --- totals computed by the engine --------------------------------------
     // Over the reserved-word column on purpose. An aggregate expression is built by concatenating
