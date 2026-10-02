@@ -6,6 +6,7 @@ import { normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
 import { buildIdentity, publicBuildIdentity } from '../build-info';
 import { attemptMetrics } from '../services/attempt-metrics';
+import { evidenceChain } from '../services/evidence-chain';
 import { describeAuthConfiguration } from '../auth/auth-configuration';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
@@ -703,6 +704,17 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    * counters are what somebody signs for, and this is execution history. Fetching it is a choice the
    * reader makes, which is also the distinction the report has to carry.
    */
+  /**
+   * One problem, followed through every stage that saw it: predicted risk, actual outcome, validation
+   * evidence. The stages recorded the same problems in three vocabularies and nothing joined them, so a
+   * reader had three lists and a hypothesis.
+   */
+  app.get('/api/runs/:id/chain', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.runs.get(req.ctx, id);
+    return evidenceChain(s.db, run.id);
+  });
+
   app.get('/api/runs/:id/attempts', async (req) => {
     const { id } = idParams.parse(req.params);
     const run = await s.runs.get(req.ctx, id);

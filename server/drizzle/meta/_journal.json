@@ -169,6 +169,13 @@
       "when": 1790927088201,
       "tag": "0023_far_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790928308831,
+      "tag": "0024_curious_cargill",
+      "breakpoints": true
     }
   ]
 }

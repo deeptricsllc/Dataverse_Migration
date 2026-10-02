@@ -306,12 +306,22 @@ export class EvidenceService {
     /**
      * What was known before the run, and what somebody decided to run past.
      *
-     * Re-assessed now rather than stored at execution time, which is a deliberate limitation worth
-     * stating: the findings are current, the *overrides* are the ones that were recorded on the plan.
-     * A reader comparing them to the run should read the overrides as the decisions and the findings
-     * as the plan's state when the package was made.
+     * The assessment this run was executed against, when it was recorded.
+     *
+     * It used to be re-assessed at packaging time and described as "the pre-migration assessment",
+     * which it was not: a plan can be re-mapped after a run, and the target is populated by the run
+     * itself, so a finding like TARGET_ALREADY_POPULATED means something different afterwards. A reader
+     * following predicted risk to actual outcome was being handed the wrong half of the chain.
+     *
+     * A run from before this was recorded falls back to a current assessment — and the file says so,
+     * rather than letting a fresh document wear the old one's label.
      */
-    const readiness = await this.readiness.assess(ctx, run.planId).catch(() => null);
+    const [stored] = await this.db
+      .select({ readiness: migrationRuns.readinessSnapshot })
+      .from(migrationRuns)
+      .where(eq(migrationRuns.id, run.id));
+    const predicted = stored?.readiness ?? null;
+    const readiness = predicted ?? (await this.readiness.assess(ctx, run.planId).catch(() => null));
     if (readiness) {
       entries.push({
         entry: file(
@@ -319,8 +329,9 @@ export class EvidenceService {
           `${JSON.stringify(readiness, null, 2)}
 `,
         ),
-        describes:
-          'The pre-migration assessment: blockers, warnings, and any blocker accepted explicitly, with who accepted it and why.',
+        describes: predicted
+          ? 'The assessment this run was executed against, recorded before the work started: blockers, warnings, and any blocker accepted explicitly, with who accepted it and why.'
+          : 'An assessment of the plan made when this package was built. This run predates the platform recording its assessment, so this is NOT what was predicted before the migration — the plan may have changed and the target is now populated.',
       });
     }
 

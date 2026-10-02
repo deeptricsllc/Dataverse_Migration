@@ -68,6 +68,7 @@ import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
 import type { AggregateCheck } from '../../../shared/aggregates';
 import type { UniquenessCheck } from '../../../shared/uniqueness';
+import type { ReadinessAssessment } from '../../../shared/readiness';
 import type { ReconciliationEvidence, WriteState } from '../../../shared/write-state';
 import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
@@ -545,6 +546,18 @@ export const migrationRuns = pgTable(
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     pauseRequested: boolean('pause_requested').notNull().default(false),
     attempt: integer('attempt').notNull().default(1),
+    /**
+     * The readiness assessment as it stood when this run was executed.
+     *
+     * Stored rather than re-assessed, because the two are different documents. A plan can be re-mapped
+     * after a run; the target is populated by the run itself, so a finding like TARGET_ALREADY_POPULATED
+     * means something different afterwards. The evidence package used to re-assess at packaging time and
+     * describe the result as "the pre-migration assessment", which it was not.
+     *
+     * Null for runs executed before this was recorded. A reader is told that rather than shown a current
+     * assessment wearing the old one's label.
+     */
+    readinessSnapshot: jsonb('readiness_snapshot').$type<ReadinessAssessment>(),
     errorMessage: text('error_message'),
     /** User on whose delegated authority the run executes. */
     executedByUserId: uuid('executed_by_user_id').references(() => users.id, { onDelete: 'set null' }),

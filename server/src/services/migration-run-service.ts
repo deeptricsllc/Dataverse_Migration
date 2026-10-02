@@ -205,6 +205,12 @@ export class MigrationRunService {
         status: 'QUEUED',
         options: plan.options,
         planSnapshot: snapshot,
+        /**
+         * What was predicted, kept with the run that was predicted about. This is the first half of the
+         * chain a buyer follows — predicted risk, actual outcome, validation evidence — and it only works
+         * if the prediction is the one that was made before the work rather than one made afterwards.
+         */
+        readinessSnapshot: readiness,
         trigger: meta.trigger ?? 'MANUAL',
         scheduleId: meta.scheduleId ?? null,
         // Where an incremental run starts reading. Null means "everything", which is also what the
