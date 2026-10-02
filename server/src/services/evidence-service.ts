@@ -649,6 +649,31 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null, 
     `recompute its digest and edit the manifest too. This detects accidental change and casual`,
     `tampering. It is not a cryptographic signature and should not be described as one.`,
     ``,
+    /**
+     * How to check it without us.
+     *
+     * An auditor's whole position is that they do not take the operator's word for anything, and a
+     * package whose only verifier is the vendor's own endpoint asks them to take ours. These are
+     * standard tools on every platform, and a reader who uses them needs nothing from this product.
+     */
+    `### Checking this yourself, without this product`,
+    ``,
+    `Every digest here is a plain SHA-256 of the file's bytes. You do not need the platform to check`,
+    `them:`,
+    ``,
+    '```',
+    `# macOS and Linux`,
+    `shasum -a 256 metrics.csv`,
+    ``,
+    `# Windows PowerShell`,
+    `Get-FileHash metrics.csv -Algorithm SHA256`,
+    '```',
+    ``,
+    `Compare the result against the \`sha256\` field for that path in \`manifest.json\`. The platform's`,
+    `own check at **Evidence → Verify a package** does the same comparison for every file at once and`,
+    `tells you which, if any, disagree — but it is a convenience, not the authority. The arithmetic is`,
+    `the authority, and you can do it.`,
+    ``,
   );
   return lines.join('\n');
 }

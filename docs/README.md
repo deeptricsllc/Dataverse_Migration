@@ -54,6 +54,7 @@ are the raw record and a drift check in CI compares them against what the reposi
 | [REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md) | The read-only certification against a real Microsoft tenant, step by step                                                                     |
 | [MANUAL_RECONCILIATION.md](MANUAL_RECONCILIATION.md)         | Five scenarios reconciled by hand on deployed QA, including the arithmetic                                                                    |
 | [SECURITY_AUDIT.md](SECURITY_AUDIT.md)                       | The release-candidate security review: findings by severity, what was checked and found sound, and what an external review would still be for |
+| [RELEASE_CANDIDATE_AUDIT.md](RELEASE_CANDIDATE_AUDIT.md)     | Four adversarial readers, their top five objections each, and the pilot workflow walked end to end                                            |
 
 ## 4. Operations and setup
 

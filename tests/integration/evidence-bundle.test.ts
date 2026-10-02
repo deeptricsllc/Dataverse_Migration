@@ -171,6 +171,26 @@ describe('migration evidence package', () => {
     expect(summary).toContain('**not signed**');
   });
 
+  it('tells a reader how to check the digests without this product', () => {
+    /**
+     * An auditor's whole position is that they do not take the operator's word for anything, and a package
+     * whose only verifier is the vendor's own endpoint asks them to take ours. The digests are plain
+     * SHA-256 of the bytes, so the check is a one-line command on any platform — and the package has to say
+     * so, or the reader has no way to know.
+     */
+    const summary = files.get('summary.md')!.toString('utf8');
+    expect(summary).toMatch(/shasum -a 256/);
+    expect(summary).toMatch(/Get-FileHash/);
+    expect(summary, 'and says the arithmetic is the authority rather than our endpoint').toMatch(
+      /convenience, not the authority/i,
+    );
+
+    // And the claim is true: a digest in the manifest is the SHA-256 of that file's bytes, nothing else.
+    const record = manifest.files.find((f) => f.path === 'metrics.csv')!;
+    const computed = createHash('sha256').update(files.get('metrics.csv')!).digest('hex');
+    expect(computed, 'the documented command would produce the documented value').toBe(record.sha256);
+  });
+
   it('says how far the connectors themselves have been verified', () => {
     // A clean validation over a connector nobody has run against the real engine is a weaker
     // statement than the same validation over one that has, and the package must not hide that.
