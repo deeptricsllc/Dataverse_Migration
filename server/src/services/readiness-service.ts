@@ -271,7 +271,7 @@ function connectorFindings(plan: MigrationPlanDto): ReadinessFinding[] {
             kind: 'CONNECTION',
             name: plan[`${side.label as 'source' | 'target'}Environment`].displayName,
           },
-          evidence: `${type} ${capability} is ${VERIFICATION_LABELS[level]}, not verified against a real engine.`,
+          evidence: `${type} ${capability} is ${VERIFICATION_LABELS[level].label}, not verified against a real engine.`,
           explanation: `This capability is implemented and tested against the connector contract, and has not been exercised against a real ${type} server in continuous integration.`,
           recommendation:
             'Treat the first run against this connection as the verification. Keep the scope small and validate at FULL depth.',

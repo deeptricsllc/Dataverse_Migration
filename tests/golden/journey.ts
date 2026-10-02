@@ -6,6 +6,7 @@ import type {
   ValidationRunDto,
 } from '../../shared/domain';
 import type { ValidationDepth } from '../../shared/validation-coverage';
+import type { ReadinessAssessment } from '../../shared/readiness';
 import { demoRecords } from '../../server/src/db/schema';
 import { ApiClient, createTestApp, type TestApp } from '../helpers';
 
@@ -160,11 +161,8 @@ export async function createPlan(j: Journey, request: PlanRequest): Promise<Migr
   return j.api.get<MigrationPlanDto>(`/api/plans/${plan.id}`);
 }
 
-export async function readiness(j: Journey, planId: string) {
-  return j.api.get<{
-    verdict: string;
-    findings: { code: string; severity: string; message: string; table?: string | null }[];
-  }>(`/api/plans/${planId}/readiness`);
+export async function readiness(j: Journey, planId: string): Promise<ReadinessAssessment> {
+  return j.api.get<ReadinessAssessment>(`/api/plans/${planId}/readiness`);
 }
 
 export async function execute(j: Journey, plan: MigrationPlanDto): Promise<MigrationRunDto> {
