@@ -343,6 +343,19 @@ export async function runConformance(
       ['code', 'full_name', 'nickname', 'balance', 'notes'],
     );
     expect(readBack, `${target.engine}: the written record can be read back`).toBeTruthy();
+    /**
+     * Read back by the key the target assigned, whatever type that key is.
+     *
+     * This is the lookup that matching and crash recovery both depend on, and it was broken on
+     * PostgreSQL for every uuid-keyed table: the id array was cast to `text[]`, and PostgreSQL has no
+     * `uuid = text` operator. It went unnoticed because this fixture's target table has an integer
+     * identity key. Asserted explicitly now so the failure cannot hide behind a fixture's choice of
+     * key type again.
+     */
+    expect(
+      readBack!.id.toLowerCase(),
+      `${target.engine}: read back by the identifier the target assigned`,
+    ).toBe(createdId.toLowerCase());
     expect(readBack!.values['full_name'], `${target.engine}: Unicode survived the write`).toBe(
       AWKWARD.unicode,
     );

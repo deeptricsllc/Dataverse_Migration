@@ -170,7 +170,14 @@ export async function runCrashConformance(
      * invent a record, so the connector's update must be keyed and must not upsert. Asked of the server
      * rather than assumed from the SQL.
      */
-    const ghost = '00000000-0000-4000-8000-00000000dead';
+    /**
+     * An identifier of the right shape that cannot exist.
+     *
+     * Derived from the real key rather than hard-coded: the key is a uuid on one engine and a bigint on
+     * another, and a malformed identifier would be rejected for the wrong reason — which would make this
+     * check pass while proving nothing.
+     */
+    const ghost = /^\d+$/.test(id) ? '9999999999' : '00000000-0000-4000-8000-00000000dead';
     let ghostError: unknown = null;
     try {
       await connector.updateRecord(

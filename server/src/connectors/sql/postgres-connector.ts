@@ -467,7 +467,14 @@ export class PostgresConnector implements MigrationConnector {
     const pkAttr = table.attributes.find((a) => a.logicalName === table.primaryIdAttribute);
     // `= ANY(array)` is one parameter however many ids there are, so there is no chunking and no
     // parameter limit to stay under.
-    const cast = numericKey(pkAttr) ? '::numeric[]' : '::text[]';
+    //
+    // The array has to be cast to the key column's own type. PostgreSQL has no `uuid = text` operator,
+    // so a uuid primary key compared against a text array fails outright with
+    // "operator does not exist" — every read by id, on every uuid-keyed table. It went unnoticed
+    // because the conformance target table had an integer identity key, so the uuid path was never
+    // exercised; the crash-consistency fixture uses a uuid key, which is the realistic shape for a
+    // Dataverse-style migration into PostgreSQL, and found it immediately.
+    const cast = keyArrayCast(pkAttr);
     const rows = await this.query<Record<string, unknown>>(
       `SELECT ${list} FROM ${pgQuoteTable(table.logicalName)} WHERE ${pgQuoteIdent(
         table.primaryIdAttribute,
@@ -693,9 +700,18 @@ export class PostgresConnector implements MigrationConnector {
 const withPublicSchema = (logicalName: string) =>
   logicalName.includes('.') ? logicalName : `public.${logicalName}`;
 
-/** Whether a key column holds numbers, so an id array is cast to the right element type. */
-const numericKey = (attr: AttributeMeta | undefined) =>
-  attr?.type === 'Integer' || attr?.type === 'BigInt' || attr?.type === 'Decimal';
+/**
+ * The array type an id list has to be cast to, which is the key column's own type.
+ *
+ * `= ANY(array)` needs an operator between the column and the array's element type, and PostgreSQL does
+ * not define `uuid = text`. Casting to the column's type rather than to text is the difference between
+ * reading a uuid-keyed table by id and a query that cannot run at all.
+ */
+function keyArrayCast(attr: AttributeMeta | undefined): string {
+  if (attr?.type === 'Integer' || attr?.type === 'BigInt' || attr?.type === 'Decimal') return '::numeric[]';
+  if (attr?.type === 'Uniqueidentifier' || attr?.sql?.dataType === 'uuid') return '::uuid[]';
+  return '::text[]';
+}
 
 /** Re-exported so tests can exercise the normalization without a server. */
 export { fromSql as pgFromSql, PG_TYPES };
