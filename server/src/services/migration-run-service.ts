@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, gt, inArray, sql } from 'drizzle-orm';
-import { isUnresolved, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
+import { isUnresolved, needsHumanReconciliation, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
 import { refreshRunCounters } from './run-counters';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
@@ -365,9 +365,38 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
       await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RETRY');
-      if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
+      if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED', 'NEEDS_RECONCILIATION'].includes(run.status)) {
         throw conflict(
           `Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`,
+        );
+      }
+      /**
+       * A retry is refused exactly when another attempt cannot settle what is outstanding.
+       *
+       * A record in doubt with something that could identify it is resolved by the next attempt asking
+       * the target. A record with nothing to identify it cannot be resolved by any number of attempts,
+       * and retrying it is the one action that could create a second copy — so the retry is refused and
+       * the records are named instead.
+       */
+      const outstanding = await this.db
+        .select({
+          logicalName: migrationRecordMaps.logicalName,
+          sourceId: migrationRecordMaps.sourceId,
+          writeState: migrationRecordMaps.writeState,
+          evidence: migrationRecordMaps.reconcileEvidence,
+        })
+        .from(migrationRecordMaps)
+        .where(
+          and(
+            eq(migrationRecordMaps.runId, runId),
+            inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+          ),
+        );
+      const needHuman = outstanding.filter((r) => needsHumanReconciliation(r.writeState, r.evidence));
+      if (needHuman.length > 0) {
+        throw conflict(
+          `${needHuman.length} record(s) must be reconciled by hand before this run can continue: a write may have been applied and nothing in the target can identify the record. Retrying could create a second copy. See /api/runs/${runId}/reconciliation for the list.`,
+          needHuman.slice(0, 50).map((r) => ({ table: r.logicalName, sourceId: r.sourceId })),
         );
       }
       const [active] = await this.db

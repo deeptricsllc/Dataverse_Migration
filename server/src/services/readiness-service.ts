@@ -15,6 +15,7 @@ import {
 } from '../../../shared/readiness';
 import type { AppDb } from '../db/client';
 import { migrationPlans } from '../db/schema';
+import { badRequest, conflict, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { PlanningService } from './planning-service';
@@ -78,15 +79,19 @@ export class ReadinessService {
     const finding = assessment.findings.find(
       (f) => f.code === input.code && (f.object?.name ?? null) === input.object,
     );
+    // Refusals go back as refusals, with their reason. A 500 with the explanation in a log is a refusal
+    // the person who tried cannot act on.
     if (!finding) {
-      throw new Error(`No current finding ${input.code} for ${input.object ?? 'this plan'}`);
+      throw badRequest(`No current finding ${input.code} for ${input.object ?? 'this plan'}`);
     }
     if (finding.severity !== 'BLOCKER') {
-      throw new Error(`${input.code} is a ${finding.severity.toLowerCase()}, which is not overridden`);
+      throw badRequest(
+        `${input.code} is a ${finding.severity.toLowerCase()} rather than a blocker, and warnings are acknowledged together when the migration starts rather than overridden one at a time.`,
+      );
     }
     if (finding.overridability === 'NON_OVERRIDABLE') {
-      throw new Error(
-        `${input.code} cannot be overridden: ${finding.explanation} Running is not possible until it is resolved.`,
+      throw conflict(
+        `${input.code} cannot be overridden. ${finding.explanation} Running is not possible until it is resolved: ${finding.recommendation}`,
       );
     }
 
@@ -150,7 +155,7 @@ export class ReadinessService {
       .select({ options: migrationPlans.options })
       .from(migrationPlans)
       .where(eq(migrationPlans.id, planId));
-    if (!row) throw new Error('Plan not found');
+    if (!row) throw notFound('Plan');
     await this.db
       .update(migrationPlans)
       .set({ options: { ...row.options, readinessOverrides: overrides }, updatedAt: new Date() })
@@ -302,16 +307,18 @@ function targetFindings(plan: MigrationPlanDto): ReadinessFinding[] {
 }
 
 /**
- * Whether an interrupted run could be recovered, which depends entirely on the match strategy.
+ * Whether an interrupted run can be recovered automatically, which depends on the match strategy.
  *
- * The finding this product most needed and did not have. Target writes and identity-map writes are
- * two systems with no transaction across them, so a run that dies mid-batch leaves records in the
- * target that the platform has no row for. Resume recovers them by re-matching — unless there is
- * nothing to match on, in which case it creates them again and reports success.
+ * **This changed when the crash-consistency protocol landed, and the finding changed with it.** It used
+ * to be a blocker warning that resume would create duplicates. It no longer can: an intent row is
+ * written before every target write, reconciliation settles what it can against the target, and where
+ * nothing can identify a record the run stops as `NEEDS_RECONCILIATION` rather than guessing. See
+ * `docs/CRASH_CONSISTENCY.md`.
  *
- * See `docs/RESUME_SEMANTICS.md`. It is a blocker because the consequence is duplicate records in a
- * customer's target with nothing in the platform to show it; it is overridable because the migration
- * is perfectly safe as long as it is not interrupted, and that is a risk somebody may accept.
+ * What is left to say is narrower and true: for this configuration an interruption **will need a person**
+ * rather than resolving itself. That is a warning about operational cost, not a blocker about
+ * correctness — the migration is safe either way, and leaving the old blocker in place after fixing the
+ * architecture would be the product crying wolf about a problem it has solved.
  */
 function resumeFindings(plan: MigrationPlanDto): ReadinessFinding[] {
   // Keys are preserved only when both sides are the same provider family; otherwise the target
@@ -320,14 +327,14 @@ function resumeFindings(plan: MigrationPlanDto): ReadinessFinding[] {
   return plan.entities
     .filter((e) => e.matchStrategy === 'PRIMARY_ID' && !sameProvider)
     .map((e) => ({
-      code: 'RESUME_CANNOT_RECOVER_INTERRUPTION',
-      severity: 'BLOCKER' as const,
+      code: 'RESUME_NEEDS_MANUAL_RECONCILIATION',
+      severity: 'WARNING' as const,
       overridability: 'OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT' as const,
       object: { kind: 'TABLE' as const, name: e.logicalName },
-      evidence: `${e.logicalName} is matched on the record id, and ${plan.targetEnvironment.displayName} assigns its own keys (${plan.sourceEnvironment.connectionType} to ${plan.targetEnvironment.connectionType}).`,
+      evidence: `${e.logicalName} is matched on the record id, and ${plan.targetEnvironment.displayName} assigns its own keys (${plan.sourceEnvironment.connectionType} to ${plan.targetEnvironment.connectionType}), so nothing can identify a record whose write was interrupted.`,
       explanation:
-        'A run interrupted part way through a batch leaves records in the target that the platform has no identity row for. With no key to re-match them by, resuming creates them a second time and reports success.',
-      recommendation: `Configure an alternate key or a business key for ${e.logicalName}, which closes the gap completely. If you accept the risk instead, do not interrupt the run, and reconcile the target record count against the identity map before any retry.`,
+        'If this run is interrupted mid-write, the platform will stop rather than risk creating a record twice, and somebody will have to look in the target and say what they found before it can continue. No data is at risk either way — this is about who has to do what if it happens.',
+      recommendation: `Configure an alternate key or a business key for ${e.logicalName} and an interruption resolves itself. Without one, expect to reconcile by hand if the run is interrupted; the run will name every record and refuse to guess.`,
       source: 'RESUME_ANALYSIS' as const,
     }));
 }

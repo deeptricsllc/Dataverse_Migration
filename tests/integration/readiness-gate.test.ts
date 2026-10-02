@@ -108,15 +108,22 @@ describe('readiness assessment and gate', () => {
         .where(eq(migrationPlanEntities.planId, planId));
     };
 
-    it('raises the resume gap for a cross-provider plan matched on the record id', async () => {
-      // The combination the finding exists for: a SQL source whose keys the Dataverse target will not
-      // take, and a table matched on the record id, so an interrupted run has nothing to re-match by.
+    it('warns that an interruption will need a person, rather than blocking', async () => {
+      /**
+       * What this finding became when the architecture was fixed.
+       *
+       * It used to be a blocker: resume would create duplicates for this configuration. It cannot any
+       * more — an intent row precedes every write, reconciliation settles what it can, and where nothing
+       * can identify a record the run stops rather than guessing. So the finding is now a warning about
+       * who has to do what if the run is interrupted, which is the thing that is still true.
+       *
+       * Leaving the old blocker in place after fixing the cause would be the product crying wolf.
+       */
       const envs = await api.get<EnvironmentDto[]>('/api/environments');
       const sqlSource = envs.find((e) => e.displayName === 'Legacy SQL Server (Demo)');
       expect(sqlSource, 'the demo workspace has a SQL source').toBeTruthy();
 
       const tables = await api.get<{ logicalName: string }[]>(`/api/environments/${sqlSource!.id}/tables`);
-      expect(tables.length).toBeGreaterThan(0);
       const plan = await api.post<MigrationPlanDto>('/api/plans', {
         name: `Readiness cross ${Date.now()}`,
         sourceEnvironmentId: sqlSource!.id,
@@ -126,88 +133,77 @@ describe('readiness assessment and gate', () => {
       await forceResumeGap(plan.id);
 
       const readiness = await assess(plan.id);
-      const finding = readiness.findings.find((f) => f.code === 'RESUME_CANNOT_RECOVER_INTERRUPTION');
-      expect(finding, 'the gap is reported').toBeTruthy();
-      expect(finding!.severity).toBe('BLOCKER');
-      expect(finding!.overridability).toBe('OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT');
-      expect(finding!.recommendation).toMatch(/alternate key or a business key/i);
-      // And the verdict says somebody has to decide, not that it cannot run.
-      expect(['BLOCKED_PENDING_OVERRIDE', 'BLOCKED']).toContain(readiness.verdict);
-    }, 300_000);
-
-    it('accepts that blocker by name, with a reason, and records who did it', async () => {
-      const envs = await api.get<EnvironmentDto[]>('/api/environments');
-      const sqlSource = envs.find((e) => e.displayName === 'Legacy SQL Server (Demo)')!;
-      const tables = await api.get<{ logicalName: string }[]>(`/api/environments/${sqlSource.id}/tables`);
-      const plan = await api.post<MigrationPlanDto>('/api/plans', {
-        name: `Readiness override ${Date.now()}`,
-        sourceEnvironmentId: sqlSource.id,
-        targetEnvironmentId: uat.id,
-        tables: [tables[0]!.logicalName],
-      });
-      await forceResumeGap(plan.id);
-      const before = await assess(plan.id);
-      const finding = before.findings.find((f) => f.code === 'RESUME_CANNOT_RECOVER_INTERRUPTION')!;
-
-      const after = await api.post<ReadinessAssessment>(`/api/plans/${plan.id}/readiness/override`, {
-        code: finding.code,
-        object: finding.object!.name,
-        reason: 'One-off load into an empty sandbox; we will not interrupt it and will reconcile after.',
-      });
-      expect(after.counts.overridden).toBe(1);
-      expect(after.verdict, 'nothing outstanding now').not.toBe('BLOCKED_PENDING_OVERRIDE');
-      const override = after.overrides[0]!;
-      expect(override.code).toBe(finding.code);
-      expect(override.object).toBe(finding.object!.name);
-      expect(override.reason).toMatch(/empty sandbox/);
-      expect(override.acknowledgedBy, 'attributed to a person').toBeTruthy();
-      expect(override.acknowledgedAt).toBeTruthy();
-
-      // In the audit trail, with the reason.
-      const audit = await api.get<{ items: { action: string; details?: Record<string, unknown> }[] }>(
-        '/api/audit?limit=200',
-      );
-      const entry = audit.items.find((a) => a.action === 'READINESS_BLOCKER_OVERRIDDEN');
-      expect(entry, 'the override is audited').toBeTruthy();
-      expect(String(entry!.details?.code)).toBe(finding.code);
-
-      // An override of one table does not cover another.
-      const other = await assess(plan.id);
-      expect(other.overrides).toHaveLength(1);
-    }, 300_000);
-
-    it('withdraws an override, so the finding blocks again', async () => {
-      const envs = await api.get<EnvironmentDto[]>('/api/environments');
-      const sqlSource = envs.find((e) => e.displayName === 'Legacy SQL Server (Demo)')!;
-      const tables = await api.get<{ logicalName: string }[]>(`/api/environments/${sqlSource.id}/tables`);
-      const plan = await api.post<MigrationPlanDto>('/api/plans', {
-        name: `Readiness withdraw ${Date.now()}`,
-        sourceEnvironmentId: sqlSource.id,
-        targetEnvironmentId: uat.id,
-        tables: [tables[0]!.logicalName],
-      });
-      await forceResumeGap(plan.id);
-      const before = await assess(plan.id);
-      const finding = before.findings.find((f) => f.code === 'RESUME_CANNOT_RECOVER_INTERRUPTION')!;
-      await api.post(`/api/plans/${plan.id}/readiness/override`, {
-        code: finding.code,
-        object: finding.object!.name,
-        reason: 'Accepted for now, to be reconsidered before the real load.',
-      });
-      const cleared = await api.del<ReadinessAssessment>(`/api/plans/${plan.id}/readiness/override`, {
-        code: finding.code,
-        object: finding.object!.name,
-      });
-      expect(cleared.counts.overridden).toBe(0);
-      expect(cleared.overrides).toHaveLength(0);
-      // Outstanding again. The verdict may be BLOCKED rather than BLOCKED_PENDING_OVERRIDE, because a
-      // cross-provider plan also carries non-overridable findings — and accepting one overridable
-      // blocker never clears those, which is the point of the two verdicts being different words.
-      expect(['BLOCKED', 'BLOCKED_PENDING_OVERRIDE']).toContain(cleared.verdict);
       expect(
-        cleared.findings.some((f) => f.code === 'RESUME_CANNOT_RECOVER_INTERRUPTION'),
-        'the finding is back',
-      ).toBe(true);
+        readiness.findings.some((f) => f.code === 'RESUME_CANNOT_RECOVER_INTERRUPTION'),
+        'the old blocker is gone, not merely downgraded in place',
+      ).toBe(false);
+      const finding = readiness.findings.find((f) => f.code === 'RESUME_NEEDS_MANUAL_RECONCILIATION');
+      expect(finding, 'and the narrower, still-true finding is there').toBeTruthy();
+      expect(finding!.severity).toBe('WARNING');
+      expect(finding!.explanation, 'saying plainly that no data is at risk').toMatch(/No data is at risk/i);
+      expect(finding!.recommendation).toMatch(/alternate key or a business key/i);
+    }, 300_000);
+
+    it('has no overridable blocker to offer, and that is the honest state', async () => {
+      /**
+       * The override mechanism exists and nothing currently uses it.
+       *
+       * Every plan-validation blocker is non-overridable — each means a mapping or a dependency the
+       * migration needs and does not have — and the one finding that *was* overridable stopped being a
+       * blocker when the crash-consistency protocol made it untrue. Inventing an overridable blocker to
+       * keep the happy path exercised would be worse than saying so.
+       *
+       * The refusal paths below are what protect the mechanism until something legitimately needs it.
+       */
+      const envs = await api.get<EnvironmentDto[]>('/api/environments');
+      const sqlSource = envs.find((e) => e.displayName === 'Legacy SQL Server (Demo)')!;
+      const tables = await api.get<{ logicalName: string }[]>(`/api/environments/${sqlSource.id}/tables`);
+      const plan = await api.post<MigrationPlanDto>('/api/plans', {
+        name: `Readiness overridable ${Date.now()}`,
+        sourceEnvironmentId: sqlSource.id,
+        targetEnvironmentId: uat.id,
+        tables: [tables[0]!.logicalName],
+      });
+      await forceResumeGap(plan.id);
+      const readiness = await assess(plan.id);
+      const overridable = readiness.findings.filter(
+        (f) => f.severity === 'BLOCKER' && f.overridability === 'OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT',
+      );
+      expect(overridable, 'nothing is currently overridable').toEqual([]);
+      // Every blocker that does exist says it cannot be run past.
+      for (const blocker of readiness.findings.filter((f) => f.severity === 'BLOCKER')) {
+        expect(blocker.overridability, `${blocker.code}`).toBe('NON_OVERRIDABLE');
+      }
+    }, 300_000);
+
+    it('refuses to override a non-overridable blocker, and says why', async () => {
+      const envs = await api.get<EnvironmentDto[]>('/api/environments');
+      const sqlSource = envs.find((e) => e.displayName === 'Legacy SQL Server (Demo)')!;
+      const tables = await api.get<{ logicalName: string }[]>(`/api/environments/${sqlSource.id}/tables`);
+      const plan = await api.post<MigrationPlanDto>('/api/plans', {
+        name: `Readiness refuse ${Date.now()}`,
+        sourceEnvironmentId: sqlSource.id,
+        targetEnvironmentId: uat.id,
+        tables: [tables[0]!.logicalName],
+      });
+      const readiness = await assess(plan.id);
+      const blocker = readiness.findings.find((f) => f.severity === 'BLOCKER');
+      expect(blocker, 'a cross-provider plan has a blocker to try this against').toBeTruthy();
+
+      const res = await t.app.inject({
+        method: 'POST',
+        url: `/api/plans/${plan.id}/readiness/override`,
+        payload: {
+          code: blocker!.code,
+          object: blocker!.object?.name ?? null,
+          reason: 'Trying to run past something that makes the migration impossible.',
+        },
+        headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+      });
+      expect(res.statusCode, 'refused').toBeGreaterThanOrEqual(400);
+      expect(res.body, 'and the refusal explains that running is not possible').toMatch(
+        /cannot be overridden|not possible/i,
+      );
     }, 300_000);
 
     it('refuses an override with no reason', async () => {

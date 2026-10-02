@@ -535,6 +535,7 @@ export class ValidationService {
       accounting: { ...EMPTY_ACCOUNTING },
       checkedRecords: 0,
       failedInRun: 0,
+      unresolvedInRun: 0,
       coverage: null,
       duplicates: null,
       duplicateCoverage: null,
@@ -655,9 +656,23 @@ export class ValidationService {
     // records were written by a run that created nothing.
     base.accounting = accountingFromCounts(outcomeCounts);
     const failedInRun = base.accounting.failed;
-    // Rows that can be compared at all: not failed, and with a target identifier to look up.
+    const unresolvedInRun = base.accounting.unresolved;
+    /**
+     * Rows that can be compared at all.
+     *
+     * Not failed — a failed record has nothing in the target to compare against — and not unresolved
+     * either: a record whose write outcome is unknown may or may not be there, and comparing it would
+     * report "missing" for something that might be present, or "matched" for something whose presence
+     * nobody can account for. Both are claims the evidence does not support, so the record is excluded
+     * from the comparison and reported as what it is.
+     */
     const verifiableScope = mapScope
-      ? and(mapScope, ne(migrationRecordMaps.outcome, 'FAILED'), isNotNull(migrationRecordMaps.targetId))!
+      ? and(
+          mapScope,
+          ne(migrationRecordMaps.outcome, 'FAILED'),
+          ne(migrationRecordMaps.outcome, 'UNRESOLVED'),
+          isNotNull(migrationRecordMaps.targetId),
+        )!
       : null;
     const [verifiableRow] = verifiableScope
       ? await this.db.select({ n: count() }).from(migrationRecordMaps).where(verifiableScope)
@@ -915,6 +930,7 @@ export class ValidationService {
      */
     base.missing = cmp.missing;
     base.failedInRun = failedInRun;
+    base.unresolvedInRun = unresolvedInRun;
     base.different = cmp.different;
     // Coverage is derived from the counts rather than written beside them, so a message cannot
     // claim more than the numbers underneath it support.
@@ -943,6 +959,25 @@ export class ValidationService {
        */
       const absent = base.missing + base.failedInRun;
       /**
+       * A validation cannot pass over a record whose fate nobody knows.
+       *
+       * However well the records it *could* compare match, completeness is not provable while the
+       * outcome of a write is unknown: the target may hold a record this report does not account for, or
+       * may be missing one it claims. That is a statement about the migration rather than about the
+       * comparison, and it fails the check rather than qualifying it — a reader who sees a passing
+       * verdict next to a footnote will remember the verdict.
+       */
+      if (unresolvedInRun > 0) {
+        checks.push({
+          check: 'RECORD_EXISTENCE',
+          outcome: 'FAIL',
+          message:
+            `${unresolvedInRun} record(s) have an unknown write outcome, so this migration's completeness cannot be proven. ` +
+            `Each one may or may not be in the target; the run lists them and they must be reconciled before any verdict here means anything.` +
+            (absent > 0 ? ` A further ${absent} record(s) are known not to be in the target.` : ''),
+        });
+      }
+      /**
        * A check that examined nothing cannot pass.
        *
        * `absent === 0` was enough for a PASS, and with nothing examined `missing` and `failedInRun` are
@@ -955,31 +990,32 @@ export class ValidationService {
        * records could not be re-read and the comparison therefore had nothing to do.
        */
       const nothingExamined = base.coverage?.mode === 'NOT_VERIFIED' || base.checkedRecords === 0;
-      checks.push(
-        absent > 0
-          ? {
-              check: 'RECORD_EXISTENCE',
-              outcome: 'FAIL',
-              message:
-                `${absent} record(s) are not in the target` +
-                (base.failedInRun
-                  ? ` — ${base.failedInRun} the run reported as failed` +
-                    (base.missing ? `, ${base.missing} it did not` : '')
-                  : '') +
-                `${sampleNote}`,
-            }
-          : nothingExamined
+      if (unresolvedInRun === 0)
+        checks.push(
+          absent > 0
             ? {
                 check: 'RECORD_EXISTENCE',
-                outcome: 'WARNING',
-                message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} Nothing here says whether this run's records are in the target.`,
+                outcome: 'FAIL',
+                message:
+                  `${absent} record(s) are not in the target` +
+                  (base.failedInRun
+                    ? ` — ${base.failedInRun} the run reported as failed` +
+                      (base.missing ? `, ${base.missing} it did not` : '')
+                    : '') +
+                  `${sampleNote}`,
               }
-            : {
-                check: 'RECORD_EXISTENCE',
-                outcome: 'PASS',
-                message: `${describeCoverage(base.coverage, 'records this run accounted for')} Every one of them is in the target${composition}.`,
-              },
-      );
+            : nothingExamined
+              ? {
+                  check: 'RECORD_EXISTENCE',
+                  outcome: 'WARNING',
+                  message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} Nothing here says whether this run's records are in the target.`,
+                }
+              : {
+                  check: 'RECORD_EXISTENCE',
+                  outcome: 'PASS',
+                  message: `${describeCoverage(base.coverage, 'records this run accounted for')} Every one of them is in the target${composition}.`,
+                },
+        );
     } else {
       checks.push({
         check: 'RECORD_EXISTENCE',
@@ -1387,6 +1423,7 @@ export class ValidationService {
       aggregates: result.aggregates,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
+      unresolvedInRun: result.unresolvedInRun,
       matched: result.matched,
       missing: result.missing,
       different: result.different,
@@ -1455,6 +1492,7 @@ export class ValidationService {
         aggregates: e.aggregates ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,
+        unresolvedInRun: e.unresolvedInRun ?? 0,
         matched: e.matched,
         missing: e.missing,
         different: e.different,

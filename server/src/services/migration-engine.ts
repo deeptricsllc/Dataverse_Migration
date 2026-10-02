@@ -407,13 +407,19 @@ export class MigrationEngine {
         unresolvedErrors: Number(unresolved?.n ?? 0),
         unresolvedWrites: stillUnresolved,
       });
+      /**
+       * Neither completed nor failed, when something is still in doubt.
+       *
+       * `NEEDS_RECONCILIATION` says "something has to be settled", which is true whether the next attempt
+       * can settle it by asking the target or a person has to look. Which of those it is decides whether
+       * a retry is allowed, and that lives in the retry gate rather than in the status — one word for one
+       * state, and the gate reads the records to decide what to permit.
+       */
       const status = canCompleteRun({ unresolvedWrites: stillUnresolved })
         ? withErrors
           ? 'COMPLETED_WITH_ERRORS'
           : 'COMPLETED'
-        : // Neither completed nor failed: the work stopped and something has to be resolved by hand
-          // before it can go on. Saying COMPLETED here would be the lie the whole protocol prevents.
-          'NEEDS_RECONCILIATION';
+        : 'NEEDS_RECONCILIATION';
       if (stillUnresolved > 0) {
         log.error(
           { unresolvedWrites: stillUnresolved },
@@ -508,15 +514,11 @@ export class MigrationEngine {
       log.error({ error: message }, 'Migration run failed');
       await this.refreshCounters(runId).catch(() => undefined);
       /**
-       * A run that stopped because something needs a *person* is not a failed run.
+       * A run that stopped with records in doubt is not a failed run.
        *
-       * The distinction is narrower than "something is in doubt". A record interrupted mid-write is in
-       * doubt, and if anything can identify it — a preserved id, an alternate key, a business key — the
-       * next attempt resolves it without help. That is an ordinary failure and an ordinary retry.
-       *
-       * `NEEDS_RECONCILIATION` is reserved for the records where *no* evidence exists, because those are
-       * the ones a retry must not touch and only a human can settle. Using it for both would cry wolf on
-       * every interrupted run and teach people to retry through it.
+       * `FAILED` tells the reader the work did not happen and invites a retry. Here some of it may have
+       * happened, and whether a retry is safe depends on the records rather than on the status — so the
+       * status says what is true ("something is in doubt") and the retry gate decides what to permit.
        */
       const [blocked] = await this.db
         .select({ n: sql<number>`count(*)` })
@@ -524,13 +526,7 @@ export class MigrationEngine {
         .where(
           and(
             eq(migrationRecordMaps.runId, runId),
-            or(
-              eq(migrationRecordMaps.writeState, 'RECONCILIATION_REQUIRED'),
-              and(
-                inArray(migrationRecordMaps.writeState, ['INTENDED', 'UNKNOWN']),
-                eq(migrationRecordMaps.reconcileEvidence, 'NONE'),
-              ),
-            ),
+            inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
           ),
         )
         .catch(() => [{ n: 0 }]);
@@ -859,7 +855,7 @@ export class MigrationEngine {
     id: string,
     resolution: { outcome: RecordOutcome; writeState: WriteState | null; targetId?: string; note: string },
   ): Promise<void> {
-    await this.db
+    const [row] = await this.db
       .update(migrationRecordMaps)
       .set({
         outcome: resolution.outcome,
@@ -868,7 +864,33 @@ export class MigrationEngine {
         reconcileNote: resolution.note,
         updatedAt: new Date(),
       })
-      .where(eq(migrationRecordMaps.id, id));
+      .where(eq(migrationRecordMaps.id, id))
+      .returning({
+        runId: migrationRecordMaps.runId,
+        logicalName: migrationRecordMaps.logicalName,
+        sourceId: migrationRecordMaps.sourceId,
+      });
+    /**
+     * A record found in the target no longer has an outstanding error.
+     *
+     * The timeout that made it uncertain was recorded as an unresolved error, and an unresolved error of
+     * ERROR severity keeps the run out of `COMPLETED` — correctly, while the question is open. Once
+     * reconciliation has answered it, leaving the error outstanding would report a problem that has been
+     * settled.
+     */
+    if (row && resolution.writeState === 'CONFIRMED') {
+      await this.db
+        .update(migrationErrors)
+        .set({ resolved: true })
+        .where(
+          and(
+            eq(migrationErrors.runId, row.runId),
+            eq(migrationErrors.logicalName, row.logicalName),
+            eq(migrationErrors.sourceRecordId, row.sourceId),
+            eq(migrationErrors.severity, 'ERROR'),
+          ),
+        );
+    }
   }
 
   /**

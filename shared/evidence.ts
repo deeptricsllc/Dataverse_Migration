@@ -18,11 +18,20 @@
  *     manifest with a SHA-256 per file.
  * 2 — adds chunked record lineage, per-file row counts, and this version field. A reader seeing 1
  *     should expect no `lineage` section and no `rows` on a file entry.
+ * 3 — adds the crash-consistency state of every record: three more lineage columns, a `recovery`
+ *     section in the manifest, and the `UNRESOLVED` outcome. Nothing in 2 changed meaning. A reader
+ *     seeing 2 must not conclude that nothing was unresolved — only that the package cannot say.
  */
-export const EVIDENCE_SCHEMA_VERSION = 2;
+export const EVIDENCE_SCHEMA_VERSION = 3;
 
-/** Versions this build can read. Deliberately short: it is a boundary, not a compatibility layer. */
-export const SUPPORTED_EVIDENCE_SCHEMA_VERSIONS = [2] as const;
+/**
+ * Versions this build can read.
+ *
+ * 2 is still readable: every field it defined means the same thing in 3. What 3 adds is the recovery
+ * state of each record — a v2 package simply has no crash-consistency information, which is different
+ * from having none to report, and a reader must not infer "nothing was unresolved" from its absence.
+ */
+export const SUPPORTED_EVIDENCE_SCHEMA_VERSIONS = [2, 3] as const;
 
 /**
  * Files a package must contain to be an evidence package at all.
@@ -82,6 +91,25 @@ export interface EvidenceLineageSummary {
   rowsWithoutTarget: number;
 }
 
+/**
+ * What a crash left behind, and what became of it.
+ *
+ * Present from schema 3. A package whose counts are all zero is saying the run had nothing in doubt; a
+ * package with no `recovery` section at all is saying it predates the protocol and cannot tell you.
+ */
+export interface EvidenceRecoverySummary {
+  /** Records whose write outcome was never resolved. Zero for a completed run. */
+  unresolved: number;
+  /** Records a crash left in doubt and reconciliation settled against the target. */
+  reconciledAutomatically: number;
+  /** Records a person looked at and resolved by hand. */
+  reconciledByHand: number;
+  /** Records still waiting for a person. */
+  awaitingReconciliation: number;
+  /** Stated so nobody reads a clean package as a guarantee the protocol was exercised. */
+  note: string;
+}
+
 export interface EvidenceManifest {
   /** @deprecated Kept for packages written before `evidenceSchemaVersion` existed. */
   schema?: number;
@@ -101,6 +129,8 @@ export interface EvidenceManifest {
   };
   files: EvidenceFileRecord[];
   lineage?: EvidenceLineageSummary;
+  /** Present from schema 3. Absent means the package predates the crash-consistency protocol. */
+  recovery?: EvidenceRecoverySummary;
   integrity: {
     algorithm: 'sha256';
     proves: string;
@@ -109,7 +139,15 @@ export interface EvidenceManifest {
 }
 
 /** Outcomes a lineage row may carry: the canonical five, and nothing invented. */
-export const LINEAGE_OUTCOMES = ['CREATED', 'UPDATED', 'UNCHANGED', 'SKIPPED', 'FAILED'] as const;
+export const LINEAGE_OUTCOMES = [
+  'CREATED',
+  'UPDATED',
+  'UNCHANGED',
+  'SKIPPED',
+  'FAILED',
+  /** The write may have happened and nobody can prove it either way. Added in schema 3. */
+  'UNRESOLVED',
+] as const;
 export type LineageOutcome = (typeof LINEAGE_OUTCOMES)[number];
 
 /** The columns of a lineage chunk, in order. Shared so the verifier checks what the writer wrote. */
@@ -122,6 +160,12 @@ export const LINEAGE_COLUMNS = [
   'Target key',
   'Outcome',
   'Matched by',
+  /** Whether the platform can prove what happened. Added in schema 3. */
+  'Write state',
+  /** What could have identified the record if the answer was lost. Added in schema 3. */
+  'Recovery evidence',
+  /** What reconciliation or a person concluded, in words. Added in schema 3. */
+  'Recovery note',
 ] as const;
 
 /**

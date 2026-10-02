@@ -159,6 +159,25 @@ export type ReconciliationEvidence =
   /** Nothing identifies this record uniquely. */
   | 'NONE';
 
+/**
+ * Whether settling this record needs a person, as opposed to another attempt.
+ *
+ * The distinction that decides whether a retry is allowed. A record in doubt with something that could
+ * identify it — a preserved id, an alternate key, a business key — is settled by the next attempt asking
+ * the target. A record with nothing to identify it cannot be settled by any number of attempts, and the
+ * only remaining evidence is somebody opening the target and looking.
+ *
+ * Used by the run status and by the retry gate, so they cannot disagree about what is blocked.
+ */
+export function needsHumanReconciliation(
+  state: WriteState | null | undefined,
+  evidence: ReconciliationEvidence | null | undefined,
+): boolean {
+  if (state === 'RECONCILIATION_REQUIRED') return true;
+  if (!isUnresolved(state)) return false;
+  return !evidence || evidence === 'NONE';
+}
+
 export const EVIDENCE_LABELS: Record<ReconciliationEvidence, string> = {
   PRESERVED_ID: 'the record identifier the source supplied',
   ALTERNATE_KEY: 'the alternate key the target enforces',

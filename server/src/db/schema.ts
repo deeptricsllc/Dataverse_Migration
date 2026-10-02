@@ -898,6 +898,8 @@ export const validationEntityResults = pgTable(
     checkedRecords: integer('checked_records').notNull().default(0),
     /** Records the run reported as failed. Kept apart from `missing`, which is our own finding. */
     failedInRun: integer('failed_in_run').notNull().default(0),
+    /** Records the run could not account for, which is why a report carrying any cannot pass. */
+    unresolvedInRun: integer('unresolved_in_run').notNull().default(0),
     matched: integer('matched').notNull().default(0),
     missing: integer('missing').notNull().default(0),
     different: integer('different').notNull().default(0),

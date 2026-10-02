@@ -1459,6 +1459,14 @@ export interface ValidationEntityResultDto {
    */
   failedInRun: number;
   /**
+   * Records the run could not account for, which is why this report cannot pass.
+   *
+   * Excluded from the comparison — a record whose write outcome is unknown may or may not be in the
+   * target, and comparing it would report either "missing" for something possibly present or "matched"
+   * for something nobody can account for. Reported as its own number instead.
+   */
+  unresolvedInRun: number;
+  /**
    * How much of this table was examined, and how those records were chosen. Null for a report
    * produced before coverage was recorded, which the report says rather than implying FULL.
    */

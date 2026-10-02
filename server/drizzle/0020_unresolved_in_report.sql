@@ -1,0 +1,1 @@
+ALTER TABLE "validation_entity_results" ADD COLUMN "unresolved_in_run" integer DEFAULT 0 NOT NULL;

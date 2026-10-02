@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, sql } from 'drizzle-orm';
 import { AGGREGATE_CAVEAT } from '../../../shared/aggregates';
 import {
   EVIDENCE_SCHEMA_VERSION,
@@ -9,6 +9,7 @@ import {
   type EvidenceFileRecord,
   type EvidenceLineageSummary,
   type EvidenceManifest,
+  type EvidenceRecoverySummary,
 } from '../../../shared/evidence';
 import type { AppDb } from '../db/client';
 import { migrationRecordMaps, migrationRuns } from '../db/schema';
@@ -196,6 +197,9 @@ export class EvidenceService {
       outcome: string;
       matchMethod: string | null;
       attempts: number;
+      writeState: string | null;
+      reconcileEvidence: string | null;
+      reconcileNote: string | null;
     };
     for (;;) {
       const page: LineageRow[] = await this.db
@@ -206,6 +210,9 @@ export class EvidenceService {
           outcome: migrationRecordMaps.outcome,
           matchMethod: migrationRecordMaps.matchMethod,
           attempts: migrationRecordMaps.attempts,
+          writeState: migrationRecordMaps.writeState,
+          reconcileEvidence: migrationRecordMaps.reconcileEvidence,
+          reconcileNote: migrationRecordMaps.reconcileNote,
         })
         .from(migrationRecordMaps)
         .where(
@@ -233,6 +240,10 @@ export class EvidenceService {
           row.targetId ?? '',
           row.outcome,
           row.matchMethod ?? '',
+          // Whether the platform can prove it, and what it would take to find out.
+          row.writeState ?? 'CONFIRMED',
+          row.reconcileEvidence ?? '',
+          row.reconcileNote ?? '',
         ];
       }
       const last = page[page.length - 1]!;
@@ -320,12 +331,57 @@ export class EvidenceService {
       (row?.snapshot?.entities ?? []).map((e) => [e.logicalName, e.targetLogicalName]),
     );
 
-    return { run, report, plan, entries, targetNames, attempt: row?.attempt ?? 1 };
+    /**
+     * What a crash left behind, and what became of it.
+     *
+     * Counted from the identity map rather than assembled from the counters, because the question a
+     * reader asks of an evidence package is "is there anything here nobody could account for", and that
+     * has to come from the rows themselves.
+     */
+    const recoveryRows = await this.db
+      .select({
+        writeState: migrationRecordMaps.writeState,
+        note: migrationRecordMaps.reconcileNote,
+        n: count(),
+      })
+      .from(migrationRecordMaps)
+      .where(eq(migrationRecordMaps.runId, runId))
+      .groupBy(migrationRecordMaps.writeState, migrationRecordMaps.reconcileNote);
+    let unresolved = 0;
+    let awaiting = 0;
+    let byHand = 0;
+    let automatically = 0;
+    for (const r of recoveryRows) {
+      const n = Number(r.n);
+      if (r.writeState === 'RECONCILIATION_REQUIRED') awaiting += n;
+      if (r.writeState && ['INTENDED', 'UNKNOWN', 'RECONCILIATION_REQUIRED'].includes(r.writeState)) {
+        unresolved += n;
+      }
+      // A note beginning "Resolved by" was written by a person; anything else by reconciliation.
+      if (r.note?.startsWith('Resolved by ')) byHand += n;
+      else if (r.note) automatically += n;
+    }
+    const recovery: EvidenceRecoverySummary = {
+      unresolved,
+      reconciledAutomatically: automatically,
+      reconciledByHand: byHand,
+      awaitingReconciliation: awaiting,
+      note:
+        unresolved === 0 && automatically === 0 && byHand === 0
+          ? 'Nothing in this run was left in doubt, and nothing needed recovering. That is a statement about this run, not evidence that the recovery protocol works.'
+          : `${automatically} record(s) were reconciled against the target automatically and ${byHand} by a person. ${unresolved} remain unresolved. Every one of them is listed in the lineage files with its state and the reason.`,
+    };
+
+    return { run, report, plan, entries, targetNames, attempt: row?.attempt ?? 1, recovery };
   }
 
   /** The manifest, from files that have already been hashed. */
   private manifestFor(
-    prepared: { run: Awaited<ReturnType<MigrationRunService['get']>>; attempt: number },
+    prepared: {
+      run: Awaited<ReturnType<MigrationRunService['get']>>;
+      attempt: number;
+      recovery: EvidenceRecoverySummary;
+    },
     hashed: { path: string; bytes: number; sha256: string }[],
     lineage: EvidenceLineageSummary | null,
     describes: Map<string, string>,
@@ -361,6 +417,7 @@ export class EvidenceService {
       },
       files,
       ...(lineage ? { lineage } : {}),
+      recovery: prepared.recovery,
       integrity: {
         algorithm: 'sha256',
         proves: INTEGRITY_PROVES,

@@ -182,7 +182,9 @@ describe('chaos: failure and resume', () => {
       injection = { operation: 'createRecord', failWriteNumber: 4, kind: 'fatal' };
       const run = await startMigration(['dtx_region'], 100);
 
-      expect(run.status, 'the run stopped rather than carrying on').toBe('FAILED');
+      // An interrupted run says something is in doubt rather than "failed", because some of its writes
+      // may have landed. Whether a retry can settle it is the retry gate's decision, not the status's.
+      expect(run.status, 'the run stopped and says something is unsettled').toBe('NEEDS_RECONCILIATION');
       const created = written.filter((w) => w.operation === 'createRecord');
       expect(created.length, 'records reached the target before the failure').toBeGreaterThan(0);
 
@@ -274,7 +276,9 @@ describe('chaos: failure and resume', () => {
         headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
       });
       expect(refused.statusCode, 'a retry is refused while records are in doubt').toBe(409);
-      expect(refused.body).toMatch(/NEEDS_RECONCILIATION/);
+      expect(refused.body, 'and says why, and where the list is').toMatch(
+        /reconciled by hand|could create a second copy/i,
+      );
 
       // The platform names exactly what a person has to look at.
       const awaiting = await api.get<{
@@ -396,7 +400,7 @@ describe('chaos: failure and resume', () => {
       // account has enough records in the demo source to span several batches at this size.
       injection = { operation: 'createRecord', failWriteNumber: 12, kind: 'fatal' };
       const first = await startMigration(['account'], 5);
-      expect(first.status).toBe('FAILED');
+      expect(first.status, 'something is in doubt after an interruption').toBe('NEEDS_RECONCILIATION');
 
       const afterFirst = await identityRows(first.id, 'account');
       const writtenFirst = written.filter((w) => w.operation === 'createRecord').length;
@@ -519,7 +523,7 @@ describe('chaos: failure and resume', () => {
       // SKIP_EXISTING is the default and never updates anything, so there would be nothing to
       // interrupt. SYNC is the setting a second pass over a populated target actually uses.
       const second = await startMigration(['dtx_region'], 100, undefined, 'SYNC');
-      expect(second.status).toBe('FAILED');
+      expect(second.status, 'the interrupted update leaves the record in doubt').toBe('NEEDS_RECONCILIATION');
       expect(written.filter((w) => w.operation === 'updateRecord').length, 'nothing was updated').toBe(0);
 
       injection = {};
@@ -555,6 +559,8 @@ describe('chaos: failure and resume', () => {
       injection = { operation: 'updateRecord', failWriteNumber: 1, kind: 'fatal' };
       const run = await startMigration(['dtx_region', 'dtx_office'], 100);
 
+      // The deferred pass only issues updates, which are idempotent, so nothing it leaves behind is in
+      // doubt: this is a plain failure and a plain retry.
       expect(run.status, 'the run stopped in the second pass').toBe('FAILED');
       const maps = await identityRows(run.id);
       // The base records got there: the interruption was after them.
