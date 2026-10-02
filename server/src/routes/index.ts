@@ -773,6 +773,39 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return s.readiness.clearOverride(req.ctx, id, body);
   });
 
+  /** The records a person has to settle before this run can go any further. */
+  app.get('/api/runs/:id/reconciliation', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.runs.awaitingReconciliation(req.ctx, id);
+  });
+
+  /**
+   * Records what a person found in the target.
+   *
+   * The way out of NEEDS_RECONCILIATION, and deliberately per record: a present record must come with
+   * the identifier it has in the target, and every resolution carries the reason it was reached.
+   */
+  app.post('/api/runs/:id/reconcile', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({
+        resolutions: z
+          .array(
+            z.object({
+              logicalName: tableName,
+              sourceId: z.string().min(1).max(400),
+              found: z.enum(['PRESENT', 'ABSENT']),
+              targetId: z.string().max(400).nullable().optional(),
+              note: z.string().min(5).max(1000),
+            }),
+          )
+          .min(1)
+          .max(1000),
+      })
+      .parse(req.body);
+    return s.runs.reconcile(req.ctx, id, body.resolutions);
+  });
+
   app.get('/api/runs/:id/evidence.zip', EXPENSIVE, async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const bundle = await s.evidence.streamBundleForRun(req.ctx, id);

@@ -56,6 +56,7 @@ import type {
   DataComparisonStatus,
   StagedColumnDto,
   StagedSourceKind,
+  RecordOutcome,
   RunTrigger,
   ScheduleMode,
   StatisticBasis,
@@ -65,6 +66,7 @@ import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
 import type { AggregateCheck } from '../../../shared/aggregates';
+import type { ReconciliationEvidence, WriteState } from '../../../shared/write-state';
 import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
@@ -536,6 +538,8 @@ export const migrationRuns = pgTable(
     unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
+    /** Records whose write outcome is unknown. A run with any of these is not complete. */
+    unresolved: integer('unresolved').notNull().default(0),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     pauseRequested: boolean('pause_requested').notNull().default(false),
     attempt: integer('attempt').notNull().default(1),
@@ -571,6 +575,8 @@ export const migrationRunEntities = pgTable(
     unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
+    /** Records whose write outcome is unknown. A run with any of these is not complete. */
+    unresolved: integer('unresolved').notNull().default(0),
     deferredPending: integer('deferred_pending').notNull().default(0),
     deferredResolved: integer('deferred_resolved').notNull().default(0),
     deferredFailed: integer('deferred_failed').notNull().default(0),
@@ -595,7 +601,21 @@ export const migrationRecordMaps = pgTable(
     logicalName: text('logical_name').notNull(),
     sourceId: text('source_id').notNull(),
     targetId: text('target_id'),
-    outcome: text('outcome').$type<'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED'>().notNull(),
+    outcome: text('outcome').$type<RecordOutcome>().notNull(),
+    /**
+     * Whether we know what happened to this record, which is not the same question as `outcome`.
+     *
+     * Written before the target write and replaced after it, so a row found as `INTENDED` means the
+     * record may or may not be in the target. Null for rows written before this protocol existed, and
+     * for outcomes that never write anything (unchanged, skipped). See `shared/write-state.ts`.
+     */
+    writeState: text('write_state').$type<WriteState>(),
+    /** What the write was going to be, so reconciliation knows what to look for. */
+    intendedOperation: text('intended_operation').$type<'CREATE' | 'UPDATE'>(),
+    /** What could identify this record in the target, decided before the write rather than after. */
+    reconcileEvidence: text('reconcile_evidence').$type<ReconciliationEvidence>(),
+    /** What reconciliation concluded, for the evidence package and for the person reading it. */
+    reconcileNote: text('reconcile_note'),
     matchMethod: text('match_method'),
     /** Lookups deferred to pass 2: attribute -> source lookup value. */
     deferredLookups: jsonb('deferred_lookups').$type<Record<
@@ -626,6 +646,9 @@ export const migrationRecordMaps = pgTable(
       t.sourceId,
     ),
     index('migration_record_maps_deferred_idx').on(t.runId, t.deferredStatus),
+    // Reconciliation and the completion check both ask "anything unresolved in this run?", which is the
+    // one question whose answer decides whether a run may be called complete.
+    index('migration_record_maps_write_state_idx').on(t.runId, t.writeState),
   ],
 );
 

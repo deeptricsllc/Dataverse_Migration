@@ -1174,19 +1174,42 @@ export type MigrationRunStatus =
   | 'PAUSED'
   | 'COMPLETED'
   | 'COMPLETED_WITH_ERRORS'
+  /**
+   * The work stopped and something has to be settled by a person before it can go on.
+   *
+   * A write may have been applied to the target and nothing can prove it either way, so the run is
+   * neither complete nor failed: claiming either would be asserting something unknown. Terminal for this
+   * attempt — the run will not continue on its own — and retryable once somebody has resolved the
+   * records the run names. See `docs/CRASH_CONSISTENCY.md`.
+   */
+  | 'NEEDS_RECONCILIATION'
   | 'FAILED'
   | 'CANCELLED';
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<MigrationRunStatus> = new Set([
   'COMPLETED',
   'COMPLETED_WITH_ERRORS',
+  'NEEDS_RECONCILIATION',
   'FAILED',
   'CANCELLED',
 ]);
 
 export type RunEntityStatus =
   'PENDING' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'SKIPPED';
-export type RecordOutcome = 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
+export type RecordOutcome =
+  | 'CREATED'
+  | 'UPDATED'
+  | 'UNCHANGED'
+  | 'SKIPPED'
+  | 'FAILED'
+  /**
+   * The write may have happened and we cannot prove it either way.
+   *
+   * Non-terminal: it means the outcome is not yet known, not that it failed. Resolved by reconciling
+   * against the target, or by a person, and never by assumption. A run cannot complete while one
+   * exists. See `shared/write-state.ts`.
+   */
+  | 'UNRESOLVED';
 export type RecordOperation =
   | 'READ'
   | 'CREATE'
@@ -1207,6 +1230,13 @@ export interface RunCounters {
   unchanged: number;
   skipped: number;
   failed: number;
+  /**
+   * Records this run tried to write and cannot account for.
+   *
+   * Neither written nor failed: the write may have been applied before the answer was lost. A run with
+   * any of these cannot be called complete. See `shared/write-state.ts`.
+   */
+  unresolved: number;
 }
 
 // ---------------------------------------------------------------------------

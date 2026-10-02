@@ -26,6 +26,14 @@ export interface RecordAccounting {
   skipped: number;
   /** Processing was attempted and did not succeed. Not in the target because of this run. */
   failed: number;
+  /**
+   * The write may have happened and we cannot prove it either way.
+   *
+   * A timeout, a dropped connection, or a crash between writing to the target and recording it here.
+   * Counted separately because it is neither a success nor a failure, and calling it either would be a
+   * claim the evidence does not support. Not counted as written: we do not know that it was.
+   */
+  unresolved: number;
 }
 
 export const EMPTY_ACCOUNTING: RecordAccounting = {
@@ -34,6 +42,7 @@ export const EMPTY_ACCOUNTING: RecordAccounting = {
   unchanged: 0,
   skipped: 0,
   failed: 0,
+  unresolved: 0,
 };
 
 const FIELD_OF: Record<RecordOutcome, keyof RecordAccounting> = {
@@ -42,6 +51,7 @@ const FIELD_OF: Record<RecordOutcome, keyof RecordAccounting> = {
   UNCHANGED: 'unchanged',
   SKIPPED: 'skipped',
   FAILED: 'failed',
+  UNRESOLVED: 'unresolved',
 };
 
 /** Tallies record outcomes into the one shape everything else reads. */
@@ -77,6 +87,7 @@ export function addAccounting(a: RecordAccounting, b: RecordAccounting): RecordA
     unchanged: a.unchanged + b.unchanged,
     skipped: a.skipped + b.skipped,
     failed: a.failed + b.failed,
+    unresolved: a.unresolved + b.unresolved,
   };
 }
 
@@ -94,9 +105,24 @@ export function writtenByRun(a: RecordAccounting): number {
   return a.created + a.updated;
 }
 
-/** Every record the run reached a decision about, whatever that decision was. */
+/**
+ * Every record the run reached a decision about, whatever that decision was.
+ *
+ * Including the ones whose outcome is unknown. They were processed — something was attempted and the
+ * answer was lost — and leaving them out to keep `processed` equal to the other five would be hiding
+ * them to keep the arithmetic tidy.
+ */
 export function accountedFor(a: RecordAccounting): number {
-  return a.created + a.updated + a.unchanged + a.skipped + a.failed;
+  return a.created + a.updated + a.unchanged + a.skipped + a.failed + a.unresolved;
+}
+
+/**
+ * Records whose fate is not yet known, which is what stops a run being called complete.
+ *
+ * Zero is the only value a finished migration may have here.
+ */
+export function unresolvedCount(a: RecordAccounting): number {
+  return a.unresolved;
 }
 
 /**
@@ -111,13 +137,31 @@ export function expectedInTarget(a: RecordAccounting): number {
   return a.created + a.updated + a.unchanged + a.skipped;
 }
 
+/**
+ * Records that may be in the target without the platform being able to say so.
+ *
+ * The gap between what can be verified and what might be there. A report that does not show this number
+ * is claiming more certainty than it has.
+ */
+export function possiblyInTarget(a: RecordAccounting): number {
+  return a.unresolved;
+}
+
 /** Whether the run wrote nothing at all, which a report should say in words rather than show as 0. */
 export function wroteNothing(a: RecordAccounting): boolean {
   return writtenByRun(a) === 0;
 }
 
 export type MetricKey =
-  'processed' | 'created' | 'updated' | 'unchanged' | 'skipped' | 'failed' | 'written' | 'expectedInTarget';
+  | 'processed'
+  | 'created'
+  | 'updated'
+  | 'unchanged'
+  | 'skipped'
+  | 'failed'
+  | 'unresolved'
+  | 'written'
+  | 'expectedInTarget';
 
 /**
  * The words the product uses for each figure, in one place.
@@ -129,6 +173,11 @@ export const METRIC_DEFINITIONS: Record<MetricKey, { label: string; definition: 
   processed: {
     label: 'Processed',
     definition: 'Source records this run evaluated and reached a decision about.',
+  },
+  unresolved: {
+    label: 'Outcome unknown',
+    definition:
+      'Records this run tried to write and cannot account for. The write may have been applied before the answer was lost, so they are counted neither as written nor as failed until the target is asked. Never retried blindly: repeating a write whose outcome is unknown is how one record becomes two.',
   },
   created: {
     label: 'Created',

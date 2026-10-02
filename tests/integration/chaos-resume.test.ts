@@ -168,72 +168,74 @@ describe('chaos: failure and resume', () => {
   // The boundary with no transaction across it
   // -------------------------------------------------------------------------
   describe('the identity-map boundary', () => {
-    it('records what reached the target even when the run died before writing the map', async () => {
-      // Target writes happen record by record; the identity map is written once per batch,
-      // afterwards. A run that dies between them leaves records in the target that the platform has
-      // no row for. This asserts the size of that window rather than assuming it is zero.
+    it('leaves an intent row for every record it was about to write', async () => {
+      /**
+       * The window that used to be invisible.
+       *
+       * Target writes happen record by record; the identity map used to be written once per batch,
+       * afterwards. A run that died between them left records in the customer's target that this
+       * platform had no row for at all — and resume, seeing no row, created them again.
+       *
+       * Now an intent row exists before the write. It proves nothing about whether the write committed,
+       * which is the point: it turns "no evidence" into "this record is in doubt".
+       */
       injection = { operation: 'createRecord', failWriteNumber: 4, kind: 'fatal' };
       const run = await startMigration(['dtx_region'], 100);
 
       expect(run.status, 'the run stopped rather than carrying on').toBe('FAILED');
-      // Records are written four at a time, so the exact number that lands before the injected
-      // failure is a race. That some land is the point, and it is deterministic.
       const created = written.filter((w) => w.operation === 'createRecord');
       expect(created.length, 'records reached the target before the failure').toBeGreaterThan(0);
-      expect(created.length, 'but not all of them').toBeLessThan(run.total);
 
       const maps = await identityRows(run.id, 'dtx_region');
-      // The window, measured. If this is 0, every record written before the failure is invisible to
-      // the platform; the next test is about whether that is recoverable.
-      expect(maps.length, 'identity rows for a batch that never completed').toBe(0);
+      expect(maps.length, 'every record it was about to write has a row').toBeGreaterThan(0);
+      const intents = maps.filter((m) => m.writeState === 'INTENDED' || m.writeState === 'CONFIRMED');
+      expect(intents.length, 'and each row records whether we know what happened').toBe(maps.length);
+      for (const row of maps) {
+        expect(row.intendedOperation, 'the row says what the write was going to be').toBe('CREATE');
+        expect(row.reconcileEvidence, 'and what could identify it afterwards').toBeTruthy();
+      }
     }, 300_000);
 
-    it('does not duplicate those records on resume, because the match strategy finds them', async () => {
+    it('reconciles the intents on resume instead of writing them again', async () => {
       injection = { operation: 'createRecord', failWriteNumber: 4, kind: 'fatal' };
       const run = await startMigration(['dtx_region'], 100);
       const orphaned = written.filter((w) => w.operation === 'createRecord').map((w) => w.id);
-      expect(orphaned.length, 'something was orphaned to recover from').toBeGreaterThan(0);
+      expect(orphaned.length, 'something was written without being confirmed').toBeGreaterThan(0);
 
-      // Resume with nothing injected: the records written before the failure are in the target and
-      // unknown to the platform, which is exactly the state that could produce duplicates.
       injection = {};
       written = [];
+      calls = { createRecord: 0, updateRecord: 0 };
       await api.post(`/api/runs/${run.id}/retry`, {});
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
 
       expect(resumed.status, 'the resumed attempt finished').toBe('COMPLETED');
-      expect(resumed.attempt, 'and it is recorded as a second attempt of the same run').toBe(2);
+      expect(resumed.attempt, 'as a second attempt of the same run').toBe(2);
+      expect(resumed.unresolved, 'with nothing left unresolved').toBe(0);
 
-      // The three orphans were re-examined and matched, not created again.
-      const createdOnResume = written.filter((w) => w.operation === 'createRecord').length;
       const maps = await identityRows(run.id, 'dtx_region');
-      const bySource = new Map(maps.map((m) => [m.sourceId, m]));
-      expect(maps.length, 'every source record has exactly one identity row').toBe(bySource.size);
-
-      // The target holds one record per source record: no duplicates from the orphaned window.
-      const targets = new Set(maps.map((m) => m.targetId));
-      expect(targets.size, 'one target record per source record').toBe(maps.length);
-      // And the three orphans are the ones that were re-matched rather than re-created.
-      expect(createdOnResume + orphaned.length, 'every record accounted for once').toBe(maps.length);
+      expect(new Set(maps.map((m) => m.sourceId)).size, 'one row per source record').toBe(maps.length);
+      expect(new Set(maps.map((m) => m.targetId)).size, 'one target per source record').toBe(maps.length);
+      expect(
+        maps.every((m) => m.writeState === 'CONFIRMED'),
+        'and every one of them is confirmed',
+      ).toBe(true);
+      // The records the first attempt wrote were found, not created a second time.
+      const recreated = written.filter((w) => w.operation === 'createRecord' && orphaned.includes(w.id));
+      expect(recreated.length, 'nothing was created twice').toBe(0);
+      const reconciled = maps.filter((m) => m.reconcileNote?.includes('did commit'));
+      expect(reconciled.length, 'and the ones recovered say how they were found').toBeGreaterThan(0);
     }, 600_000);
 
-    it('creates a duplicate when the target assigned the key and nothing can match it', async () => {
+    it('does not duplicate when the target assigned the key — it stops instead', async () => {
       /**
-       * The case the test above does not cover, and the one that matters.
+       * The P0, and what replaced it.
        *
-       * Resume recovers the orphaned window by *re-matching*: the identity map has no row, so the
-       * configured match strategy has to find the target record another way. With ids preserved it
-       * matches on the record id, which is why the test above passes.
-       *
-       * Take that away — a target that assigns its own key, PRIMARY_ID as the strategy, and a table
-       * with no unique key of its own — and there is nothing left to match on. The target record
-       * carries a key the platform never recorded and the source id matches nothing, so resume
-       * creates it a second time. Nothing in the platform notices.
-       *
-       * This test states the size of that gap. It is not here to be made to pass.
+       * With `PRIMARY_ID` matching against a target that assigns its own keys and a table with no unique
+       * key, nothing can identify an orphaned record. This used to create it again and report COMPLETED
+       * with zero failures. Now the run stops: the records are marked RECONCILIATION_REQUIRED, the run
+       * is NEEDS_RECONCILIATION, and the target is left exactly as the failure left it.
        */
-      // Regions first, cleanly, so an office's lookup resolves and the only variable is the office.
       const regions = await startMigration(['dtx_region'], 100);
       expect(regions.status).toBe('COMPLETED');
 
@@ -244,8 +246,6 @@ describe('chaos: failure and resume', () => {
       factory.connectorFor = async (...args: unknown[]) => {
         const conn = await outer(...args);
         if (String((args[0] as { id?: string })?.id ?? '') === uat.id) {
-          // A target that will not take a client-supplied key: an identity column, or Dataverse
-          // when no id is sent.
           conn['capabilities'] = {
             ...(conn['capabilities'] as object),
             supportsClientGeneratedIds: false,
@@ -254,56 +254,137 @@ describe('chaos: failure and resume', () => {
         return conn;
       };
 
-      // Offices have no alternate key, so nothing in the target refuses a second copy.
       injection = { operation: 'createRecord', failWriteNumber: 3, kind: 'fatal' };
       written = [];
-      // The injected counter counts every write this test has made, so it starts again here.
       calls = { createRecord: 0, updateRecord: 0 };
       const run = await startMigration(['dtx_office'], 100, 'PRIMARY_ID');
       const orphaned = written.filter((w) => w.operation === 'createRecord').map((w) => w.id);
-      expect(orphaned.length, 'records were written and not claimed').toBeGreaterThan(0);
-      expect(await identityRows(run.id, 'dtx_office'), 'nothing was claimed').toHaveLength(0);
-      const afterFirst = await targetCount('dtx_office');
-      expect(afterFirst, 'the target holds what was written').toBe(orphaned.length);
+      expect(orphaned.length, 'records were written before the failure').toBeGreaterThan(0);
+      const beforeResume = await targetCount('dtx_office');
 
+      // The run refuses to finish, and refuses to be retried, rather than guessing.
+      const stopped = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
+      expect(stopped.status, 'neither completed nor failed').toBe('NEEDS_RECONCILIATION');
+      expect(stopped.unresolved, 'and it says how many records are in doubt').toBeGreaterThan(0);
+
+      const refused = await t.app.inject({
+        method: 'POST',
+        url: `/api/runs/${run.id}/retry`,
+        payload: {},
+        headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+      });
+      expect(refused.statusCode, 'a retry is refused while records are in doubt').toBe(409);
+      expect(refused.body).toMatch(/NEEDS_RECONCILIATION/);
+
+      // The platform names exactly what a person has to look at.
+      const awaiting = await api.get<{
+        total: number;
+        items: { logicalName: string; sourceId: string; evidence: string; note: string | null }[];
+      }>(`/api/runs/${run.id}/reconciliation`);
+      expect(awaiting.total, 'the records are listed').toBeGreaterThan(0);
+      for (const item of awaiting.items) {
+        expect(item.evidence, 'each one says why it cannot be resolved automatically').toBe('NONE');
+      }
+
+      // And the target was not touched again: no duplicate, which is the whole point.
+      const afterStopping = await targetCount('dtx_office');
+      expect(afterStopping, 'not one record was created a second time').toBe(beforeResume);
+      expect(written.filter((w) => w.operation === 'createRecord').length).toBe(orphaned.length);
+
+      // --- a person looks, and says what they found -------------------------
+      /**
+       * What the manual drill does, done here against the simulated target's own storage.
+       *
+       * Not "assume they are all there": the awaiting list contains both records the first attempt wrote
+       * and records it never reached, and telling them apart is exactly the work that cannot be
+       * automated. Each source record's name is read from the source and looked for in the target, which
+       * is what somebody with a SQL console would do.
+       */
       injection = {};
       written = [];
+      calls = { createRecord: 0, updateRecord: 0 };
+      const { demoRecords: demo } = await import('../../server/src/db/schema');
+      const sourceRows = await t.services.db
+        .select()
+        .from(demo)
+        .where(
+          and(
+            eq(demo.organizationId, organizationId),
+            eq(demo.environmentKey, 'demo-dev'),
+            eq(demo.logicalName, 'dtx_office'),
+          ),
+        );
+      const targetRows = await t.services.db
+        .select()
+        .from(demo)
+        .where(
+          and(
+            eq(demo.organizationId, organizationId),
+            eq(demo.environmentKey, 'demo-uat'),
+            eq(demo.logicalName, 'dtx_office'),
+          ),
+        );
+      const resolutions = awaiting.items.map((item) => {
+        const source = sourceRows.find((r) => r.recordId.toLowerCase() === item.sourceId.toLowerCase());
+        const name = (source?.data as { dtx_name?: string } | undefined)?.dtx_name;
+        const inTarget = targetRows.find(
+          (r) => (r.data as { dtx_name?: string }).dtx_name === name && name !== undefined,
+        );
+        return inTarget
+          ? {
+              logicalName: item.logicalName,
+              sourceId: item.sourceId,
+              found: 'PRESENT' as const,
+              targetId: inTarget.recordId,
+              note: `Queried the target directly and found one record named ${name}.`,
+            }
+          : {
+              logicalName: item.logicalName,
+              sourceId: item.sourceId,
+              found: 'ABSENT' as const,
+              note: `Queried the target directly; no record named ${name ?? '(unknown)'} is there.`,
+            };
+      });
+      expect(
+        resolutions.filter((r) => r.found === 'PRESENT').length,
+        'some of the records in doubt really were written',
+      ).toBe(orphaned.length);
+      await api.post(`/api/runs/${run.id}/reconcile`, { resolutions });
+      const settled = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
+      expect(settled.unresolved, 'nothing is in doubt any more').toBe(0);
+      expect(settled.status, 'and the run is retryable again').not.toBe('NEEDS_RECONCILIATION');
+
+      // --- and then it finishes --------------------------------------------
       await api.post(`/api/runs/${run.id}/retry`, {});
       await worker.drain(300_000);
-      const resumed = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
+      const finished = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
+      expect(finished.status).toBe('COMPLETED');
+      expect(finished.unresolved).toBe(0);
 
       const maps = await identityRows(run.id, 'dtx_office');
-      const targetsNow = await targetCount('dtx_office');
-      const unaccounted = targetsNow - maps.filter((m) => m.targetId).length;
-
-      // The gap, as a number. Every one of these is a record in the customer's target that the
-      // platform has no row for, created a second time by a resume that could not tell.
-      expect(
-        unaccounted,
-        `target holds ${targetsNow} office(s); the platform accounts for ${maps.filter((m) => m.targetId).length}`,
-      ).toBe(orphaned.length);
-      // And the run reports success, which is what makes it dangerous rather than merely wrong.
-      expect(resumed.status).toBe('COMPLETED');
-      expect(resumed.failed).toBe(0);
-      // Internally the platform is perfectly consistent. That is the whole problem.
-      expect(new Set(maps.map((m) => m.targetId)).size).toBe(maps.length);
+      expect(new Set(maps.map((m) => m.targetId)).size, 'one target record per source record').toBe(
+        maps.length,
+      );
+      const finalCount = await targetCount('dtx_office');
+      expect(finalCount, 'the target holds exactly one record per source record').toBe(maps.length);
     }, 900_000);
 
     it('keeps the arithmetic true across both attempts', async () => {
       injection = { operation: 'createRecord', failWriteNumber: 4, kind: 'fatal' };
       const run = await startMigration(['dtx_region'], 100);
       injection = {};
+      calls = { createRecord: 0, updateRecord: 0 };
       await api.post(`/api/runs/${run.id}/retry`, {});
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
 
-      // The run's figures are the run's, not the last attempt's: a record created in attempt one and
-      // matched in attempt two is one record, counted once.
+      // The run's figures are the run's, not the last attempt's, and the six outcomes still add up.
       expect(accountedFor(resumed)).toBe(resumed.processed);
       expect(writtenByRun(resumed)).toBe(resumed.created + resumed.updated);
       const maps = await identityRows(run.id, 'dtx_region');
       expect(accountedFor(resumed), 'the counters agree with the identity map').toBe(maps.length);
       expect(resumed.failed, 'nothing is still failed after a clean resume').toBe(0);
+      expect(resumed.unresolved, 'and nothing is still unresolved').toBe(0);
     }, 600_000);
   });
 
@@ -319,16 +400,30 @@ describe('chaos: failure and resume', () => {
 
       const afterFirst = await identityRows(first.id, 'account');
       const writtenFirst = written.filter((w) => w.operation === 'createRecord').length;
-      // Complete batches were persisted; the batch that failed was not.
-      expect(afterFirst.length, 'only completed batches are claimed').toBeLessThan(writtenFirst);
-      expect(afterFirst.length % 5, 'and they are whole batches').toBe(0);
-      for (const row of afterFirst) {
-        expect(row.targetId, 'a claimed record has a target identifier').toBeTruthy();
+      /**
+       * Every record the run touched has a row, and each row says whether we know what happened to it.
+       *
+       * This used to assert that only *whole batches* were claimed, because the identity map was written
+       * once per batch and the in-flight batch left nothing at all. The intent rows are the change: the
+       * batch that was interrupted is now described rather than invisible.
+       */
+      const confirmed = afterFirst.filter((m) => m.writeState === 'CONFIRMED');
+      const inDoubt = afterFirst.filter((m) => m.writeState === 'INTENDED');
+      expect(confirmed.length, 'the writes that completed are confirmed').toBeGreaterThan(0);
+      expect(confirmed.length + inDoubt.length, 'and every row is one or the other').toBe(afterFirst.length);
+      expect(confirmed.length, 'no more confirmed than actually reached the target').toBeLessThanOrEqual(
+        writtenFirst,
+      );
+      for (const row of confirmed) {
+        expect(row.targetId, 'a confirmed record has a target identifier').toBeTruthy();
+      }
+      for (const row of inDoubt) {
+        expect(row.outcome, 'a record in doubt is counted as neither written nor failed').toBe('UNRESOLVED');
       }
 
       // What attempt one claimed, and what it wrote without claiming. The second group is the
       // orphaned window and resume is expected to touch it again; the first must be left alone.
-      const claimed = new Set(afterFirst.map((m) => m.targetId));
+      const claimed = new Set(confirmed.map((m) => m.targetId));
       const orphaned = written
         .filter((w) => w.operation === 'createRecord' && !claimed.has(w.id))
         .map((w) => w.id);

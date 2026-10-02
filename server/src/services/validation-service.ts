@@ -5,6 +5,7 @@ import type {
   ChoiceMappingDto,
   DifferenceType,
   FieldTransformDto,
+  RecordOutcome,
   TransformationRule,
   ValidationCheckDto,
   ValidationDifferenceDto,
@@ -119,7 +120,8 @@ export interface EntityComparisonInput {
   pairs: {
     source: DvRecord;
     target: DvRecord | null;
-    outcome: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED' | 'UNMAPPED';
+    /** `UNMAPPED` is validation's own value for a comparison made without a migration run. */
+    outcome: RecordOutcome | 'UNMAPPED';
   }[];
   /** Resolves a source lookup to the expected target id (null = unknown). */
   expectedLookup: (logicalName: string, sourceId: string) => string | null;

@@ -62,6 +62,9 @@ const MUTATION_PERMISSIONS: [RegExp, Permission][] = [
   // Accepting a readiness blocker authorises a migration to run that otherwise would not, which is
   // the same authority as starting one — and not a validator's.
   [/^\/api\/plans\/[^/]+\/readiness\/override$/, 'migration:control'],
+  // Settling what a crash left in doubt decides what the migration claims to have done, which is the
+  // same authority as running it.
+  [/^\/api\/runs\/[^/]+\/reconcile$/, 'migration:control'],
   // Destroys a stored credential and the configuration other people's plans depend on.
   [/^\/api\/connections\/[^/]+$/, 'connections:delete'],
   // Keeps writing when nobody is watching.

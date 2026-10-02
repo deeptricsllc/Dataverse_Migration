@@ -1,4 +1,6 @@
 import { and, asc, count, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { isUnresolved, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
+import { refreshRunCounters } from './run-counters';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
@@ -389,6 +391,135 @@ export class MigrationRunService {
     return this.get(ctx, runId);
   }
 
+  /**
+   * Records what a person found when they looked in the target.
+   *
+   * The way out of `NEEDS_RECONCILIATION`. The platform stopped because a write may have been applied
+   * and nothing it can query would settle it; the only remaining evidence is somebody opening the target
+   * and looking. This is where what they saw is written down — per record, with the identifier when they
+   * found one — and it is audited, because it is a human assertion about data rather than a measurement.
+   *
+   * Deliberately not a bulk "assume they are all fine" button. Each record is named. A person who
+   * resolves four hundred records has looked at four hundred records, or has made a decision they are
+   * accountable for either way.
+   */
+  async reconcile(
+    ctx: RequestContext,
+    runId: string,
+    resolutions: {
+      logicalName: string;
+      sourceId: string;
+      /** PRESENT: it is in the target. ABSENT: it is not, so the write never happened. */
+      found: 'PRESENT' | 'ABSENT';
+      /** The target's identifier, required when the record is present. */
+      targetId?: string | null;
+      /** How they determined it, in their words, for the evidence package. */
+      note: string;
+    }[],
+  ): Promise<MigrationRunDto> {
+    const run = await this.loadRun(ctx.organizationId, runId);
+    if (run.status !== 'NEEDS_RECONCILIATION') {
+      throw conflict(`This run is ${run.status} and has nothing awaiting reconciliation`);
+    }
+    let resolved = 0;
+    for (const r of resolutions) {
+      if (r.found === 'PRESENT' && !r.targetId) {
+        throw badRequest(
+          `${r.logicalName} ${r.sourceId}: a record reported as present needs the identifier it has in the target, so the identity map can point at it.`,
+        );
+      }
+      const [row] = await this.db
+        .select({ id: migrationRecordMaps.id, writeState: migrationRecordMaps.writeState })
+        .from(migrationRecordMaps)
+        .where(
+          and(
+            eq(migrationRecordMaps.runId, runId),
+            eq(migrationRecordMaps.logicalName, r.logicalName),
+            eq(migrationRecordMaps.sourceId, r.sourceId.toLowerCase()),
+          ),
+        );
+      if (!row) throw badRequest(`${r.logicalName} ${r.sourceId} is not a record of this run`);
+      if (!isUnresolved(row.writeState)) continue; // already settled; saying so twice changes nothing
+      await this.db
+        .update(migrationRecordMaps)
+        .set({
+          // PRESENT means the write did happen, so the record was created by this run and is now known.
+          // ABSENT means it did not, so the record is a plain failure the next attempt will try again.
+          outcome: r.found === 'PRESENT' ? 'CREATED' : 'FAILED',
+          writeState: r.found === 'PRESENT' ? 'CONFIRMED' : null,
+          targetId: r.found === 'PRESENT' ? (r.targetId ?? null) : null,
+          reconcileNote: `Resolved by ${ctx.displayName}: ${r.found === 'PRESENT' ? 'found in the target' : 'not in the target'}. ${r.note}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(migrationRecordMaps.id, row.id));
+      resolved++;
+    }
+
+    // The counters are derived, so they are rebuilt rather than adjusted.
+    await refreshRunCounters(this.db, runId);
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'MIGRATION_RECONCILED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: run.sourceEnvironmentId,
+      targetEnvironmentId: run.targetEnvironmentId,
+      runId,
+      requestId: ctx.requestId,
+      details: {
+        resolved,
+        present: resolutions.filter((r) => r.found === 'PRESENT').length,
+        absent: resolutions.filter((r) => r.found === 'ABSENT').length,
+      },
+    });
+
+    // Once nothing is outstanding the run is retryable again, and says so.
+    const [remaining] = await this.db
+      .select({ n: count() })
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+        ),
+      );
+    if (Number(remaining?.n ?? 0) === 0) {
+      await this.db
+        .update(migrationRuns)
+        .set({ status: 'COMPLETED_WITH_ERRORS', updatedAt: new Date() })
+        .where(eq(migrationRuns.id, runId));
+    }
+    return this.get(ctx, runId);
+  }
+
+  /** The records a person has to look at, with everything known about each one. */
+  async awaitingReconciliation(ctx: RequestContext, runId: string) {
+    await this.loadRun(ctx.organizationId, runId);
+    const rows = await this.db
+      .select()
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+        ),
+      )
+      .orderBy(asc(migrationRecordMaps.logicalName), asc(migrationRecordMaps.sourceId));
+    return {
+      total: rows.length,
+      items: rows.map((r) => ({
+        logicalName: r.logicalName,
+        sourceId: r.sourceId,
+        targetId: r.targetId,
+        intendedOperation: r.intendedOperation,
+        writeState: r.writeState,
+        evidence: r.reconcileEvidence,
+        note: r.reconcileNote,
+        attempts: r.attempts,
+      })),
+    };
+  }
+
   private async requeue(ctx: RequestContext, runId: string, newAttempt: boolean) {
     await this.db
       .update(migrationRuns)
@@ -454,6 +585,7 @@ export class MigrationRunService {
       unchanged: r.unchanged,
       skipped: r.skipped,
       failed: r.failed,
+      unresolved: r.unresolved,
       entities: entities.map((e) => ({
         id: e.id,
         logicalName: e.logicalName,
@@ -467,6 +599,7 @@ export class MigrationRunService {
         unchanged: e.unchanged,
         skipped: e.skipped,
         failed: e.failed,
+        unresolved: e.unresolved,
         deferredPending: e.deferredPending,
         deferredResolved: e.deferredResolved,
         deferredFailed: e.deferredFailed,
