@@ -9,6 +9,7 @@ import type {
 import {
   EVIDENCE_SCHEMA_VERSION,
   LINEAGE_COLUMNS,
+  LINEAGE_COLUMNS_BY_VERSION,
   LINEAGE_FILE_PATTERN,
   REQUIRED_EVIDENCE_FILES,
   type EvidenceManifest,
@@ -187,6 +188,51 @@ describe('lineage and package verification', () => {
       expect(result.proves).toMatch(/hashes to the digest/i);
       expect(result.doesNotProve).toMatch(/not a cryptographic signature/i);
       expect(result.doesNotProve).toMatch(/neither authenticity nor non-repudiation/i);
+    });
+
+    it('still reads a package from an earlier schema, which it says it supports', () => {
+      /**
+       * `SUPPORTED_EVIDENCE_SCHEMA_VERSIONS` says this product reads version 2, and reading it means
+       * knowing what it looked like. Version 3 added the three write-state columns, so a version-2
+       * package's lineage has eight columns and not eleven — and checking it against the current list
+       * was this product reporting its own earlier evidence as corrupt.
+       *
+       * Built by rewriting a real package back to what version 2 produced, rather than by a fixture
+       * nobody maintains: the digests are recomputed, which is what a reader's verifier would see.
+       */
+      const v2Columns = LINEAGE_COLUMNS_BY_VERSION[2]!.join(',');
+      const downgraded = rebuilt((f) => {
+        // The lineage chunks, rewritten with the older header and the older eight columns.
+        for (const [path, data] of [...f.entries()]) {
+          if (!path.startsWith('lineage/')) continue;
+          const lines = data.toString('utf8').split('\r\n');
+          const body = lines
+            .slice(1)
+            .filter((l) => l.length > 0)
+            .map((line) => line.split(',').slice(0, 8).join(','));
+          f.set(path, Buffer.from(`\uFEFF${[v2Columns, ...body].join('\r\n')}\r\n`, 'utf8'));
+        }
+        // And the manifest, declaring the older version with digests that match what we just wrote.
+        const older = JSON.parse(f.get('manifest.json')!.toString('utf8')) as {
+          evidenceSchemaVersion: number;
+          files: { path: string; sha256: string; bytes?: number }[];
+        };
+        older.evidenceSchemaVersion = 2;
+        for (const record of older.files) {
+          const bytes = f.get(record.path);
+          if (!bytes) continue;
+          record.sha256 = createHash('sha256').update(bytes).digest('hex');
+          if (record.bytes !== undefined) record.bytes = bytes.byteLength;
+        }
+        f.set('manifest.json', Buffer.from(JSON.stringify(older, null, 2), 'utf8'));
+      });
+
+      const result = verifyEvidencePackage(downgraded);
+      expect(
+        result.problems.filter((p) => p.code === 'LINEAGE_COLUMNS_UNEXPECTED'),
+        'an older package is not corrupt for being older',
+      ).toEqual([]);
+      expect(result.verdict).toBe('VALID');
     });
 
     it('detects an edited metrics.csv', () => {

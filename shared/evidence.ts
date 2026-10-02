@@ -182,6 +182,34 @@ export const LINEAGE_COLUMNS = [
 ] as const;
 
 /**
+ * Which columns a package of each schema version carries.
+ *
+ * Schema 3 added the three write-state columns, so a schema-2 package has eight and a schema-3 package
+ * has eleven. The verifier has to know that: comparing a schema-2 package's header against the current
+ * list reports its lineage as unexpected, which is this product calling its own older evidence corrupt.
+ * `SUPPORTED_EVIDENCE_SCHEMA_VERSIONS` says we read version 2, and reading it means knowing what it
+ * looked like.
+ */
+export const LINEAGE_COLUMNS_BY_VERSION: Record<number, readonly string[]> = {
+  2: [
+    'Run ID',
+    'Attempt',
+    'Source table',
+    'Source key',
+    'Target table',
+    'Target key',
+    'Outcome',
+    'Matched by',
+  ],
+  3: LINEAGE_COLUMNS,
+};
+
+/** The columns to expect from a package declaring this version, falling back to the current set. */
+export function lineageColumnsFor(version: number): readonly string[] {
+  return LINEAGE_COLUMNS_BY_VERSION[version] ?? LINEAGE_COLUMNS;
+}
+
+/**
  * What a verified package does and does not establish, in the words the product is allowed to use.
  *
  * The temptation is to call a package with matching digests "verified" and leave the reader to infer

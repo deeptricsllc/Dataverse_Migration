@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  LINEAGE_COLUMNS,
+  lineageColumnsFor,
   LINEAGE_FILE_PATTERN,
   LINEAGE_OUTCOMES,
   INTEGRITY_DOES_NOT_PROVE,
@@ -179,11 +179,15 @@ export function verifyEvidencePackage(archive: Buffer): EvidenceVerification {
       const text = bytes.toString('utf8');
       const lines = text.split('\r\n').filter((l) => l.length > 0);
       const header = (lines[0] ?? '').replace(/^\uFEFF/, '');
-      if (header !== LINEAGE_COLUMNS.join(',')) {
+      // The columns a package carries depend on the version it declares: schema 3 added the three
+      // write-state columns. Checking an older package against the current list would be this product
+      // reporting its own earlier evidence as corrupt.
+      const expectedColumns = lineageColumnsFor(manifest.evidenceSchemaVersion).join(',');
+      if (header !== expectedColumns) {
         problems.push({
           code: 'LINEAGE_COLUMNS_UNEXPECTED',
           path,
-          detail: `Expected the columns ${LINEAGE_COLUMNS.join(', ')} and found "${header.slice(0, 120)}".`,
+          detail: `Expected the columns ${expectedColumns} for a schema ${manifest.evidenceSchemaVersion} package and found "${header.slice(0, 120)}".`,
         });
       }
       const rows = Math.max(0, lines.length - 1);
