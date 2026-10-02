@@ -158,7 +158,9 @@ describe.skipIf(!process.env.TEST_MYSQL_URL)('crash consistency against real MyS
           await conn.query(`DROP TABLE IF EXISTS dvm_crash_unkeyed`);
           await conn.query(`
             CREATE TABLE dvm_crash_keyed (
-              id        char(36) NOT NULL PRIMARY KEY,
+              -- A target-assigned key: MySQL's is AUTO_INCREMENT. A char(36) with no default would
+              -- require the client to supply one, which is the preserved-id scenario rather than this one.
+              id        bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
               code      varchar(100) NOT NULL UNIQUE,
               full_name varchar(400)
             )`);
