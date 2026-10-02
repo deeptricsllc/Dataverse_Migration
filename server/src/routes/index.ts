@@ -934,7 +934,24 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return streamCsv(
       reply,
       csvFileName(['migration-records', run.planName]),
-      ['Table', 'Source id', 'Target id', 'Outcome', 'Matched by', 'Deferred lookups', 'Updated at'],
+      /**
+       * The three write-state columns are here because they were, for a while, only inside the
+       * evidence package — so the export somebody actually downloads from a run could not tell them
+       * which records the platform cannot account for. A run says how many are unresolved; this says
+       * which, and what evidence there was for each.
+       */
+      [
+        'Table',
+        'Source id',
+        'Target id',
+        'Outcome',
+        'Matched by',
+        'Deferred lookups',
+        'Write state',
+        'Recovery evidence',
+        'Recovery note',
+        'Updated at',
+      ],
       map(s.runs.recordPages(req.ctx, id, q), (m) => [
         m.entity,
         m.sourceId,
@@ -942,6 +959,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         m.outcome,
         m.matchMethod,
         m.deferredStatus,
+        m.writeState,
+        m.recoveryEvidence,
+        m.recoveryNote,
         m.updatedAt,
       ]),
     );

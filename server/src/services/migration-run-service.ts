@@ -760,6 +760,9 @@ export class MigrationRunService {
         outcome: m.outcome,
         matchMethod: m.matchMethod,
         deferredStatus: m.deferredStatus,
+        writeState: m.writeState ?? null,
+        recoveryEvidence: m.reconcileEvidence ?? null,
+        recoveryNote: m.reconcileNote ?? null,
         updatedAt: m.updatedAt.toISOString(),
       })),
     };
@@ -814,6 +817,9 @@ export class MigrationRunService {
         outcome: m.outcome,
         matchMethod: m.matchMethod,
         deferredStatus: m.deferredStatus,
+        writeState: m.writeState ?? null,
+        recoveryEvidence: m.reconcileEvidence ?? null,
+        recoveryNote: m.reconcileNote ?? null,
         updatedAt: m.updatedAt.toISOString(),
       }));
       const last = rows[rows.length - 1]!;

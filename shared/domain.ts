@@ -8,6 +8,7 @@ import type { ValidationCoverage, ValidationDepth } from './validation-coverage'
 import type { AggregateCheck } from './aggregates';
 import type { ReadinessOverride } from './readiness';
 import type { UniquenessCheck } from './uniqueness';
+import type { ReconciliationEvidence, WriteState } from './write-state';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -1374,6 +1375,18 @@ export interface RecordMapDto {
   outcome: RecordOutcome;
   matchMethod: string | null;
   deferredStatus: string | null;
+  /**
+   * Whether the platform can prove what happened to this record.
+   *
+   * Carried here, and not only inside the evidence package, because it is the answer to the question
+   * somebody asks about one record: did this get written? A run says how many records are unresolved;
+   * this says which. Null on identity rows written before the crash-consistency protocol existed.
+   */
+  writeState: WriteState | null;
+  /** What could have identified the record if the answer to the write was lost. */
+  recoveryEvidence: ReconciliationEvidence | null;
+  /** What reconciliation, or a person, concluded. In words, because a person wrote some of them. */
+  recoveryNote: string | null;
   updatedAt: string;
 }
 
