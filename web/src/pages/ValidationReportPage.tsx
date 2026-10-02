@@ -677,6 +677,28 @@ export function ValidationReportPage() {
                                 </li>
                               ))}
                             </ul>
+                            {e.uncomparedColumns && e.uncomparedColumns.length > 0 && (
+                              <div className="mt-3" data-testid={`uncompared-${e.logicalName}`}>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Not compared
+                                </p>
+                                {/*
+                                  Neither equal nor different. These records were compared on every
+                                  other column, so they are counted as matched — what could not be
+                                  answered is named here rather than guessed at either way.
+                                */}
+                                <ul className="mt-1 space-y-1 text-sm">
+                                  {e.uncomparedColumns.map((c) => (
+                                    <li key={c.field} className="flex flex-wrap items-baseline gap-2">
+                                      <Mono className="text-xs">{c.field}</Mono>
+                                      <span className="text-slate-600">
+                                        {fmtNumber(c.records)} record(s) — {c.reason}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                             {e.duplicates && e.duplicates.length > 0 && (
                               <div className="mt-3" data-testid={`duplicates-${e.logicalName}`}>
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">

@@ -25,6 +25,7 @@ import type {
   RelationshipDiff,
   KeyDiff,
   DuplicateFindingDto,
+  UncomparedColumn,
   ValidationCheckDto,
   ValidationSummary,
   AutomationInfo,
@@ -900,6 +901,8 @@ export const validationEntityResults = pgTable(
      * proven by a primary-key scan.
      */
     uniqueness: jsonb('uniqueness').$type<UniquenessCheck>(),
+    /** Columns the comparison declined to answer for, with the reason each time. */
+    uncomparedColumns: jsonb('uncompared_columns').$type<UncomparedColumn[]>(),
     /** Totals compared across the two sides, with the scope each comparison covered. */
     aggregates: jsonb('aggregates').$type<AggregateCheck[]>(),
     checkedRecords: integer('checked_records').notNull().default(0),

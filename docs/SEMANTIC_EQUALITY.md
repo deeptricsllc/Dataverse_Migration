@@ -23,19 +23,21 @@ acknowledgement rather than by the comparison.
 
 ## Type by type
 
-| Type                                          | Equal means                                                                                       | Deliberate tolerance                                | Limitation                                                                                                                                                                           |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **String, Memo**                              | Same text after normalising line endings and trimming the end                                     | CRLF ≡ LF; trailing whitespace ignored; `''` ≡ NULL | A VARCHAR that genuinely lost a trailing space reads as equal. `''` ≡ NULL is right for Dataverse, which stores one as the other, and wrong for SQL-to-SQL where they are two values |
-| **Integer, BigInt**                           | Exact. Compared as scaled integers when both sides are strings                                    | None                                                | A side that arrives as a JavaScript number has already lost precision near 2^53; nothing can recover it                                                                              |
-| **Decimal, Money**                            | Exact when both sides are strings; otherwise equal within half of the column's last decimal place | Differences below the column's own scale            | Same number caveat as above                                                                                                                                                          |
-| **Double**                                    | Equal within half the last declared decimal place, or 1e-9                                        | Yes, necessarily                                    | Floating point has no exact comparison worth having                                                                                                                                  |
-| **DateTime**                                  | The same instant, to the second                                                                   | Anything below one second                           | Engines keep different precision — `datetime2(7)` holds 100-nanosecond ticks, Dataverse whole seconds. Comparing finer would fail every migration between them                       |
-| **DateTime (DateOnly)**                       | The same calendar day                                                                             | Time and timezone ignored                           | The rule is the first ten characters, so it assumes ISO order. Every connector here returns ISO                                                                                      |
-| **Boolean**                                   | The same truth value, reading `true/1/t/yes` and `false/0/f/no` in any case                       | Text spellings accepted                             | A value it cannot read as a boolean is compared as text rather than guessed at                                                                                                       |
-| **Uniqueidentifier, Lookup, Customer, Owner** | The same identifier, case-insensitively                                                           | Case                                                | A lookup's identity is the record it points at                                                                                                                                       |
-| **Picklist, State, Status**                   | The same numeric value                                                                            | None                                                | A choice's _label_ is not compared; a relabelled option with the same value is equal                                                                                                 |
-| **MultiSelectPicklist**                       | The same set                                                                                      | Order ignored                                       | —                                                                                                                                                                                    |
-| **Everything else**                           | Structural, by serialisation                                                                      | None                                                | See below                                                                                                                                                                            |
+| Type                                                       | Equal means                                                                                       | Deliberate tolerance                                | Limitation                                                                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **String, Memo**                                           | Same text after normalising line endings and trimming the end                                     | CRLF ≡ LF; trailing whitespace ignored; `''` ≡ NULL | A VARCHAR that genuinely lost a trailing space reads as equal. `''` ≡ NULL is right for Dataverse, which stores one as the other, and wrong for SQL-to-SQL where they are two values |
+| **Integer, BigInt**                                        | Exact. Compared as scaled integers when both sides are strings                                    | None                                                | A side that arrives as a JavaScript number has already lost precision near 2^53; nothing can recover it                                                                              |
+| **Decimal, Money**                                         | Exact when both sides are strings; otherwise equal within half of the column's last decimal place | Differences below the column's own scale            | Same number caveat as above                                                                                                                                                          |
+| **Double**                                                 | Equal within half the last declared decimal place, or 1e-9                                        | Yes, necessarily                                    | Floating point has no exact comparison worth having                                                                                                                                  |
+| **DateTime**                                               | The same instant, to the second                                                                   | Anything below one second                           | Engines keep different precision — `datetime2(7)` holds 100-nanosecond ticks, Dataverse whole seconds. Comparing finer would fail every migration between them                       |
+| **DateTime (DateOnly)**                                    | The same calendar day                                                                             | Time and timezone ignored                           | The rule is the first ten characters, so it assumes ISO order. Every connector here returns ISO                                                                                      |
+| **Boolean**                                                | The same truth value, reading `true/1/t/yes` and `false/0/f/no` in any case                       | Text spellings accepted                             | A value it cannot read as a boolean is compared as text rather than guessed at                                                                                                       |
+| **Uniqueidentifier, Lookup, Customer, Owner**              | The same identifier, case-insensitively                                                           | Case                                                | A lookup's identity is the record it points at                                                                                                                                       |
+| **Picklist, State, Status**                                | The same numeric value                                                                            | None                                                | A choice's _label_ is not compared; a relabelled option with the same value is equal                                                                                                 |
+| **MultiSelectPicklist**                                    | The same set                                                                                      | Order ignored                                       | —                                                                                                                                                                                    |
+| **JSON (`json`, `jsonb` target)**                          | The same document: key order ignored, array order significant, numbers exact                      | Key order; number formatting                        | A driver that pre-parses the column has already collapsed duplicate keys and rounded long numbers. A document that repeats a key is reported as not comparable                       |
+| **Binary (`varbinary`, `bytea`, `blob`, `File`, `Image`)** | The same bytes, up to 8 MiB                                                                       | Buffer / base64 / bytea hex are reconciled          | Past 8 MiB it is reported as not comparable rather than read                                                                                                                         |
+| **Everything else**                                        | Structural, by serialisation                                                                      | None                                                | See below                                                                                                                                                                            |
 
 ## Where values are compared as exact digits
 
@@ -48,16 +50,68 @@ When a side arrives as a JavaScript number, the numeric path is used instead. Th
 number in hand has already lost whatever it was going to lose, and comparing it exactly would imply a
 precision it does not have.
 
-## Types with no rule of their own
+## The third answer: not comparable
 
-Two gaps, recorded rather than papered over:
+Equality used to have two outcomes, so a column nobody could honestly compare had to be called one of
+them — and calling it equal is a silent false pass, the one failure mode this product exists to avoid.
+There is now a third verdict. `NOT_COMPARABLE` is reported at **column** level, with the reason and how
+many records it affected, and those records are still compared on every other column. They count as
+matched, because nothing was shown to be wrong with them; what could not be answered is named instead
+of being folded into a number that would imply either answer.
 
-- **JSON.** There is no JSON type in the metadata model, so a JSON column arrives as text or as an
-  object and is compared by its serialisation. The same document with its keys in a different order
-  reads as a difference. Nothing normalises it, because normalising would mean deciding that key order
-  never matters, and in some systems it does.
-- **Binary.** A binary column may arrive as a buffer on one side and as base64 text on the other, and
-  nothing reconciles them. There is no supported binary migration path today, and this is why.
+`compareValues` in `server/src/services/values.ts` returns it; `tests/unit/value-comparison.test.ts`
+holds the behaviour.
+
+## JSON
+
+A `json` or `jsonb` **target** column is compared as a document, not as text. Only the target's type
+decides, per the governing rule: a `jsonb` source column migrated into a Dataverse Memo is text now,
+and comparing it as text is correct.
+
+`JSON.parse` is not used, because the two things that make this trustworthy are exactly what it throws
+away, and both of its losses produce a **false match**:
+
+- **duplicate keys are collapsed silently** — `{"a":1,"a":2}` parses to `{a:2}`, so two documents that
+  genuinely differ compare equal, and which value won is a property of the parser rather than of the
+  data;
+- **numbers become doubles** — `12345678901234567890` and `12345678901234567891` both become
+  `1.2345678901234567e19`, so a BIGINT inside a document compares equal to a different one. There is a
+  test asserting that `JSON.parse` cannot tell those two apart and that this comparison can.
+
+So `shared/json-compare.ts` parses the text itself. The rules:
+
+| Question         | Answer                                                                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Object key order | **Ignored.** `{"a":1,"b":2}` equals `{"b":2,"a":1}`, at every depth                                                                                                                               |
+| Array order      | **Significant.** A JSON array is a sequence; `[1,2]` is not `[2,1]`                                                                                                                               |
+| Numbers          | Exact decimals, through the same scaled-integer comparison the numeric columns use, with exponents expanded. `1`, `1.0` and `1e0` are equal; two twenty-digit integers are equal only if they are |
+| `null`           | A value. A key present and null is not a key that is absent, and is not `""`, `0` or `false`                                                                                                      |
+| Strings          | Exact after unescaping. `"\u0041"` equals `"A"`. Nothing is trimmed or case-folded — that is a column's tolerance, and this is content inside a document                                          |
+| Duplicate keys   | `NOT_COMPARABLE`, naming the key                                                                                                                                                                  |
+| Invalid JSON     | A **difference**, not "not comparable" — the answer is known. One side a document and the other not is a real difference                                                                          |
+| Past the limits  | `NOT_COMPARABLE`. 1,000,000 characters, 64 levels, 50,000 values. Byte-identical text is still equal without parsing, so an untouched large document reads as equal rather than unreadable        |
+
+**The limitation.** When a driver returns a `jsonb` column as a parsed object rather than as text —
+which `pg` does — duplicate keys have already been collapsed and long numbers have already been
+through a double, before this platform sees anything. Nothing can recover that, exactly as nothing can
+recover a BIGINT that arrived as a JavaScript number. The comparison is then over what the driver gave
+us.
+
+## Binary
+
+A `varbinary`, `binary`, `bytea`, `blob` or `image` column, and Dataverse's `File` and `Image`, are
+compared **byte for byte** up to 8 MiB. Past that the answer is `NOT_COMPARABLE` rather than a
+comparison that reads an arbitrary amount of data into memory to answer one question about one field.
+
+Byte equality rather than a digest, deliberately: a digest is how you compare bytes you do not both
+have — across a network, or against something recorded earlier. Both values are in hand here, so
+hashing them would be strictly more work for the same answer and would introduce a collision the
+comparison does not need to have. A length difference is reported as a difference without looking
+further, which is what a truncation looks like.
+
+The encodings connectors actually return are reconciled: a Buffer from most drivers, base64 from
+Dataverse and JSON transports, and PostgreSQL's hex form when `bytea` is read as text. Text in any
+other shape is `NOT_COMPARABLE` rather than compared as text.
 
 ## The bugs this audit found, and what they were
 

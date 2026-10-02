@@ -13,6 +13,7 @@ import type {
   ValidationOutcome,
   ValidationRunDto,
   ValidationSummary,
+  UncomparedColumn,
 } from '../../../shared/domain';
 import {
   LOOKUP_TYPES,
@@ -74,7 +75,7 @@ import {
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { transformField } from './transformation/engine';
-import { displayValue, valuesEqual } from './values';
+import { compareValues, displayValue } from './values';
 import { envRef } from './env-ref';
 
 const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
@@ -171,10 +172,18 @@ export function compareRecords(input: EntityComparisonInput): {
   missing: number;
   different: number;
   diffs: PendingDiff[];
+  /** Columns the comparison declined to answer for, and why. Empty when everything was comparable. */
+  uncompared: UncomparedColumn[];
 } {
   const sAttrs = new Map(input.source.attributes.map((a) => [a.logicalName, a]));
   const tAttrs = new Map(input.target.attributes.map((a) => [a.logicalName, a]));
   const diffs: PendingDiff[] = [];
+  /**
+   * Columns the comparison could not answer for. Counted per column rather than per record, because
+   * the limitation belongs to the column: "payload could not be compared on 40 records" is actionable,
+   * and "40 records are suspect" is not.
+   */
+  const uncompared = new Map<string, { reason: string; records: number }>();
   let matched = 0;
   let missing = 0;
   let different = 0;
@@ -230,7 +239,19 @@ export function compareRecords(input: EntityComparisonInput): {
         context: { record: pair.source, sourceAttributes: sAttrs },
       });
       const expectedValue = converted.ok ? converted.value : (sv ?? null);
-      if (!valuesEqual(tAttr, expectedValue, tv)) {
+      const comparison = compareValues(tAttr, expectedValue, tv);
+      if (comparison.verdict === 'NOT_COMPARABLE') {
+        /**
+         * Neither equal nor different, and said so rather than guessed. The record is still compared
+         * on every other column, so one unreadable JSON document does not discard what is known about
+         * the rest of the record — and the column is named, with the reason, at entity level.
+         */
+        const seen = uncompared.get(m.targetField);
+        if (seen) seen.records++;
+        else uncompared.set(m.targetField, { reason: comparison.reason ?? 'not comparable', records: 1 });
+        continue;
+      }
+      if (comparison.verdict === 'DIFFERENT') {
         recordDiffers = true;
         diffs.push({
           sourceRecordId: pair.source.id,
@@ -249,7 +270,17 @@ export function compareRecords(input: EntityComparisonInput): {
     if (recordDiffers) different++;
     else matched++;
   }
-  return { matched, missing, different, diffs };
+  return {
+    matched,
+    missing,
+    different,
+    diffs,
+    uncompared: [...uncompared.entries()].map(([field, v]) => ({
+      field,
+      reason: v.reason,
+      records: v.records,
+    })),
+  };
 }
 
 export class ValidationService {
@@ -544,6 +575,7 @@ export class ValidationService {
       duplicates: null,
       duplicateCoverage: null,
       uniqueness: null,
+      uncomparedColumns: null,
       aggregates: null,
       matched: 0,
       missing: 0,
@@ -688,6 +720,8 @@ export class ValidationService {
     // setting that can report full coverage.
     const cap = depthCap(p.depth);
     const cmp = { matched: 0, missing: 0, different: 0 };
+    /** Columns the comparison declined to answer for, merged across batches. */
+    const uncompared = new Map<string, { reason: string; records: number }>();
     let examined = 0;
     // Every difference found, including the ones past the listing cap. The counts a reader adds up
     // must be the real ones; only the examples are limited.
@@ -764,6 +798,13 @@ export class ValidationService {
       cmp.matched += batch.matched;
       cmp.missing += batch.missing;
       cmp.different += batch.different;
+      for (const column of batch.uncompared) {
+        const seen = uncompared.get(column.field);
+        // The first reason is kept: the same column fails the same way, and a later record's wording
+        // would only replace it with an equivalent one.
+        if (seen) seen.records += column.records;
+        else uncompared.set(column.field, { reason: column.reason, records: column.records });
+      }
       examined += pairs.length;
       // The counts above are complete; only the listed examples are capped, and the report says so
       // when they are. Keeping every difference in memory to throw most of them away at the insert
@@ -937,6 +978,30 @@ export class ValidationService {
     base.failedInRun = failedInRun;
     base.unresolvedInRun = unresolvedInRun;
     base.different = cmp.different;
+    /**
+     * Columns nobody can answer for.
+     *
+     * Reported as a WARNING rather than folded into `different`, because "we could not compare this"
+     * and "this does not match" are different statements and only one of them is a finding about the
+     * data. The records were still compared on every other column, which is why they are counted as
+     * matched — the limit is on a column, and that is where the report puts it.
+     */
+    base.uncomparedColumns =
+      uncompared.size > 0
+        ? [...uncompared.entries()].map(([field, v]) => ({ field, reason: v.reason, records: v.records }))
+        : null;
+    if (base.uncomparedColumns) {
+      const listed = base.uncomparedColumns
+        .slice(0, 5)
+        .map((c) => `${c.field} (${c.reason}; ${c.records} record(s))`)
+        .join('; ');
+      const more = base.uncomparedColumns.length > 5 ? ` and ${base.uncomparedColumns.length - 5} more` : '';
+      checks.push({
+        check: 'FIELD_VALUES',
+        outcome: 'WARNING',
+        message: `${base.uncomparedColumns.length} column(s) could not be compared: ${listed}${more}. Every other column on those records was compared normally.`,
+      });
+    }
     // Coverage is derived from the counts rather than written beside them, so a message cannot
     // claim more than the numbers underneath it support.
     base.coverage = coverageOf({
@@ -1447,6 +1512,7 @@ export class ValidationService {
       duplicates: result.duplicates,
       duplicateCoverage: result.duplicateCoverage,
       uniqueness: result.uniqueness,
+      uncomparedColumns: result.uncomparedColumns,
       aggregates: result.aggregates,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
@@ -1517,6 +1583,7 @@ export class ValidationService {
         duplicates: e.duplicates ?? null,
         duplicateCoverage: e.duplicateCoverage ?? null,
         uniqueness: e.uniqueness ?? null,
+        uncomparedColumns: e.uncomparedColumns ?? null,
         aggregates: e.aggregates ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,

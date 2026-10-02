@@ -1493,11 +1493,34 @@ export interface ValidationEntityResultDto {
    * a primary-key scan be read as evidence of business uniqueness.
    */
   uniqueness: UniquenessCheck | null;
+  /**
+   * Columns the comparison could not honestly answer for, and why.
+   *
+   * A JSON document that repeats a key, or a binary value past the size this platform will read, is
+   * genuinely unknown — not equal and not different. Counting such a record as matched would be a
+   * silent false pass, and counting it as different would report a problem nobody has shown. So the
+   * limitation is recorded where it actually lives, which is the column, and the record is still
+   * compared on everything else. Null on reports produced before this was recorded.
+   */
+  uncomparedColumns: UncomparedColumn[] | null;
   matched: number;
   missing: number;
   different: number;
   brokenReferences: number;
   checks: ValidationCheckDto[];
+}
+
+/**
+ * One column the comparison declined to answer for, and how many records it affected.
+ *
+ * `reason` is written by the comparison itself, so what a report prints is what the code decided
+ * rather than a restatement of it.
+ */
+export interface UncomparedColumn {
+  field: string;
+  reason: string;
+  /** How many of the examined records hit this. */
+  records: number;
 }
 
 export interface ValidationSummary {
