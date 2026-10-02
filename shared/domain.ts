@@ -327,6 +327,9 @@ export function auditCategory(action: string): AuditCategory {
   )
     return 'VERIFICATION';
   if (action.startsWith('SCHEDULE_')) return 'SCHEDULES';
+  // Stated rather than left to the fallthrough: a permission change is the event an auditor looks for
+  // first, and a reader should not have to work out that it lands here by elimination.
+  if (action.startsWith('TEAM_')) return 'ADMIN';
   return 'ADMIN';
 }
 

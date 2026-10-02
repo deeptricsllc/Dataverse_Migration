@@ -19,6 +19,8 @@ const TOP_LEVEL: { path: string; proof: RegExp }[] = [
   { path: '/migration', proof: /Migration plans/ },
   { path: '/validation', proof: /Validation/ },
   { path: '/runs', proof: /Runs/ },
+  { path: '/team', proof: /^Team$/ },
+  { path: '/audit', proof: /Audit trail/ },
   { path: '/diagnostics', proof: /Microsoft connection checks/ },
   { path: '/settings', proof: /Settings/ },
 ];

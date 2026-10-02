@@ -8,6 +8,8 @@ import {
   FolderKanban,
   GitCompareArrows,
   History,
+  ScrollText,
+  UserCog,
   LayoutDashboard,
   Lock,
   LogOut,
@@ -36,6 +38,11 @@ const NAV = [
   { to: '/migration', label: 'Migration', icon: Truck },
   { to: '/validation', label: 'Validation', icon: ShieldCheck },
   { to: '/runs', label: 'Runs', icon: History },
+  // Two destinations the roles and the audit trail never had. Audit lived inside Settings, which is where
+  // a feature goes when nobody has decided what it is, and Team did not exist at all — so four workspace
+  // roles were enforced on every request with no way to assign one.
+  { to: '/team', label: 'Team', icon: UserCog },
+  { to: '/audit', label: 'Audit', icon: ScrollText },
   // Read-only checks of the Microsoft connection specifically, in a product that also
   // migrates SQL Server, PostgreSQL, MySQL and files. "Diagnostics" promised the whole
   // platform and delivered one provider.

@@ -24,6 +24,7 @@ import { PlanningService } from './planning-service';
 import { ProjectService } from './project-service';
 import { ConnectionService } from './connection-service';
 import { OperationsService } from './operations-service';
+import { TeamService } from './team-service';
 import { DataQualityService } from './data-quality-service';
 import { ProfilingService } from './profiling-service';
 import { TransformationService } from './transformation/transformation-service';
@@ -117,6 +118,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   );
   const connectionAdmin = new ConnectionService(config, db, connections, audit, logger);
   const operations = new OperationsService(config, db, logger.child({ component: 'operations' }));
+  const team = new TeamService(db, audit, logger.child({ component: 'team' }));
   const profiling = new ProfilingService(db, environments, metadata, connections, logger);
   const projectsSvc = new ProjectService(db, environments, audit, logger);
   const analysis = new AnalysisService(
@@ -227,6 +229,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     identity,
     operations,
+    team,
     auth,
     connections,
     queue,

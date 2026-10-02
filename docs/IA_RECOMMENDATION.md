@@ -160,8 +160,20 @@ Plan-scoped routes need a plan-to-project lookup to redirect, which every plan a
 
 Four steps, each one shippable and each one leaving the product working:
 
-1. **Add the workspace items that do not exist.** Audit and Team become destinations; nothing moves.
-   This is the step the Phase 4 roles need and it is additive.
+1. ~~**Add the workspace items that do not exist.** Audit and Team become destinations; nothing moves.~~
+   **Done in Phase 5.** `/team` and `/audit` are destinations with nav items. Every existing route still
+   works, so no saved link is broken, and nothing else moved.
+
+   Doing it found the gap behind the recommendation rather than merely the navigation one. **The four
+   workspace roles could not be assigned.** They were defined, enforced on every request and covered by
+   tests, and nothing in the product could set one: the first member became an administrator by being
+   first, everybody after them a migration operator, and `VALIDATOR` and `READ_ONLY` were unreachable. A
+   permission model nobody can configure is two hard-coded roles with extra names. So step 1 also shipped
+   `GET /api/team` and `PATCH /api/team/:userId`, with the two guards against a lockout this product
+   cannot undo: nobody changes their own role, and the last administrator stays.
+
+   The audit trail was **moved**, not copied, so there is one audit view. Settings keeps a pointer.
+
 2. **Give a project the seven tabs, as views over the pages that already exist.** No page is rewritten;
    each is rendered inside a project shell that knows the project. Old routes still work.
 3. **Collapse the sidebar** to the five workspace items and add the redirects. This is the step a user

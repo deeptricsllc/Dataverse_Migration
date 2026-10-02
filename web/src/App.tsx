@@ -18,6 +18,8 @@ import { PreflightPage } from './pages/PreflightPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { RunDetailPage } from './pages/RunDetailPage';
+import { AuditPage } from './pages/AuditPage';
+import { TeamPage } from './pages/TeamPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { UserMappingPage } from './pages/UserMappingPage';
@@ -71,6 +73,12 @@ export function App() {
         <Route path="migration/plans/:planId" element={<PlanPage />} />
         <Route path="migration/plans/:planId/preflight" element={<PreflightPage />} />
         <Route path="diagnostics" element={<DiagnosticsPage />} />
+        {/*
+          Step one of the information-architecture recommendation: Audit and Team become destinations, and
+          nothing else moves. Every existing route still works, so no link anybody has saved is broken.
+        */}
+        <Route path="team" element={<TeamPage />} />
+        <Route path="audit" element={<AuditPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:runId" element={<RunDetailPage />} />
         <Route path="validation" element={<ValidationPage />} />

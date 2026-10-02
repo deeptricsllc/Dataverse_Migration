@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { writtenByRun } from '../../../shared/run-metrics';
-import { normaliseRole } from '../../../shared/authorization';
+import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
 import { buildIdentity, publicBuildIdentity } from '../build-info';
 import { attemptMetrics } from '../services/attempt-metrics';
@@ -246,6 +246,24 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       throw forbidden('The sign-in configuration is for the operators of this deployment.');
     }
     return describeAuthConfiguration(config);
+  });
+
+  /**
+   * Who is in this workspace, and what each of them may do.
+   *
+   * Readable by anybody in it: knowing who else can see your data is not privileged information, and a
+   * read-only member who cannot tell whom to ask for access has been given a dead end.
+   */
+  app.get('/api/team', async (req) => s.team.list(req.ctx));
+
+  /**
+   * Changes a role. Administrators only, never your own, and never the last administrator — the two
+   * lockouts a workspace cannot recover from without a support tool this product does not have.
+   */
+  app.patch('/api/team/:userId', async (req) => {
+    const { userId } = z.object({ userId: uuid }).parse(req.params);
+    const { role } = z.object({ role: z.enum(WORKSPACE_ROLES) }).parse(req.body);
+    return s.team.setRole(req.ctx, userId, role);
   });
 
   app.patch('/api/access-requests/:id', async (req) => {

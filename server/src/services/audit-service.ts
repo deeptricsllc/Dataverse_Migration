@@ -138,6 +138,8 @@ export type AuditAction =
   | 'VALIDATION_REQUESTED'
   | 'VALIDATION_COMPLETED'
   | 'TABLE_CATEGORY_CHANGED'
+  /** A workspace role was changed: who, by whom, from what to what. */
+  | 'TEAM_ROLE_CHANGED'
   // Somebody took a copy of what happened. Worth recording: an evidence package leaves the
   // deployment and is the artefact most likely to be forwarded.
   | 'EVIDENCE_EXPORTED'

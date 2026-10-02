@@ -22,7 +22,8 @@ test('the audit trail can be narrowed to the question being asked', async ({ pag
   await page.goto('/environments');
   await expect(page.getByTestId('env-card-DeepTrics QA')).toBeVisible({ timeout: 60_000 });
 
-  await page.goto('/settings');
+  // Its own destination now, rather than a card inside Settings.
+  await page.goto('/audit');
   const trail = page.getByTestId('audit-trail');
   await expect(trail).toBeVisible();
 
