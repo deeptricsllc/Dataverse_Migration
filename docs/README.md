@@ -83,10 +83,11 @@ What a controlled pilot can and cannot promise.
 **Not authority.** Kept because the record of what was found, when, and what was decided is worth more
 than a tidy directory. Where one of these contradicts section 1, section 1 is current.
 
-| Document                           |                                                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------------- |
-| [TRUST_SPRINT.md](TRUST_SPRINT.md) | Definitions, open decisions and known limits, as they stood at the end of that sprint |
-| [SOURCES.md](SOURCES.md)           | Where each external claim came from, with links                                       |
+| Document                               |                                                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| [PHASE_5_REPORT.md](PHASE_5_REPORT.md) | The product-completion sprint: the authentication incident, what was found, and what remains. Historical |
+| [TRUST_SPRINT.md](TRUST_SPRINT.md)     | Definitions, open decisions and known limits, as they stood at the end of that sprint                    |
+| [SOURCES.md](SOURCES.md)               | Where each external claim came from, with links                                                          |
 
 ---
 
