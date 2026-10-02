@@ -12,7 +12,7 @@ import {
   type EvidenceRecoverySummary,
 } from '../../../shared/evidence';
 import type { AppConfig } from '../config';
-import { buildIdentity } from '../build-info';
+import { buildIdentity, describeBuild } from '../build-info';
 import type { AppDb } from '../db/client';
 import { migrationRecordMaps, migrationRuns } from '../db/schema';
 import { ZipStream } from '../lib/zip-stream';
@@ -270,7 +270,7 @@ export class EvidenceService {
 
     const entries: { entry: ZipEntry; describes: string }[] = [
       {
-        entry: file('summary.md', summaryMarkdown(run, report)),
+        entry: file('summary.md', summaryMarkdown(run, report, describeBuild(buildIdentity(this.config)))),
         describes: 'A human-readable account of the run and what validation could say about it.',
       },
       {
@@ -491,7 +491,7 @@ export function assertNoSecrets(entry: ZipEntry): void {
   }
 }
 
-function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null): string {
+function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null, build: string): string {
   const written = writtenByRun(run);
   const lines: string[] = [
     `# Migration evidence`,
@@ -503,6 +503,8 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null):
     `**Status** ${run.status}  `,
     `**Started** ${run.startedAt ?? 'not recorded'}  `,
     `**Finished** ${run.completedAt ?? 'not recorded'}`,
+    ``,
+    `**Produced by** ${build}`,
     ``,
     `## What this run did with each record`,
     ``,
@@ -516,10 +518,39 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null):
     `| Unchanged | ${run.unchanged} | Existed and already matched. Nothing was sent. |`,
     `| Skipped | ${run.skipped} | Existed and were left alone by the conflict rules. In the target, but not this run's doing. |`,
     `| Failed | ${run.failed} | Attempted and not written. Not in the target. |`,
-    `| **Processed** | **${run.processed}** | The five above, added up. |`,
+    /**
+     * The row this table was missing, and the reason the line above it used to be arithmetically wrong.
+     *
+     * `processed` counts unresolved records — something was attempted and the answer was lost — so a
+     * five-row table claiming to sum to it did not add up on exactly the runs where the numbers matter
+     * most. A sign-off document that cannot be reconciled is worse than none.
+     */
+    `| Unresolved | ${run.unresolved} | Attempted, and the platform cannot prove whether the write landed. **Neither in nor out of the target as far as this evidence goes.** |`,
+    `| **Processed** | **${run.processed}** | The six above, added up. |`,
     `| **Written by this run** | **${written}** | Created plus updated. Nothing else. |`,
     ``,
   ];
+
+  /**
+   * Said once, plainly, near the top, when there is anything to say.
+   *
+   * "What remains unresolved" is one of the questions a sign-off has to answer, and a number in a table
+   * is not an answer — somebody signing needs to know that the run is not finished with and what the next
+   * action is.
+   */
+  if (run.unresolved > 0) {
+    lines.push(
+      `> ## ${run.unresolved} record(s) remain unresolved`,
+      `>`,
+      `> The platform attempted a write and could not establish whether it landed. These records are not`,
+      `> counted as migrated and not counted as failed, because neither would be true.`,
+      `>`,
+      `> **This run is not complete.** Open it in the platform, reconcile the records it names, and`,
+      `> re-generate this package. \`lineage/\` lists every one of them with the evidence available for`,
+      `> each — see the \`Write state\` and \`Recovery evidence\` columns.`,
+      ``,
+    );
+  }
 
   if (!report) {
     lines.push(

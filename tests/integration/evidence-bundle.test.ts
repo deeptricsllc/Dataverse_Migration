@@ -127,6 +127,50 @@ describe('migration evidence package', () => {
     }
   });
 
+  it('is a sign-off a reader can reconcile, and names the build that produced it', () => {
+    /**
+     * The outcome table used to list five outcomes and claim they summed to `processed`. They did not:
+     * `processed` counts unresolved records too — something was attempted and the answer was lost — so the
+     * table failed to add up on exactly the runs where the numbers matter most. A sign-off document that
+     * cannot be reconciled is worse than none.
+     */
+    const summary = files.get('summary.md')!.toString('utf8');
+    /** Reads a row of the outcome table by splitting on pipes, which beats escaping a regex for it. */
+    const figure = (label: string) => {
+      for (const line of summary.split('\n')) {
+        const cells = line.split('|').map((c) => c.replaceAll('*', '').trim());
+        if (cells.length >= 3 && cells[1] === label) return Number(cells[2]);
+      }
+      throw new Error(`${label} is not in the outcome table`);
+    };
+
+    const parts = ['Created', 'Updated', 'Unchanged', 'Skipped', 'Failed', 'Unresolved'].map(figure);
+    const processed = figure('Processed');
+    expect(
+      parts.reduce((a, b) => a + b, 0),
+      'the outcomes add up to the processed total, as the document says they do',
+    ).toBe(processed);
+    expect(processed).toBe(run.processed);
+    expect(figure('Written by this run')).toBe(run.created + run.updated);
+
+    // Which build wrote it. The first question asked of a disputed report, and the one nobody can
+    // answer from memory six months later.
+    expect(summary).toContain('**Produced by** v');
+
+    // The questions a sign-off has to answer, each findable in the document.
+    for (const expected of [
+      run.planName,
+      run.sourceEnvironment.displayName,
+      run.targetEnvironment.displayName,
+    ]) {
+      expect(summary, `the summary says ${expected}`).toContain(expected);
+    }
+    expect(summary).toContain('Validation');
+    expect(summary).toContain('Integrity');
+    // And what it refuses to claim about its own integrity.
+    expect(summary).toContain('**not signed**');
+  });
+
   it('says how far the connectors themselves have been verified', () => {
     // A clean validation over a connector nobody has run against the real engine is a weaker
     // statement than the same validation over one that has, and the package must not hide that.
