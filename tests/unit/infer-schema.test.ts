@@ -18,6 +18,94 @@ const infer = (headers: string[], rows: (string | number | boolean | null)[][]) 
 const columnNamed = (headers: string[], rows: (string | number | boolean | null)[][], name: string) =>
   infer(headers, rows).columns.find((c) => c.name === name)!;
 
+describe('reading a delimited file without editing it', () => {
+  /**
+   * The rule for this whole subsystem: a value arrives in the target as it was in the file, unless a
+   * mapping or a transformation says otherwise. Reading is not a transformation.
+   */
+  it('keeps commas inside the values of a semicolon-separated file', () => {
+    // A European export, and the shape that was being quietly damaged: a comma in an unquoted field.
+    const rows = parseDelimited('name;note' + '\r\n' + 'Smith, John;ok' + '\r\n' + 'Doe, Jane;fine');
+    expect(rows[0]).toEqual(['name', 'note']);
+    expect(rows[1], 'the comma in the name survives').toEqual(['Smith, John', 'ok']);
+    expect(rows[2]).toEqual(['Doe, Jane', 'fine']);
+  });
+
+  it('does the same for tab-separated files', () => {
+    const rows = parseDelimited('a' + '\t' + 'b' + '\r\n' + '1,5' + '\t' + 'two, three');
+    expect(rows[1]).toEqual(['1,5', 'two, three']);
+  });
+
+  it('still reads an ordinary comma-separated file, quoting and all', () => {
+    const rows = parseDelimited('a,b' + '\r\n' + '"has, comma","has ""quotes"""');
+    expect(rows[1]).toEqual(['has, comma', 'has "quotes"']);
+  });
+
+  it('reads a value containing a newline, which only quoting can express', () => {
+    const rows = parseDelimited('a,b' + '\r\n' + '"line one' + '\n' + 'line two",second');
+    expect(rows[1]![0]).toBe('line one' + '\n' + 'line two');
+    expect(rows[1]![1]).toBe('second');
+    expect(rows.length, 'one row, not two').toBe(2);
+  });
+
+  it('strips a byte-order mark without eating the first column name', () => {
+    const rows = parseDelimited('\uFEFF' + 'code,name' + '\r\n' + '1,one');
+    expect(rows[0]).toEqual(['code', 'name']);
+  });
+
+  it('leaves a formula-looking value exactly as written', () => {
+    // Neutralising it belongs to the export, where a spreadsheet would evaluate it. On the way in it is
+    // a value, and changing it here would be an edit nobody asked for.
+    const rows = parseDelimited('a,b' + '\r\n' + '=1+1,@SUM(A1)');
+    expect(rows[1]).toEqual(['=1+1', '@SUM(A1)']);
+  });
+});
+
+describe('identifiers that happen to be digits', () => {
+  /**
+   * The one inference that cannot be undone. A part number of `007` read as a number is the number
+   * seven, and nothing downstream reports a difference, because by then the value *is* seven. The source
+   * said 007; the target says 7; every count agrees. This is the shape of silent data loss.
+   */
+  it('keeps a leading zero as text rather than making it a number', () => {
+    const column = columnNamed(['part'], [['007'], ['0012'], ['0999']], 'part');
+    expect(column.type, 'a part number is not a number').toBe('String');
+    expect(column.reason).toMatch(/leading zero/i);
+    expect(column.reason).toMatch(/identifier/i);
+  });
+
+  it('applies to postcodes, account references and anything else written with zeros', () => {
+    for (const values of [
+      ['01234', '02345', '03456'], // postcodes
+      ['000123', '000124'], // account references
+      ['0', '00', '000'], // a column of nothing but zeros
+      ['1', '2', '0012'], // one value is enough: the column holds an identifier
+    ]) {
+      const column = columnNamed(
+        ['code'],
+        values.map((v) => [v]),
+        'code',
+      );
+      expect(column.type, values.join(',')).toBe('String');
+    }
+  });
+
+  it('still calls a real number a number', () => {
+    // A single zero is a number, and so is anything with a decimal point after the zero.
+    expect(columnNamed(['n'], [['0'], ['1'], ['2']], 'n').type).toBe('Integer');
+    expect(columnNamed(['n'], [['0.5'], ['1.5']], 'n').type).toBe('Decimal');
+    expect(columnNamed(['n'], [['10'], ['200'], ['-3']], 'n').type).toBe('Integer');
+    expect(columnNamed(['n'], [['-0.25'], ['1']], 'n').type).toBe('Decimal');
+  });
+
+  it('covers decimals with leading zeros too, which a Decimal type would also lose', () => {
+    // `0012.50` is a reference with a decimal point in it, not a price.
+    const column = columnNamed(['ref'], [['0012.50'], ['0013.75']], 'ref');
+    expect(column.type).toBe('String');
+    expect(column.reason).toMatch(/leading zero/i);
+  });
+});
+
 describe('column types', () => {
   it('narrows only when every value fits', () => {
     const headers = ['clean', 'dirty'];

@@ -635,6 +635,17 @@ export const migrationRecordMaps = pgTable(
     } | null>(),
     auditStatus: text('audit_status').$type<'PENDING' | 'DONE' | 'FAILED' | null>(),
     attempts: integer('attempts').notNull().default(1),
+    /**
+     * Which attempt of the run last touched this record.
+     *
+     * Not the same thing as `attempts` above, which counts how many times this one record was written.
+     * This says which execution of the run is responsible for the state the row is now in, which is what
+     * makes a per-attempt breakdown possible: every record belongs to exactly one attempt, so the
+     * attempts sum to the run total without counting anything twice.
+     *
+     * Null on rows written before this was recorded, which a report says rather than guessing at 1.
+     */
+    runAttempt: integer('run_attempt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

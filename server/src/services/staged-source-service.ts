@@ -576,22 +576,16 @@ export function parseDelimited(text: string): (string | number | boolean | null)
     else if (!inQuotes && ch in counts) counts[ch as keyof typeof counts]++;
   }
   const delimiter = (Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? ',') as string;
-  if (delimiter === ',') return parseCsvRows(stripped);
-  // The CSV reader handles quoting; normalizing the delimiter first reuses it rather than repeating it.
-  return parseCsvRows(retabulate(stripped, delimiter));
-}
-
-/** Rewrites an unquoted delimiter as a comma, leaving quoted sections untouched. */
-function retabulate(text: string, delimiter: string): string {
-  let out = '';
-  let inQuotes = false;
-  for (const ch of text) {
-    if (ch === '"') inQuotes = !inQuotes;
-    if (!inQuotes && ch === delimiter) out += ',';
-    else if (!inQuotes && ch === ',') out += ' ';
-    else out += ch;
-  }
-  return out;
+  /**
+   * Parsed with the delimiter the file actually uses.
+   *
+   * This used to rewrite a semicolon- or tab-separated file into a comma-separated one and then parse
+   * that — which meant doing something about the commas already in the data, and what it did was turn
+   * them into spaces. `Smith, John` in an unquoted field became `Smith John` before anything else in the
+   * product saw the value: a silent edit to a customer's data, in the subsystem whose whole job is to
+   * carry values across unchanged.
+   */
+  return parseCsvRows(stripped, delimiter);
 }
 
 /**

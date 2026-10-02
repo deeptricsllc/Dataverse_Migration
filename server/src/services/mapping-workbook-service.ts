@@ -683,7 +683,16 @@ function findMappingRows(sheets: XlsxReadSheet[]): ImportRow[] | null {
 const stripBom = (text: string) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 
 /** RFC 4180 enough: quoted fields, doubled quotes inside them, CRLF or LF. */
-export function parseCsvRows(text: string): string[][] {
+/**
+ * Reads delimited text.
+ *
+ * `delimiter` exists because a semicolon- or tab-separated file used to be rewritten into a
+ * comma-separated one before parsing, and that rewrite had to do something about the commas already in
+ * the data — it turned them into spaces. So `Smith, John` in an unquoted field of a European CSV became
+ * `Smith John`, silently, before anything else in the product saw the value. Parsing with the real
+ * delimiter is both simpler and lossless.
+ */
+export function parseCsvRows(text: string, delimiter = ','): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -700,7 +709,7 @@ export function parseCsvRows(text: string): string[][] {
       continue;
     }
     if (ch === '"') quoted = true;
-    else if (ch === ',') {
+    else if (ch === delimiter) {
       row.push(cell);
       cell = '';
     } else if (ch === '\n') {

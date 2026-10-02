@@ -395,6 +395,11 @@ export function RunDetailPage() {
           </Table>
         </Card>
       )}
+      {/*
+        Only when there was more than one attempt. On a run that finished first time the breakdown is the
+        run's own numbers restated, and a panel that says nothing new teaches people to skip panels.
+      */}
+      {r.attempt > 1 && <AttemptsPanel run={r} />}
       {tab === 'errors' && <ErrorsPanel run={r} />}
       {tab === 'records' && <RecordsPanel run={r} />}
       {tab === 'rollback' && <RollbackPanel runId={r.id} />}
@@ -419,6 +424,113 @@ export function RunDetailPage() {
         </p>
       </Modal>
     </>
+  );
+}
+
+/**
+ * What each attempt is answerable for.
+ *
+ * Shown apart from the run's counters, and labelled, because they are different kinds of number: the
+ * run's totals are what somebody signs for, and these are execution history. Conflating them is how a
+ * reader ends up with a figure larger than the data.
+ */
+function AttemptsPanel({ run }: { run: MigrationRunDto }) {
+  const q = useQuery({
+    queryKey: ['run-attempts', run.id, run.attempt, run.processed, run.status],
+    queryFn: () =>
+      get<{
+        attempt: number;
+        run: Record<string, number>;
+        attempts: {
+          attempt: number | null;
+          created: number;
+          updated: number;
+          unchanged: number;
+          skipped: number;
+          failed: number;
+          unresolved: number;
+          firstRecordAt: string;
+          lastRecordAt: string;
+        }[];
+        someRecordsPredateAttemptTracking: boolean;
+        means: string;
+      }>(`/api/runs/${run.id}/attempts`),
+  });
+  if (q.isLoading) return null;
+  if (q.error || !q.data) return null;
+  const { attempts, means, someRecordsPredateAttemptTracking } = q.data;
+
+  return (
+    <Card className="mt-4" data-testid="attempts-panel">
+      <div className="px-6 pt-5">
+        <h2 className="text-sm font-semibold text-slate-900">What each attempt did</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{means}</p>
+      </div>
+      <Table className="mt-3">
+        <thead>
+          <tr>
+            <Th>Attempt</Th>
+            <Th className="text-right">Created</Th>
+            <Th className="text-right">Updated</Th>
+            <Th className="text-right">Unchanged</Th>
+            <Th className="text-right">Skipped</Th>
+            <Th className="text-right">Failed</Th>
+            <Th className="text-right">Unresolved</Th>
+            <Th>Touched records</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {attempts.map((a) => (
+            <tr key={String(a.attempt)}>
+              <Td>
+                {a.attempt === null ? (
+                  <span
+                    className="text-slate-500"
+                    title="These records predate the platform recording which attempt touched them."
+                  >
+                    not recorded
+                  </span>
+                ) : (
+                  <strong>#{a.attempt}</strong>
+                )}
+              </Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.created)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.updated)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.unchanged)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.skipped)}</Td>
+              <Td className={`text-right tabular-nums ${a.failed ? 'text-red-700' : ''}`}>
+                {fmtNumber(a.failed)}
+              </Td>
+              <Td className={`text-right tabular-nums ${a.unresolved ? 'text-amber-700' : ''}`}>
+                {fmtNumber(a.unresolved)}
+              </Td>
+              <Td className="text-xs text-slate-500">
+                {fmtDate(a.firstRecordAt)} → {fmtDate(a.lastRecordAt)}
+              </Td>
+            </tr>
+          ))}
+          {/* The totals, so the two kinds of number can be reconciled without leaving the screen. */}
+          <tr className="border-t-2 border-slate-200 bg-slate-50/60">
+            <Td>
+              <strong>Run total</strong>
+            </Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.created)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.updated)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.unchanged)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.skipped)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.failed)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.unresolved)}</Td>
+            <Td className="text-xs text-slate-500">every record, counted once</Td>
+          </tr>
+        </tbody>
+      </Table>
+      {someRecordsPredateAttemptTracking && (
+        <p className="px-6 pb-4 text-xs text-slate-500">
+          Some records were migrated before this platform recorded which attempt touched them, so they are
+          listed as not recorded rather than assigned to the first attempt.
+        </p>
+      )}
+    </Card>
   );
 }
 

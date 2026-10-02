@@ -5,6 +5,7 @@ import { writtenByRun } from '../../../shared/run-metrics';
 import { normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
 import { buildIdentity, publicBuildIdentity } from '../build-info';
+import { attemptMetrics } from '../services/attempt-metrics';
 import { describeAuthConfiguration } from '../auth/auth-configuration';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
@@ -694,6 +695,42 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/runs', async (req) => s.runs.list(req.ctx));
   app.get('/api/runs/:id', async (req) => s.runs.get(req.ctx, idParams.parse(req.params).id));
+
+  /**
+   * What each attempt of this run is answerable for.
+   *
+   * A separate call rather than a field on the run, because it is a different kind of number: the run's
+   * counters are what somebody signs for, and this is execution history. Fetching it is a choice the
+   * reader makes, which is also the distinction the report has to carry.
+   */
+  app.get('/api/runs/:id/attempts', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.runs.get(req.ctx, id);
+    const attempts = await attemptMetrics(s.db, run.id);
+    return {
+      runId: run.id,
+      attempt: run.attempt,
+      /** The run's own totals, so the two can be reconciled on one screen rather than from memory. */
+      run: {
+        total: run.total,
+        created: run.created,
+        updated: run.updated,
+        unchanged: run.unchanged,
+        skipped: run.skipped,
+        failed: run.failed,
+        unresolved: run.unresolved,
+      },
+      attempts,
+      /** True when some records predate the attempt being recorded, which a reader must be told. */
+      someRecordsPredateAttemptTracking: attempts.some((a) => a.attempt === null),
+      means:
+        'Run totals are final accountability: every source record, counted once. Attempt figures are ' +
+        'execution history: which attempt is answerable for the state each record is now in. They sum to ' +
+        'the run totals because each record belongs to exactly one attempt — the one that last touched ' +
+        'it — so work an earlier attempt did on a record a later attempt touched again is not separately ' +
+        'visible here.',
+    };
+  });
   app.post('/api/runs/:id/:action', async (req) => {
     const { id, action } = z
       .object({ id: uuid, action: z.enum(['cancel', 'pause', 'resume', 'retry']) })

@@ -1368,6 +1368,36 @@ export interface MigrationErrorDto {
   createdAt: string;
 }
 
+/**
+ * What one attempt of a run is answerable for.
+ *
+ * **Execution history, not accountability.** The run's own counters are the figures somebody signs for:
+ * every source record, counted exactly once, under one outcome. These say which attempt is responsible
+ * for the state each record is now in — the answer to "the first run failed, what did the second one
+ * actually do".
+ *
+ * They sum to the run total exactly, and that is by construction rather than luck: each record records
+ * the attempt that last touched it, so every record belongs to one attempt. Summing *activity* instead
+ * would produce a figure larger than the data, which is the trap worth avoiding.
+ *
+ * The cost of that choice: work an earlier attempt did on a record a later attempt touched again is not
+ * separately visible. A record created in attempt 1 and updated in attempt 2 appears under attempt 2
+ * only.
+ */
+export interface RunAttemptSummary {
+  /** Null for records written before the attempt was recorded. "Not known", not attempt zero. */
+  attempt: number | null;
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  failed: number;
+  unresolved: number;
+  /** When this attempt first and last touched a record. Not the attempt's start and end. */
+  firstRecordAt: string;
+  lastRecordAt: string;
+}
+
 export interface RecordMapDto {
   entity: string;
   sourceId: string;

@@ -1138,6 +1138,7 @@ export class MigrationEngine {
           writeState: 'INTENDED' as const,
           intendedOperation: i.operation,
           reconcileEvidence: i.evidence,
+          runAttempt: run.attempt,
         })),
       )
       .onConflictDoUpdate({
@@ -1148,6 +1149,7 @@ export class MigrationEngine {
           intendedOperation: sql`excluded.intended_operation`,
           reconcileEvidence: sql`excluded.reconcile_evidence`,
           reconcileNote: null,
+          runAttempt: run.attempt,
           updatedAt: new Date(),
         },
       });
@@ -1657,6 +1659,7 @@ export class MigrationEngine {
           principalFallbacks: r.fallbacks.length ? r.fallbacks : null,
           auditPending: r.audit,
           auditStatus: r.audit ? 'PENDING' : null,
+          runAttempt: run.attempt,
         })
         .onConflictDoUpdate({
           target: [migrationRecordMaps.runId, migrationRecordMaps.logicalName, migrationRecordMaps.sourceId],
@@ -1672,6 +1675,8 @@ export class MigrationEngine {
             auditPending: r.audit,
             auditStatus: r.audit ? 'PENDING' : null,
             attempts: sql`${migrationRecordMaps.attempts} + 1`,
+            // The attempt that last touched it, which is the one now answerable for its state.
+            runAttempt: run.attempt,
             updatedAt: new Date(),
           },
         });

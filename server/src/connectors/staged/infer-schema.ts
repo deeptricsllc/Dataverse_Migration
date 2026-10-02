@@ -32,6 +32,18 @@ const FALSE_WORDS = new Set(['false', 'no', 'n', '0', 'f']);
 const INTEGER = /^-?\d{1,25}$/;
 const DECIMAL = /^-?\d{1,15}(\.\d{1,10})?$/;
 const GUID = /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i;
+
+/**
+ * Digits with a leading zero, which is an identifier written in digits rather than a number.
+ *
+ * `007`, `01234`, `000-123` — a part number, a postcode, an account reference. Inferring a number from
+ * these loses the zeros, which is the one thing an identifier cannot survive, and it loses them silently:
+ * the file says 007 and the target says 7, and nothing reports a difference because by then the value is
+ * the number seven.
+ *
+ * `0` on its own is a number. `0.5` is a number. `0` followed by another digit is not.
+ */
+const LEADING_ZERO_DIGITS = /^-?0\d/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 /** Day-first and month-first are both common and indistinguishable, so neither is guessed. */
@@ -126,6 +138,8 @@ function inferColumn(
   let allDateOnly = true;
   let allDateTime = true;
   let anyAmbiguousDate = false;
+  /** Any value that is digits with a leading zero, which a numeric type would destroy. */
+  let anyLeadingZero = false;
   let examined = 0;
   const distinct = new Set<string>();
   let distinctOverflow = false;
@@ -148,6 +162,7 @@ function inferColumn(
     if (!DATE_ONLY.test(text)) allDateOnly = false;
     if (!DATE_ONLY.test(text) && !DATE_TIME.test(text)) allDateTime = false;
     if (AMBIGUOUS_DATE.test(text)) anyAmbiguousDate = true;
+    if (LEADING_ZERO_DIGITS.test(text)) anyLeadingZero = true;
   }
 
   const unique = examined > 0 && !distinctOverflow && distinct.size === examined;
@@ -169,6 +184,25 @@ function inferColumn(
   }
   if (allGuid) {
     return { name, type: 'Uniqueidentifier', maxLength: null, reason: 'every value is a GUID', ...stats };
+  }
+  /**
+   * An identifier that happens to be digits stays text.
+   *
+   * Checked before the numeric branches rather than inside them, because it applies to whole numbers and
+   * to decimals alike, and because the decision is not "which number type" — it is that this is not a
+   * number. Preserving the source value is the rule; a type that cannot hold `007` is a transformation
+   * nobody asked for.
+   */
+  if (anyLeadingZero && (allInteger || allDecimal)) {
+    return {
+      name,
+      type: maxLength > 4000 ? 'Memo' : 'String',
+      maxLength: maxLength || 255,
+      reason:
+        'digits with a leading zero, which is an identifier rather than a number — kept as text so the ' +
+        'zeros survive',
+      ...stats,
+    };
   }
   if (allInteger) {
     const big = [...distinct].some((v) => !Number.isSafeInteger(Number(v)));
