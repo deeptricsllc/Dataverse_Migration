@@ -637,6 +637,20 @@ export class MigrationEngine {
       ids: string[],
     ): Promise<Map<string, { outcome: RecordOutcome; writeState: WriteState | null }>> => {
       if (!hasPriorWork || ids.length === 0) return new Map();
+      /**
+       * Identifiers are stored lowercased, so they have to be looked up that way.
+       *
+       * `persistResults` writes `sourceId.toLowerCase()` — right for a GUID, where case means nothing —
+       * and this compared the source's own casing against it. For a GUID source that returns lowercase
+       * it happened to match; for a file keyed on `DRILL-00001`, or a Dataverse tenant returning
+       * uppercase GUIDs, nothing matched and **every already-migrated record was processed again**.
+       *
+       * No duplicate resulted, because the matcher lowercases its own lookup and found the record — but
+       * the conflict rules then recorded it as SKIPPED, overwriting the CREATED row. A destructive drill
+       * on deployed QA killed the process after 3,000 records and the run came back reporting that it
+       * had created 6 of them.
+       */
+      const wanted = ids.map((id) => id.toLowerCase());
       const rows = await this.db
         .select({
           sourceId: migrationRecordMaps.sourceId,
@@ -648,10 +662,12 @@ export class MigrationEngine {
           and(
             eq(migrationRecordMaps.runId, run.id),
             eq(migrationRecordMaps.logicalName, entity.logicalName),
-            inArray(migrationRecordMaps.sourceId, ids),
+            inArray(migrationRecordMaps.sourceId, wanted),
           ),
         );
-      return new Map(rows.map((r) => [r.sourceId, { outcome: r.outcome, writeState: r.writeState }]));
+      return new Map(
+        rows.map((r) => [r.sourceId.toLowerCase(), { outcome: r.outcome, writeState: r.writeState }]),
+      );
     };
 
     const sourceColumns = [
@@ -686,7 +702,7 @@ export class MigrationEngine {
          * ambiguous write was marked FAILED.
          */
         const pending = page.filter((r) => {
-          const prior = handled.get(r.id);
+          const prior = handled.get(r.id.toLowerCase());
           if (!prior) return true;
           if (isUnresolved(prior.writeState)) return false;
           return prior.outcome === 'FAILED';

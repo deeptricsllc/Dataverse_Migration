@@ -460,6 +460,71 @@ describe('crash matrix', () => {
   }, 900_000);
 
   // =========================================================================
+  it('does not re-process records it already migrated, whatever case their keys are in', async () => {
+    /**
+     * Found by a destructive drill on deployed QA, not by this suite.
+     *
+     * Identifiers are stored lowercased — right for a GUID, where case means nothing. The resume filter
+     * compared the source's own casing against them, so for a source keyed on `DRILL-00001` nothing
+     * matched and every already-migrated record was processed again. No duplicate resulted, because the
+     * matcher lowercases its own lookup and found the record, but the conflict rules then recorded it as
+     * SKIPPED — overwriting CREATED. A run that migrated 3,000 records came back saying it created 6.
+     *
+     * The target was right and the evidence was wrong by a factor of five hundred, which for a product
+     * whose claim is "here is what actually happened" is as bad as the duplicate would have been.
+     */
+    // A source whose keys are not lowercase and not GUIDs. The workspace is the one `beforeEach`
+    // signed into: signing in again would create a second workspace and lose these environments.
+    const org = organizationId;
+    const mixedCaseIds = Array.from({ length: 12 }, (_, i) => `DRILL-${String(i).padStart(4, '0')}`);
+    await t.services.db.insert(demoRecords).values(
+      mixedCaseIds.map((id, i) => ({
+        organizationId: org,
+        environmentKey: 'demo-dev',
+        logicalName: 'dtx_office',
+        recordId: id,
+        data: {
+          dtx_officeid: id,
+          dtx_name: `Mixed Case Office ${i}`,
+          dtx_city: 'Leeds',
+          dtx_headcount: 10 + i,
+        },
+      })),
+    );
+
+    /**
+     * Late enough that a whole batch has been persisted first.
+     *
+     * Regions take the first two batches; the first office batch persists its rows, and the crash lands
+     * in the second. That is what gives the resume something already recorded as CREATED to leave alone.
+     */
+    injection = { boundary: 'AFTER_WRITE_BEFORE_MAP', onCall: 11, table: 'dtx_office' };
+    const run = await migrate(['dtx_region', 'dtx_office'], { batchSize: 3 });
+    const afterCrash = await rows(run.id, 'dtx_office');
+    const createdBefore = afterCrash.filter((r) => r.outcome === 'CREATED').map((r) => r.sourceId);
+    expect(createdBefore.length, 'some records were created before the crash').toBeGreaterThan(0);
+
+    const resumed = await retry(run.id);
+    const after = await rows(resumed.id, 'dtx_office');
+    // The records created by the first attempt are still recorded as created.
+    for (const sourceId of createdBefore) {
+      const row = after.find((r) => r.sourceId === sourceId)!;
+      expect(row.outcome, `${sourceId} is still recorded as created`).toBe('CREATED');
+    }
+    expect(resumed.created, 'and the run still says it created them').toBeGreaterThanOrEqual(
+      createdBefore.length,
+    );
+    // And every record that landed has exactly one target record. The twelve synthetic offices have no
+    // region to point at — `dtx_regionid` is required — so they fail, which is the right answer and not
+    // what this test is about.
+    const final = await accountForEveryRecord(resumed, 'dtx_office');
+    const failedRows = after.filter((r) => r.outcome === 'FAILED').length;
+    expect(final.distinctTargets, 'one target record per record that landed').toBe(
+      final.identityRows - final.unresolved - failedRows,
+    );
+  }, 900_000);
+
+  // =========================================================================
   it('I — after recovery the run finishes and the target holds exactly what it should', async () => {
     injection = { boundary: 'COMMITTED_ANSWER_LOST', onCall: 4, table: 'account' };
     const run = await migrate(['account'], { batchSize: 5 });
