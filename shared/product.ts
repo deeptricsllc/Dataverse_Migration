@@ -19,3 +19,13 @@ export const PRODUCT_SHORT_NAME = 'Analysis & Migration';
 
 /** For a sentence that needs both, e.g. the footer and the terms. */
 export const PRODUCT_FULL_NAME = `${PRODUCT_NAME} · by ${VENDOR_NAME}`;
+
+/**
+ * The application version.
+ *
+ * Duplicated from package.json on purpose, and held to it by `tests/unit/build-identity.test.ts`: the
+ * alternative is reading the file at runtime, which means either a build step that injects it or a
+ * filesystem read from inside a bundle, and both fail quietly in a way a mismatched constant cannot.
+ * A test that fails when the two disagree is cheaper than either.
+ */
+export const PRODUCT_VERSION = '1.0.0';

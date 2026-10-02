@@ -1,6 +1,7 @@
 import { PRODUCT_NAME } from '../../shared/product';
 import { buildApp } from './app';
 import { describeAuthConfiguration, formatAuthConfiguration } from './auth/auth-configuration';
+import { buildIdentity, describeBuild } from './build-info';
 import { loadConfig } from './config';
 import { createDatabase, migrateWhenReachable } from './db/client';
 import { createLogger } from './logger';
@@ -54,8 +55,13 @@ if (!config.RUN_WORKER && database.kind === 'pglite') {
 
 await app.listen({ host: config.HOST, port: config.PORT });
 logger.info(
-  { url: config.APP_BASE_URL, demoMode: config.DEMO_MODE, microsoftEnabled: config.microsoftEnabled },
-  `${PRODUCT_NAME} started`,
+  {
+    url: config.APP_BASE_URL,
+    demoMode: config.DEMO_MODE,
+    microsoftEnabled: config.microsoftEnabled,
+    build: buildIdentity(config),
+  },
+  `${PRODUCT_NAME} started — ${describeBuild(buildIdentity(config))}`,
 );
 if (worker) await worker.start();
 scheduler?.start();

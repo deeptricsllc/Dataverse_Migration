@@ -11,6 +11,8 @@ import {
   type EvidenceManifest,
   type EvidenceRecoverySummary,
 } from '../../../shared/evidence';
+import type { AppConfig } from '../config';
+import { buildIdentity } from '../build-info';
 import type { AppDb } from '../db/client';
 import { migrationRecordMaps, migrationRuns } from '../db/schema';
 import { ZipStream } from '../lib/zip-stream';
@@ -77,6 +79,7 @@ const LINEAGE_PAGE = 500;
 
 export class EvidenceService {
   constructor(
+    private readonly config: AppConfig,
     private readonly db: AppDb,
     private readonly runs: MigrationRunService,
     private readonly validation: ValidationService,
@@ -398,6 +401,11 @@ export class EvidenceService {
     return {
       evidenceSchemaVersion: EVIDENCE_SCHEMA_VERSION,
       generatedAt: new Date().toISOString(),
+      // Which build wrote this, because the package outlives the deployment and the question gets asked.
+      producedBy: (() => {
+        const identity = buildIdentity(this.config);
+        return { version: identity.version, commit: identity.commit, deployment: identity.deployment };
+      })(),
       run: {
         id: run.id,
         planName: run.planName,

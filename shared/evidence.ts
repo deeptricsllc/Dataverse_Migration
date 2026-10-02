@@ -115,6 +115,19 @@ export interface EvidenceManifest {
   schema?: number;
   evidenceSchemaVersion: number;
   generatedAt: string;
+  /**
+   * Which build wrote this package.
+   *
+   * A package outlives the deployment that produced it, and "which build made this" is exactly the
+   * question somebody asks of an artifact from six months ago — usually because a number in it is
+   * disputed. Absent on packages written before this was recorded, which a reader should take as "not
+   * known" rather than as "the current build".
+   */
+  producedBy?: {
+    version: string;
+    commit: string | null;
+    deployment: string;
+  };
   run: {
     id: string;
     planName: string;

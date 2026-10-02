@@ -42,6 +42,7 @@ interface SettingsDto {
   };
   safety: { businessLogicBypassAllowed: boolean; canBypass: boolean };
   database: string;
+  build: { version: string; commit: string | null; branch: string | null; deployment: string };
 }
 
 export function SettingsPage() {
@@ -149,6 +150,19 @@ export function SettingsPage() {
               <Row label="You can bypass" value={settings.data.safety.canBypass ? 'Yes (audited)' : 'No'} />
               <Row label="Default conflict strategy" value="Skip existing" />
               <Row label="Database" value={settings.data.database} />
+              {/*
+                Which build produced what you are looking at. The first thing anyone needs when a report
+                is disputed, and the thing nobody can supply from memory.
+              */}
+              <Row
+                label="Build"
+                value={
+                  <span className="font-mono text-xs">
+                    v{settings.data.build.version} · {settings.data.build.deployment}
+                    {settings.data.build.commit ? ` · ${settings.data.build.commit}` : ''}
+                  </span>
+                }
+              />
             </dl>
             {settings.data.demoMode && settings.data.organization.isDemo && user.role === 'ADMIN' && (
               <div className="mt-4 border-t border-slate-100 pt-4">

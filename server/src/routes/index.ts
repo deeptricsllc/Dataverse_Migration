@@ -4,6 +4,7 @@ import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
+import { buildIdentity, publicBuildIdentity } from '../build-info';
 import { describeAuthConfiguration } from '../auth/auth-configuration';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
@@ -69,7 +70,17 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Health & auth
   // ---------------------------------------------------------------------------
 
-  app.get('/api/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
+  /**
+   * Public, so it says only what a hostname already reveals: which version, and which deployment. The
+   * commit lives behind the session in `/api/settings`, where the person asking "which build produced
+   * this report" actually is.
+   */
+  const build = buildIdentity(config);
+  app.get('/api/health', async () => ({
+    status: 'ok',
+    time: new Date().toISOString(),
+    ...publicBuildIdentity(build),
+  }));
 
   app.get('/api/auth/config', async () => ({
     microsoftEnabled: config.microsoftEnabled,
@@ -216,6 +227,18 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    * prospect who cannot sign in gets a sentence and a way forward; the person who can fix it gets
    * this. No secret value is included — only whether each one is present.
    */
+  /**
+   * What an operator needs while a pilot is running: is it healthy, is anything stuck, is anything
+   * waiting for a person. Operator-only — none of it is secret, and all of it is a map of the
+   * deployment's internals, which is nobody else's business.
+   */
+  app.get('/api/platform/operations', async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('Operational diagnostics are for the operators of this deployment.');
+    }
+    return s.operations.report();
+  });
+
   app.get('/api/platform/auth-configuration', async (req) => {
     if (!req.ctx.platformOperator) {
       throw forbidden('The sign-in configuration is for the operators of this deployment.');
@@ -1430,6 +1453,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/settings', async (req) => ({
     organization: req.session!.user.organization,
     user: req.session!.user,
+    // Which build produced what this person is looking at. The first question asked of a wrong report.
+    build,
     demoMode: config.DEMO_MODE,
     microsoft: {
       enabled: config.microsoftEnabled,
