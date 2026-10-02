@@ -99,15 +99,25 @@ No `[BLOCKS_SIGN_IN]` line and no `[WARNING]` line — where before there were t
 redirects to the tenant-specific authority with the correct client id, PKCE `S256`, state and nonce, and no
 secret in the URL.
 
-**What still needs a person.** Completing a sign-in needs your credentials in a browser, which this session
-does not have. Two things only that will confirm:
+**Then a real sign-in was attempted, and it got further than anything had.** Microsoft recognised the
+application by name, authenticated the account, and presented the consent screen asking for exactly the
+scopes this product requests — _Access Common Data Service as you_, the basic profile, and offline access.
+**That screen is proof the client id, the authority, the secret and admission are all correct**, because
+none of it renders otherwise.
 
-1. Whether `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback` is on the application's
-   **Redirect URI** list. Microsoft defers that check until after authentication, so no probe can establish
-   it. `AADSTS50011` at sign-in means it is missing — add it under **Authentication → Web**.
-2. Whether the signed-in account's home directory is `0eca5595-…`. A guest from elsewhere now authenticates
-   _in_ that directory, which is the point of the tenant-specific authority — but admission then compares
-   the `tid` claim, and a guest's `tid` is the host directory, so it will match.
+It then failed on the one thing no probe could establish:
+
+> `AADSTS500113: No reply address is registered for the application.`
+
+Note the code. `AADSTS500113` is **no redirect URI registered at all** — not `AADSTS50011`, which is a
+mismatch against a list that exists. The registration had no **Web** platform. It appears _after_ consent,
+which is why no unauthenticated probe could have found it, and why an unfinished registration looks like a
+product fault at the last possible moment.
+
+The fix is one entry under **Authentication → Add a platform → Web**:
+`https://dataverse-migration-app-qa.up.railway.app/api/auth/callback`. Both codes are now in the
+troubleshooting table in [MICROSOFT_SETUP.md](MICROSOFT_SETUP.md), kept apart, because the fix differs: one
+is "correct the entry", the other is "the platform was never added".
 
 ## 3. Product changes
 
@@ -336,10 +346,10 @@ a real auditor.
 
 ## 16. The next ten
 
-1. **Sign in to QA with a Microsoft account.** Everything about the configuration is verified except the
-   one thing that needs a browser: whether the callback URL is on the application's redirect list. If
-   `AADSTS50011` appears, add `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback` under
-   **Authentication → Web** on application `ecf355ec-…`.
+1. **Add the reply address.** **Authentication → Add a platform → Web** on application `ecf355ec-…`,
+   value `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback`. It is the only thing
+   between the consent screen and a working sign-in. Grant admin consent on behalf of the organization at
+   the same time, so no other user is prompted for a scope many tenants block individuals from accepting.
 2. Azure SQL verification — cheapest conversion of unverified to verified.
 3. Dataverse read-only verification. Even stopping there replaces "we have never talked to Dataverse" with
    "authentication, discovery and reading are verified".
