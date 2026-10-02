@@ -8,6 +8,7 @@ import {
   fullCoverage,
   notVerified,
   withMode,
+  type ValidationCoverage,
 } from '../../shared/validation-coverage';
 import {
   CONNECTOR_VERIFICATION,
@@ -192,5 +193,50 @@ describe('invariants that must hold however the numbers arrive', () => {
         expect(levelRank(summary), `${type} summary vs ${level}`).toBeLessThanOrEqual(levelRank(level!));
       }
     }
+  });
+});
+
+/**
+ * A check that examined nothing cannot pass.
+ *
+ * Found on deployed QA: a validation whose source records could not be re-read compared nothing, and
+ * reported "PASS: Not verified — no records were examined. Every one of them is in the target." A
+ * self-contradicting sentence with a green badge on it.
+ *
+ * The rule is stated here as a property of the vocabulary rather than of one code path: for any check,
+ * an outcome of PASS and a coverage mode of NOT_VERIFIED must never appear together.
+ */
+describe('a verdict never outruns its coverage', () => {
+  const cases: { coverage: ValidationCoverage; label: string }[] = [
+    {
+      label: 'nothing examined at all',
+      coverage: notVerified(1200, 'No records were examined.'),
+    },
+    {
+      label: 'a check that could not run',
+      coverage: notVerified(50, 'The connector cannot look.'),
+    },
+  ];
+
+  for (const { coverage, label } of cases) {
+    it(`describes ${label} without claiming anything`, () => {
+      const described = describeClean(coverage, 'records');
+      // The sentence a PASS would have used must itself say it was not verified.
+      expect(described.toLowerCase()).toContain('not verified');
+      expect(described.toLowerCase()).not.toContain('no differences');
+      expect(coveragePercent(coverage), 'and no percentage is implied').toBe(0);
+    });
+  }
+
+  it('says nothing was examined rather than that everything was clean', () => {
+    const coverage = notVerified(1200, 'No records were examined.');
+    expect(coverage.mode).toBe('NOT_VERIFIED');
+    expect(coverage.examined).toBe(0);
+    expect(coverage.eligible, 'while still saying how many there were').toBe(1200);
+    // The distinction that matters: "nothing to check" and "we did not check" are different answers.
+    const empty = fullCoverage(0, 'Nothing to examine.');
+    expect(empty.mode).toBe('FULL');
+    expect(describeClean(empty, 'records')).toBe('Nothing to check.');
+    expect(describeClean(coverage, 'records')).not.toBe('Nothing to check.');
   });
 });

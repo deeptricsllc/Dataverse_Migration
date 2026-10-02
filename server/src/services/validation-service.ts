@@ -940,14 +940,22 @@ export class ValidationService {
        * green badge this product exists to argue against.
        */
       const absent = base.missing + base.failedInRun;
+      /**
+       * A check that examined nothing cannot pass.
+       *
+       * `absent === 0` was enough for a PASS, and with nothing examined `missing` and `failedInRun` are
+       * both zero — so a validation that compared no records at all reported
+       * "PASS: Not verified — no records were examined. Every one of them is in the target." A
+       * self-contradicting sentence with a green badge on it, which is the exact failure this product
+       * exists to argue against.
+       *
+       * Found by validating a migration from an uploaded file against deployed QA, where the source
+       * records could not be re-read and the comparison therefore had nothing to do.
+       */
+      const nothingExamined = base.coverage?.mode === 'NOT_VERIFIED' || base.checkedRecords === 0;
       checks.push(
-        absent === 0
+        absent > 0
           ? {
-              check: 'RECORD_EXISTENCE',
-              outcome: 'PASS',
-              message: `${describeCoverage(base.coverage, 'records this run accounted for')} Every one of them is in the target${composition}.`,
-            }
-          : {
               check: 'RECORD_EXISTENCE',
               outcome: 'FAIL',
               message:
@@ -957,7 +965,18 @@ export class ValidationService {
                     (base.missing ? `, ${base.missing} it did not` : '')
                   : '') +
                 `${sampleNote}`,
-            },
+            }
+          : nothingExamined
+            ? {
+                check: 'RECORD_EXISTENCE',
+                outcome: 'WARNING',
+                message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} Nothing here says whether this run's records are in the target.`,
+              }
+            : {
+                check: 'RECORD_EXISTENCE',
+                outcome: 'PASS',
+                message: `${describeCoverage(base.coverage, 'records this run accounted for')} Every one of them is in the target${composition}.`,
+              },
       );
     } else {
       checks.push({
@@ -991,11 +1010,18 @@ export class ValidationService {
               outcome: 'WARNING',
               message: `${preExisting} difference(s) on pre-existing target records that were skipped`,
             }
-          : {
-              check: 'FIELD_VALUES',
-              outcome: 'PASS',
-              message: `${describeClean(base.coverage, `records on ${mappings.length} mapped column(s)`)}`,
-            },
+          : base.coverage?.mode === 'NOT_VERIFIED' || base.checkedRecords === 0
+            ? {
+                check: 'FIELD_VALUES',
+                // Nothing was compared, so there is nothing to pass. Same reason as above.
+                outcome: 'WARNING',
+                message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} No column was compared on any record.`,
+              }
+            : {
+                check: 'FIELD_VALUES',
+                outcome: 'PASS',
+                message: `${describeClean(base.coverage, `records on ${mappings.length} mapped column(s)`)}`,
+              },
     );
 
     // 5. References were resolved batch by batch, as the records were compared.

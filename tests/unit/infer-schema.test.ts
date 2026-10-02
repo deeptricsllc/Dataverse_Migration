@@ -225,3 +225,40 @@ describe('reading the file itself', () => {
     expect(tableNameFor('', 'Sheet1')).toBe('sheet1');
   });
 });
+
+/**
+ * An uploaded file as a migration *source*, which is a different question from reading it.
+ *
+ * The inference above decides what the columns are. These check the three places that decided an
+ * uploaded file could not be migrated from at all — found by uploading a 1,200-row CSV to deployed QA
+ * and trying to pair it with a Dataverse table.
+ */
+describe('an upload as a migration source', () => {
+  const inferred = infer(
+    ['code', 'full_name', 'amount'],
+    [
+      ['C-001', 'First', '10.50'],
+      ['C-002', 'Second', '20.25'],
+    ],
+  );
+  const meta = toTableMetadata(inferred);
+
+  it('marks the key column as the primary identifier, which is what started the trouble', () => {
+    expect(inferred.keyColumn).toBe('code');
+    expect(inferred.keyIsSynthetic).toBe(false);
+    expect(meta.primaryIdAttribute).toBe('code');
+  });
+
+  it('marks every column unwritable, truthfully, about the file rather than the data', () => {
+    for (const attr of meta.attributes) {
+      expect(attr.isValidForCreate, `${attr.logicalName} is not writable`).toBe(false);
+      expect(attr.isValidForUpdate, `${attr.logicalName} is not writable`).toBe(false);
+      expect(attr.isValidForRead, `${attr.logicalName} is readable`).toBe(true);
+    }
+  });
+
+  it('keeps the family that tells the rest of the platform this is a file', () => {
+    // The signal the mapping rules use to tell "the key is a business value" from "the key is a GUID".
+    for (const attr of meta.attributes) expect(familyOf(attr)).toBe('TABULAR');
+  });
+});

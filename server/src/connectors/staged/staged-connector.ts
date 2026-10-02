@@ -268,7 +268,20 @@ export class StagedConnector implements MigrationConnector {
     const wanted = new Set(columns);
     const values: Record<string, FieldValue> = {};
     for (const attr of table.attributes) {
-      if (attr.logicalName === table.primaryIdAttribute) continue;
+      /**
+       * The key column is identity *and* data.
+       *
+       * A platform's primary identifier is dropped from the values because it is identity and nothing
+       * else — the record carries it as `id`. A file's key is whichever column was found to be unique:
+       * a product number, a customer reference, something the target almost certainly wants. Dropping
+       * it meant a plan that mapped `code` to a required target column read `code` as null and failed
+       * every record with "target column is required but the source value is null".
+       *
+       * The synthetic row number is still dropped: it identifies a row inside one import and means
+       * nothing beyond it.
+       */
+      const isSyntheticRowNumber = attr.rawType === 'row';
+      if (attr.logicalName === table.primaryIdAttribute && isSyntheticRowNumber) continue;
       if (wanted.size > 0 && !wanted.has(attr.logicalName)) continue;
       values[attr.logicalName] = normalizeValue(data[attr.logicalName], attr);
     }

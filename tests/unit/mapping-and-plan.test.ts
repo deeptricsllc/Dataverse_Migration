@@ -189,3 +189,78 @@ describe('migration plan validation', () => {
     expect(issues.find((i) => i.code === 'ALTERNATE_KEY_MISSING')!.severity).toBe('BLOCKER');
   });
 });
+
+describe('a source nothing can write into', () => {
+  /**
+   * An uploaded CSV, a OneDrive file, a SharePoint list.
+   *
+   * Their inferred columns are marked not-valid-for-create and not-valid-for-update — truthfully, and
+   * about the file rather than about the data. The mapping filter used those flags to exclude columns
+   * nothing can write, which for a read-only source excluded every one of them: a plan from an upload
+   * had no field mappings at all and sat permanently blocked on "required target column has no mapped
+   * source column", with nothing available to map.
+   *
+   * Found by uploading a 1,200-row CSV to deployed QA and pairing it with a target table.
+   */
+  const uploaded = table('sampling', [
+    attr('code', 'String', { isValidForCreate: false, isValidForUpdate: false }),
+    attr('full_name', 'String', { isValidForCreate: false, isValidForUpdate: false }),
+    attr('city', 'String', { isValidForCreate: false, isValidForUpdate: false }),
+    attr('amount', 'Decimal', { isValidForCreate: false, isValidForUpdate: false }),
+  ]);
+  const product = table('product', [
+    attr('name', 'String'),
+    attr('productnumber', 'String'),
+    attr('price', 'Money', { precision: 2 }),
+  ]);
+
+  it('offers every readable column, so the plan can be mapped at all', () => {
+    const proposals = autoMapTable(uploaded, product);
+    expect(proposals.map((p) => p.sourceField).sort()).toEqual(['amount', 'city', 'code', 'full_name']);
+  });
+
+  it('offers the file’s key column too, because in a spreadsheet the key is data', () => {
+    /**
+     * The second half of the same bug. An upload's "primary id" is whichever column was found to be
+     * unique — a product number, a customer reference — and a platform's primary id is a GUID that
+     * means nothing elsewhere. Excluding both alike meant an upload could never supply a required
+     * target column like `productnumber`: the plan stayed blocked with nothing available to map.
+     */
+    const keyed = table(
+      'sampling',
+      [
+        attr('code', 'String', {
+          isValidForCreate: false,
+          isValidForUpdate: false,
+          isPrimaryId: true,
+          family: 'TABULAR',
+        }),
+        attr('full_name', 'String', {
+          isValidForCreate: false,
+          isValidForUpdate: false,
+          family: 'TABULAR',
+        }),
+      ],
+      { primaryIdAttribute: 'code' },
+    );
+    const proposals = autoMapTable(keyed, product);
+    expect(proposals.map((p) => p.sourceField).sort()).toContain('code');
+  });
+
+  it('still hides a platform primary identifier, which means nothing in another system', () => {
+    const dataverse = table('account', [attr('name', 'String')]);
+    const proposals = autoMapTable(dataverse, product);
+    expect(proposals.map((p) => p.sourceField)).not.toContain('accountid');
+  });
+
+  it('still hides a column nothing can write in a source that writes', () => {
+    // The rule earns its keep on a Dataverse or SQL source, where a column nothing can write is
+    // usually computed or platform-managed and proposing it is noise.
+    const dataverse = table('account', [
+      attr('name', 'String'),
+      attr('calculated', 'Decimal', { isValidForCreate: false, isValidForUpdate: false }),
+    ]);
+    const proposals = autoMapTable(dataverse, product);
+    expect(proposals.map((p) => p.sourceField)).toEqual(['name']);
+  });
+});
