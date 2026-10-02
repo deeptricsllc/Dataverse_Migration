@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { AppError } from '../../server/src/lib/errors';
 import { authRequests, organizations, users } from '../../server/src/db/schema';
