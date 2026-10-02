@@ -206,13 +206,42 @@ export class StagedConnector implements MigrationConnector {
     }
   }
 
+  /**
+   * Records by identifier, matched exactly and then case-insensitively.
+   *
+   * A file's record identifier is its key column's value — `C-00001`, not a GUID. The identity map
+   * stores every source identifier lowercased, which is right for a GUID (case means nothing in one)
+   * and loses information for a business key. Asking for `c-00001` found nothing, so validating a
+   * migration from an uploaded file compared **no records at all** and reported a pass over them.
+   *
+   * Exact matches win; only identifiers that found nothing are retried case-insensitively. Two keys
+   * differing only in case are therefore still distinguished wherever they can be, and the fallback
+   * only ever rescues a lookup that would otherwise have returned nothing.
+   */
   async retrieveByIds(table: TableMetadata, ids: string[], columns: string[]): Promise<DvRecord[]> {
     if (ids.length === 0) return [];
-    const rows = await this.db
+    const wanted = ids.map(normalizeId);
+    const exact = await this.db
       .select()
       .from(stagedRows)
-      .where(and(this.table(table.logicalName), inArray(stagedRows.recordId, ids.map(normalizeId))));
-    return rows.map((r) => this.project(table, r.recordId, r.data, columns));
+      .where(and(this.table(table.logicalName), inArray(stagedRows.recordId, wanted)));
+    const found = new Set(exact.map((r) => r.recordId));
+    const unresolved = wanted.filter((id) => !found.has(id));
+    const insensitive = unresolved.length
+      ? await this.db
+          .select()
+          .from(stagedRows)
+          .where(
+            and(
+              this.table(table.logicalName),
+              inArray(
+                sql`lower(${stagedRows.recordId})`,
+                unresolved.map((id) => id.toLowerCase()),
+              ),
+            ),
+          )
+      : [];
+    return [...exact, ...insensitive].map((r) => this.project(table, r.recordId, r.data, columns));
   }
 
   async findByAlternateKey(
