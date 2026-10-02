@@ -6,7 +6,7 @@
       "connectionType": "POSTGRES",
       "serverVersion": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
       "driver": "pg",
-      "ranAt": "2026-10-01T20:50:56.259Z",
+      "ranAt": "2026-10-02T03:17:45.189Z",
       "suite": "tests/engines/postgres.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -21,6 +21,7 @@
         "upsert": "PASSED"
       },
       "notes": [
+        "Returned decimals and big integers compare equal to themselves and unequal to their neighbours.",
         "An unknown table raises rather than reading as empty."
       ]
     },
@@ -29,7 +30,7 @@
       "connectionType": "MYSQL",
       "serverVersion": "MySQL 8.4.11",
       "driver": "mysql2",
-      "ranAt": "2026-10-01T20:50:52.958Z",
+      "ranAt": "2026-10-02T03:17:42.658Z",
       "suite": "tests/engines/mysql.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -44,6 +45,7 @@
         "upsert": "PASSED"
       },
       "notes": [
+        "Returned decimals and big integers compare equal to themselves and unequal to their neighbours.",
         "An unknown table raises rather than reading as empty."
       ]
     },
@@ -52,7 +54,7 @@
       "connectionType": "SQL_SERVER",
       "serverVersion": "Microsoft SQL Server 2022 (RTM-CU27) (KB5104824) - 16.0.4295.3 (X64) ",
       "driver": "mssql (tedious)",
-      "ranAt": "2026-10-01T20:50:49.214Z",
+      "ranAt": "2026-10-02T03:17:39.815Z",
       "suite": "tests/engines/sqlserver.engine.test.ts",
       "capabilities": {
         "connect": "PASSED",
@@ -67,6 +69,7 @@
         "upsert": "PASSED"
       },
       "notes": [
+        "Returned decimals and big integers compare equal to themselves and unequal to their neighbours.",
         "An unknown table raises rather than reading as empty."
       ]
     }
