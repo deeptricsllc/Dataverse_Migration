@@ -68,18 +68,46 @@ that validation is deferred until after the user authenticates. Only the token e
 - `MICROSOFT_SETUP.md` offered `ENTRA_TENANT_ID=organizations` and listed `ALLOWED_TENANT_IDS` under
   "optional hardening". That documentation is what produced this outage; both corrected.
 
-**What remains for you.** Three variables on `dataverse-migration-app`. No secrets.
+**Resolved, after this report was first written.** The keys file was provided, and it contained the
+answer the diagnosis could not reach: **QA was configured with the wrong application entirely.**
+
+|                      | Was                                                           | Now                                                        |
+| -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| `ENTRA_CLIENT_ID`    | `69bc3659-…` — a different application, not in this directory | `ecf355ec-…`, from the keys file                           |
+| `ENTRA_TENANT_ID`    | unset, so the authority was `organizations`                   | `0eca5595-…`, the directory the application is actually in |
+| `ALLOWED_TENANT_IDS` | unset — `GATED` with an empty list admits nobody              | `0eca5595-…`                                               |
+| `ADMIN_EMAILS`       | unset — nobody was a platform operator                        | set                                                        |
+| `ACCESS_MODE`        | defaulted                                                     | `GATED`, explicitly                                        |
+
+The directory was established the same way as the rest of the diagnosis, with a deliberately wrong
+secret: app `ecf355ec-…` against `0eca5595-…` returns `AADSTS7000215` ("found it, wrong secret") rather
+than `AADSTS700016` ("not here"). The real secret was read from the file by a script and never passed on a
+command line, printed, or committed.
+
+A tenant-specific authority was chosen over `organizations` even though the application is in this
+directory, for two reasons: it also admits guests invited into the directory, and it cannot resolve to
+somebody else's tenant.
+
+**Verified on the deployed environment.** The product's own startup report now says:
 
 ```
-ENTRA_TENANT_ID     = <Directory (tenant) ID of the app registration>
-ALLOWED_TENANT_IDS  = <that directory id, plus any other you want admitted>
-ADMIN_EMAILS        = srinivas@deeptrics.com
+Sign-in: Microsoft + demo; authority https://login.microsoftonline.com/0eca5595-… (DIRECTORY);
+admission GATED, 1 named directory/ies; redirect …/api/auth/callback
 ```
 
-The first is in **Entra admin centre → App registrations → the app → Overview → Directory (tenant) ID**.
-If that registration is not one you control, the alternative is a new single-tenant registration in
-`0eca5595-…` — which was not created, as the brief requires. `ADMIN_EMAILS` is absent too, which means
-nobody is a platform operator and the new diagnostics would be unreachable even after a deploy.
+No `[BLOCKS_SIGN_IN]` line and no `[WARNING]` line — where before there were two. `/api/auth/login`
+redirects to the tenant-specific authority with the correct client id, PKCE `S256`, state and nonce, and no
+secret in the URL.
+
+**What still needs a person.** Completing a sign-in needs your credentials in a browser, which this session
+does not have. Two things only that will confirm:
+
+1. Whether `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback` is on the application's
+   **Redirect URI** list. Microsoft defers that check until after authentication, so no probe can establish
+   it. `AADSTS50011` at sign-in means it is missing — add it under **Authentication → Web**.
+2. Whether the signed-in account's home directory is `0eca5595-…`. A guest from elsewhere now authenticates
+   _in_ that directory, which is the point of the tenant-specific authority — but admission then compares
+   the `tid` claim, and a guest's `tid` is the host directory, so it will match.
 
 ## 3. Product changes
 
@@ -227,13 +255,28 @@ recently" has no number in it. The code changed, not the test.
 
 ## 13. Manual inspection
 
-**The deployed QA environment was not inspected, and that is a gap.** The Railway CLI cannot execute in this
-session — `railway --version` exits non-zero with no output while `curl` to QA works, so it is the binary and
-not the network. Reaching Railway through its MCP connector confirmed the obstacle: the service has **no
-GitHub source attached**, so its only deploy path is `railway up` from local source. MCP's `redeploy` reruns
-an existing build and `create-deployment` would build a different service.
+**Deployed and verified**, after this report was first written. The Railway CLI failure earlier in the
+session was transient: it returned exit 0 and `railway 5.54.1` on a later attempt, and `railway up` then
+deployed commit `89b9c6cd940b` to QA.
 
-What was done instead, against the **built server** (`dist/`, `NODE_ENV=production`) and labelled as such:
+Against the **deployed** environment:
+
+- **The whole end-to-end suite: 19 of 19 pass**, including two complete migrations through the real engine
+  (`demo happy path`, `legacy SQL Server into Dataverse QA`), the audit trail at its new destination, the
+  file upload, and the landing page at 390, 360 and 320 pixels.
+- **The product's own startup report** shows the authority as `DIRECTORY`, admission as `GATED, 1 named
+directory`, and **no blocking finding and no warning** — where before there were two.
+- **`/api/auth/login`** redirects to the tenant-specific authority with the correct client id, PKCE `S256`,
+  state and nonce, and no secret in the URL.
+- **The sign-in failure paths**, each returning a code rather than a sentence: a crafted
+  `?error=Your account is suspended, call 0800…` becomes `INCOMPLETE`, a declined consent becomes
+  `ACCESS_DENIED`, a replayed callback becomes `EXPIRED`.
+- **Both operator-only endpoints** refuse an anonymous request with 401.
+
+What a session without a browser and credentials still cannot do: complete a Microsoft sign-in. See section
+2 for the two things that will only be confirmed by one.
+
+Also done earlier, against the **built server** (`dist/`, `NODE_ENV=production`):
 
 - **The pilot workflow, walked end to end.** Ten steps, ten API calls, no dead ends, evidence `VALID`.
 - **Twelve screens at 1440, 390, 360 and 320 pixels.** No horizontal overflow, no console error, no error
@@ -258,12 +301,16 @@ What was done instead, against the **built server** (`dist/`, `NODE_ENV=producti
 **P0**
 
 1. **Dataverse is unverified.** Needs an environment. Not an engineering task.
-2. **Sign-in is broken on the deployed environment.** Needs the three variables in section 2.
+2. ~~Sign-in is broken on the deployed environment.~~ **Resolved.** QA was configured with the wrong
+   application; the keys file had the right one. Verified on the deployed environment — see sections 2
+   and 13. One unknown remains, and only a real sign-in will settle it: whether the QA callback URL is on
+   the application's redirect list.
 
 **P1**
 
 3. Azure SQL unverified.
-4. Tonight's work is not on QA. Needs `railway up` from a machine where the CLI runs.
+4. ~~Tonight's work is not on QA.~~ **Deployed**, commit `89b9c6cd940b`, 19 of 19 end-to-end tests
+   passing against it.
 5. The SSRF bound does not resolve names. Needs a pinned socket, not validation.
 6. Whether the write slowdown above a million rows is ours or PGlite's.
 7. "Attempt" means two things, and the evidence lineage column shows the wrong one. Needs an evidence
@@ -289,15 +336,17 @@ a real auditor.
 
 ## 16. The next ten
 
-1. Set the three Entra variables. Everything about sign-in is blocked behind them.
-2. `railway up` so tonight's work reaches QA, then walk the pilot flow there.
-3. Azure SQL verification — cheapest conversion of unverified to verified.
-4. Dataverse read-only verification. Even stopping there replaces "we have never talked to Dataverse" with
+1. **Sign in to QA with a Microsoft account.** Everything about the configuration is verified except the
+   one thing that needs a browser: whether the callback URL is on the application's redirect list. If
+   `AADSTS50011` appears, add `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback` under
+   **Authentication → Web** on application `ecf355ec-…`.
+2. Azure SQL verification — cheapest conversion of unverified to verified.
+3. Dataverse read-only verification. Even stopping there replaces "we have never talked to Dataverse" with
    "authentication, discovery and reading are verified".
-5. Attach a GitHub source to the Railway service, so a deploy is a push.
-6. Dataverse writes against the dedicated table.
-7. Re-run the scale suite against a real PostgreSQL server.
-8. An external security review.
-9. The evidence lineage "Attempt" column, with schema 4.
-10. One real pilot customer, and listen to which of section 15's "requires a customer pilot" questions they
-    answer differently from how we guessed.
+4. Attach a GitHub source to the Railway service, so a deploy is a push.
+5. Dataverse writes against the dedicated table.
+6. Re-run the scale suite against a real PostgreSQL server.
+7. An external security review.
+8. The evidence lineage "Attempt" column, with schema 4.
+9. One real pilot customer, and listen to which of section 15's "requires a customer pilot" questions they
+   answer differently from how we guessed.
