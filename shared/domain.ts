@@ -2,6 +2,13 @@
  * Domain enums and API DTOs shared between server and web.
  */
 import type { AttributeType, FieldValue, OptionMeta, RequiredLevel } from './metadata';
+import type { RecordAccounting } from './run-metrics';
+import type { WorkspaceRole } from './authorization';
+import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
+import type { AggregateCheck } from './aggregates';
+import type { ReadinessOverride } from './readiness';
+import type { UniquenessCheck } from './uniqueness';
+import type { ReconciliationEvidence, WriteState } from './write-state';
 
 // ---------------------------------------------------------------------------
 // Session / environments
@@ -11,9 +18,19 @@ export interface SessionUser {
   id: string;
   displayName: string;
   email: string | null;
-  role: 'ADMIN' | 'MEMBER';
+  /** As stored. `MEMBER` predates the four-role model; `normaliseRole` reads it. */
+  role: WorkspaceRole | 'MEMBER';
   organization: { id: string; name: string; isDemo: boolean };
   authProvider: 'microsoft' | 'demo';
+  /**
+   * Whether this user operates the deployment itself, rather than being an administrator inside one
+   * customer organization. Comes from ADMIN_EMAILS.
+   *
+   * The distinction matters for exactly one thing today: inbound access requests are addressed to
+   * whoever runs the platform, and are not any tenant's data. A customer administrator must not be
+   * able to read the names and email addresses of other people who asked for access.
+   */
+  platformOperator: boolean;
 }
 
 export interface AuthConfigDto {
@@ -21,6 +38,41 @@ export interface AuthConfigDto {
   demoEnabled: boolean;
   /** Certification mode: reads are allowed, every Dataverse write is blocked server-side. */
   realTenantReadOnly: boolean;
+  /**
+   * Whether signing in with a Microsoft work account also creates the workspace.
+   *
+   * True when Microsoft sign-in is configured and no tenant allow-list is set: the first person from
+   * a tenant we have not seen becomes its administrator. False when ALLOWED_TENANT_IDS restricts the
+   * deployment, because then an unknown tenant is refused and "sign up" would be a dead end.
+   */
+  signUpEnabled: boolean;
+  /** Where to email a human, when the deployment has been given an address. */
+  contactEmail: string | null;
+}
+
+/** What someone asking for access tells us. Unauthenticated: it is the public sign-up path. */
+export interface AccessRequestInput {
+  name: string;
+  email: string;
+  company?: string;
+  /** Roughly how much data, in the requester's own words. Free text on purpose. */
+  useCase?: string;
+  /** Anti-spam honeypot. A real browser leaves it empty because it is hidden. */
+  website?: string;
+}
+
+export interface AccessRequestDto {
+  id: string;
+  name: string;
+  email: string;
+  company: string | null;
+  useCase: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** How many times this address has asked. A second ask is a stronger signal, not a duplicate row. */
+  submissions: number;
+  handledAt: string | null;
+  handledBy: string | null;
 }
 
 export interface SessionResponseDto {
@@ -29,11 +81,52 @@ export interface SessionResponseDto {
   realTenantReadOnly: boolean;
 }
 
-export type EnvironmentProvider = 'dataverse' | 'demo' | 'sqlserver' | 'azuresql' | 'demosql';
+export type EnvironmentProvider =
+  | 'dataverse'
+  | 'demo'
+  | 'sqlserver'
+  | 'azuresql'
+  | 'postgres'
+  | 'mysql'
+  | 'file'
+  | 'onedrive'
+  | 'sharepoint'
+  | 'demosql';
 export type ConnectionStatus = 'UNKNOWN' | 'CONNECTED' | 'FAILED';
 
 /** The kind of system a connection points at. Chosen by the user when adding a connection. */
-export type ConnectionType = 'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL';
+export type ConnectionType =
+  'DATAVERSE' | 'SQL_SERVER' | 'AZURE_SQL' | 'POSTGRES' | 'MYSQL' | 'FILE' | 'ONEDRIVE' | 'SHAREPOINT';
+
+/** The connection types configured by hand rather than discovered. */
+export const SQL_CONNECTION_TYPES = ['SQL_SERVER', 'AZURE_SQL', 'POSTGRES', 'MYSQL'] as const;
+
+/** Connection kinds whose rows are imported and kept rather than queried live. */
+export const STAGED_CONNECTION_TYPES = ['FILE', 'ONEDRIVE', 'SHAREPOINT'] as const;
+export type StagedConnectionType = (typeof STAGED_CONNECTION_TYPES)[number];
+
+export const isStagedConnection = (t: ConnectionType): t is StagedConnectionType =>
+  (STAGED_CONNECTION_TYPES as readonly string[]).includes(t);
+export const isSqlConnection = (t: ConnectionType): t is SqlConnectionType =>
+  (SQL_CONNECTION_TYPES as readonly string[]).includes(t);
+export type SqlConnectionType = (typeof SQL_CONNECTION_TYPES)[number];
+
+/** The port each server listens on unless told otherwise. */
+export const DEFAULT_SQL_PORT: Record<SqlConnectionType, number> = {
+  SQL_SERVER: 1433,
+  AZURE_SQL: 1433,
+  POSTGRES: 5432,
+  MYSQL: 3306,
+};
+
+/** The schema a table belongs to when its name does not say. */
+export const DEFAULT_SQL_SCHEMA: Record<SqlConnectionType, string> = {
+  SQL_SERVER: 'dbo',
+  AZURE_SQL: 'dbo',
+  POSTGRES: 'public',
+  // MySQL has no schema layer: a "schema" IS a database, so a table name needs no qualifier.
+  MYSQL: '',
+};
 
 /** Connections of the same family share a connector implementation and a metadata dialect. */
 export type ProviderFamily = 'DATAVERSE' | 'SQL';
@@ -45,6 +138,11 @@ export const CONNECTION_TYPE_LABELS: Record<ConnectionType, string> = {
   DATAVERSE: 'Microsoft Dataverse',
   SQL_SERVER: 'SQL Server',
   AZURE_SQL: 'Azure SQL',
+  POSTGRES: 'PostgreSQL',
+  MYSQL: 'MySQL',
+  FILE: 'CSV / Excel / XML file',
+  ONEDRIVE: 'OneDrive / SharePoint file',
+  SHAREPOINT: 'SharePoint list',
 };
 
 /**
@@ -112,6 +210,8 @@ export interface ConnectorCapabilities {
   supportsServerSideLogicDetection: boolean;
   supportsClientGeneratedIds: boolean;
   supportsPrincipals: boolean;
+  /** Can filter a read to records changed since a watermark value, server-side. */
+  supportsIncrementalRead: boolean;
 }
 
 export interface EnvironmentDto {
@@ -151,6 +251,94 @@ export function classifyEnvironment(environmentType: string | null | undefined):
     return 'NON_PRODUCTION';
   }
   return 'UNKNOWN';
+}
+
+/**
+ * Whether writing here should make somebody type the environment's name.
+ *
+ * Typing the target name is a good gate and a bad habit. Asking for it on every run — including the
+ * fiftieth run into a sandbox that exists to be written to — trains people to type the name without
+ * reading it, which is precisely the reflex you do not want on the one occasion the name is not the
+ * one they expected. So the friction scales with the consequence: production, or anything we could
+ * not classify, asks for the name; a sandbox asks for a deliberate click on a button that says
+ * where it is about to write.
+ *
+ * This is a human safeguard, not a security control. Authorization is what stops a member writing
+ * to production at all (see `requireAdminForProductionTarget`); this is what stops somebody who is
+ * allowed to do it from doing it by accident.
+ */
+export function needsTypedConfirmation(target: { environmentClass: EnvironmentClass }): boolean {
+  return target.environmentClass !== 'NON_PRODUCTION';
+}
+
+/**
+ * Audit events, grouped into the handful of things a person actually looks for.
+ *
+ * Derived from the action name rather than stored, because the alternative is a column on a table
+ * with years of history in it and a migration that would have to guess at the old rows. The mapping
+ * lives here so the API and the screen cannot drift apart.
+ */
+export const AUDIT_CATEGORIES = [
+  'ACCESS',
+  'CONNECTIONS',
+  'ANALYSIS',
+  'PLANNING',
+  'MIGRATION',
+  'VERIFICATION',
+  'SCHEDULES',
+  'ADMIN',
+] as const;
+export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
+
+export const AUDIT_CATEGORY_LABELS: Record<AuditCategory, string> = {
+  ACCESS: 'Sign-in',
+  CONNECTIONS: 'Connections',
+  ANALYSIS: 'Analysis & profiling',
+  PLANNING: 'Plans & mapping',
+  MIGRATION: 'Migration runs',
+  VERIFICATION: 'Validation & comparison',
+  SCHEDULES: 'Schedules',
+  ADMIN: 'Administration',
+};
+
+export function auditCategory(action: string): AuditCategory {
+  if (action.startsWith('AUTH_')) return 'ACCESS';
+  if (action.startsWith('CONNECTION_') || action.startsWith('ENVIRONMENT') || action === 'WORKSPACE_SELECTED')
+    return 'CONNECTIONS';
+  if (action.startsWith('ANALYSIS_') || action === 'DATA_PROFILED' || action.startsWith('PROJECT_'))
+    return 'ANALYSIS';
+  if (
+    action.startsWith('MIGRATION_PLAN') ||
+    action.startsWith('MAPPING_') ||
+    action.startsWith('OBJECT_MAPPING') ||
+    action.startsWith('CHOICE_MAPPING') ||
+    action.startsWith('TRANSFORMATION') ||
+    action.startsWith('PREFLIGHT_') ||
+    action.startsWith('LOSSY_') ||
+    action === 'TABLE_CATEGORY_CHANGED' ||
+    action === 'PRINCIPAL_MAPPING_CHANGED'
+  )
+    return 'PLANNING';
+  if (action.startsWith('MIGRATION_')) return 'MIGRATION';
+  if (
+    action.startsWith('VALIDATION_') ||
+    action.startsWith('COMPARISON_') ||
+    action.startsWith('DATA_COMPARISON_')
+  )
+    return 'VERIFICATION';
+  if (action.startsWith('SCHEDULE_')) return 'SCHEDULES';
+  // Stated rather than left to the fallthrough: a permission change is the event an auditor looks for
+  // first, and a reader should not have to work out that it lands here by elimination.
+  if (action.startsWith('TEAM_')) return 'ADMIN';
+  return 'ADMIN';
+}
+
+export interface AuditPageDto {
+  items: AuditEventDto[];
+  /** Matching the filters, before the page limit — so a capped list can say it is capped. */
+  total: number;
+  /** Everyone who appears in this organization's trail, for the filter. */
+  users: string[];
 }
 
 export interface WorkspaceDto {
@@ -503,7 +691,10 @@ export interface AppliedTransformationDto {
   kind: TransformationKind;
   before: string | null;
   after: string | null;
+  /** True only when the rule actually discarded information, not merely changed the value. */
   lossy: boolean;
+  /** What was lost, phrased without embedding the value (which may be from a secured column). */
+  loss?: string | null;
 }
 
 export interface TransformationIssueDto {
@@ -623,7 +814,11 @@ export interface DataQualityRuleDto {
   /** REGEX_PATTERN: a literal pattern, validated server-side and never user-executed code. */
   pattern?: string | null;
   /** Where the rule came from: the target schema, the mapping, or a person. */
-  origin: 'TARGET_SCHEMA' | 'MAPPING' | 'USER';
+  /**
+   * Where the rule came from. SOURCE_SCHEMA is a constraint the source itself declares, checked
+   * against its own data during analysis — a column declared required that nonetheless holds blanks.
+   */
+  origin: 'TARGET_SCHEMA' | 'SOURCE_SCHEMA' | 'MAPPING' | 'USER';
   severity: 'BLOCKER' | 'WARNING';
 }
 
@@ -755,6 +950,13 @@ export interface PlanOptions {
    * rule afterwards invalidates it and has to be accepted again.
    */
   lossyAcknowledgement: LossyAcknowledgementDto | null;
+  /**
+   * Readiness blockers somebody accepted explicitly, each naming the finding and the object.
+   *
+   * Stored on the plan rather than on the run, because the decision is about the plan and survives a
+   * retry. Written into the evidence package so a reader sees what was accepted, by whom and why.
+   */
+  readinessOverrides?: ReadinessOverride[];
 }
 
 export interface LossyAcknowledgementDto {
@@ -768,13 +970,67 @@ export interface LossyAcknowledgementDto {
 export interface LossyTransformationDto {
   table: string;
   field: string;
+  targetTable: string | null;
   targetField: string | null;
   kind: TransformationKind;
   /** `table.sourceField:RULE`, the key used by the acknowledgement. */
   key: string;
   description: string;
-  /** Records the last profile or preflight found affected, when that is known. */
-  affected?: number | null;
+  /**
+   * Records whose value actually loses information — not every record the rule runs on. A
+   * TRUNCATE(160) over 100 records where 7 exceed the limit reports 7.
+   * Null when nothing has measured it yet.
+   */
+  affected: number | null;
+  /** Records examined to produce {@link affected}. */
+  examined: number | null;
+  /**
+   * EXACT when a completed preflight measured every record; SAMPLED when the number comes from
+   * a bounded scan and is therefore a floor rather than a total.
+   */
+  basis: StatisticBasis | null;
+  /** The longest source value seen, for "maximum source length: 247". */
+  maxSourceLength: number | null;
+  /** The length values are cut to — the target column's limit for a TRUNCATE derived from it. */
+  targetMaxLength: number | null;
+  /** True when the counts came from a preflight rather than a sample. */
+  fromPreflight: boolean;
+}
+
+/** One record a lossy transformation actually changed, for the drill-down and the export. */
+export interface LossyRecordDto {
+  table: string;
+  sourceRecordId: string;
+  recordName: string | null;
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  originalValue: string | null;
+  transformedValue: string | null;
+  /** What was lost, e.g. "247 characters truncated to 160". Never embeds the value. */
+  loss: string;
+}
+
+/** The per-record loss detail a preflight persists so it can be drilled into later. */
+export interface LossyRecordDetail {
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  before: string | null;
+  after: string | null;
+  loss: string;
+}
+
+/** What a preflight measured about each lossy transformation, keyed as LossyTransformationDto. */
+export interface LossyImpactDto {
+  key: string;
+  table: string;
+  field: string;
+  targetField: string | null;
+  kind: TransformationKind;
+  affected: number;
+  examined: number;
+  maxSourceLength: number | null;
 }
 
 /** Dataverse columns that only the audit/ownership options can write. */
@@ -878,6 +1134,9 @@ export interface AutomationInfo {
 }
 
 export interface MigrationPlanDto {
+  /** The migration project this plan belongs to. Null for plans that predate projects. */
+  projectId: string | null;
+  projectName: string | null;
   id: string;
   name: string;
   status: PlanStatus;
@@ -920,19 +1179,42 @@ export type MigrationRunStatus =
   | 'PAUSED'
   | 'COMPLETED'
   | 'COMPLETED_WITH_ERRORS'
+  /**
+   * The work stopped and something has to be settled by a person before it can go on.
+   *
+   * A write may have been applied to the target and nothing can prove it either way, so the run is
+   * neither complete nor failed: claiming either would be asserting something unknown. Terminal for this
+   * attempt — the run will not continue on its own — and retryable once somebody has resolved the
+   * records the run names. See `docs/CRASH_CONSISTENCY.md`.
+   */
+  | 'NEEDS_RECONCILIATION'
   | 'FAILED'
   | 'CANCELLED';
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<MigrationRunStatus> = new Set([
   'COMPLETED',
   'COMPLETED_WITH_ERRORS',
+  'NEEDS_RECONCILIATION',
   'FAILED',
   'CANCELLED',
 ]);
 
 export type RunEntityStatus =
   'PENDING' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'SKIPPED';
-export type RecordOutcome = 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
+export type RecordOutcome =
+  | 'CREATED'
+  | 'UPDATED'
+  | 'UNCHANGED'
+  | 'SKIPPED'
+  | 'FAILED'
+  /**
+   * The write may have happened and we cannot prove it either way.
+   *
+   * Non-terminal: it means the outcome is not yet known, not that it failed. Resolved by reconciling
+   * against the target, or by a person, and never by assumption. A run cannot complete while one
+   * exists. See `shared/write-state.ts`.
+   */
+  | 'UNRESOLVED';
 export type RecordOperation =
   | 'READ'
   | 'CREATE'
@@ -953,6 +1235,13 @@ export interface RunCounters {
   unchanged: number;
   skipped: number;
   failed: number;
+  /**
+   * Records this run tried to write and cannot account for.
+   *
+   * Neither written nor failed: the write may have been applied before the answer was lost. A run with
+   * any of these cannot be called complete. See `shared/write-state.ts`.
+   */
+  unresolved: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,6 +1371,36 @@ export interface MigrationErrorDto {
   createdAt: string;
 }
 
+/**
+ * What one attempt of a run is answerable for.
+ *
+ * **Execution history, not accountability.** The run's own counters are the figures somebody signs for:
+ * every source record, counted exactly once, under one outcome. These say which attempt is responsible
+ * for the state each record is now in — the answer to "the first run failed, what did the second one
+ * actually do".
+ *
+ * They sum to the run total exactly, and that is by construction rather than luck: each record records
+ * the attempt that last touched it, so every record belongs to one attempt. Summing *activity* instead
+ * would produce a figure larger than the data, which is the trap worth avoiding.
+ *
+ * The cost of that choice: work an earlier attempt did on a record a later attempt touched again is not
+ * separately visible. A record created in attempt 1 and updated in attempt 2 appears under attempt 2
+ * only.
+ */
+export interface RunAttemptSummary {
+  /** Null for records written before the attempt was recorded. "Not known", not attempt zero. */
+  attempt: number | null;
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  failed: number;
+  unresolved: number;
+  /** When this attempt first and last touched a record. Not the attempt's start and end. */
+  firstRecordAt: string;
+  lastRecordAt: string;
+}
+
 export interface RecordMapDto {
   entity: string;
   sourceId: string;
@@ -1089,6 +1408,18 @@ export interface RecordMapDto {
   outcome: RecordOutcome;
   matchMethod: string | null;
   deferredStatus: string | null;
+  /**
+   * Whether the platform can prove what happened to this record.
+   *
+   * Carried here, and not only inside the evidence package, because it is the answer to the question
+   * somebody asks about one record: did this get written? A run says how many records are unresolved;
+   * this says which. Null on identity rows written before the crash-consistency protocol existed.
+   */
+  writeState: WriteState | null;
+  /** What could have identified the record if the answer to the write was lost. */
+  recoveryEvidence: ReconciliationEvidence | null;
+  /** What reconciliation, or a person, concluded. In words, because a person wrote some of them. */
+  recoveryNote: string | null;
   updatedAt: string;
 }
 
@@ -1115,11 +1446,45 @@ export interface RollbackPreviewDto {
 // ---------------------------------------------------------------------------
 
 export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
+/**
+ * Why a record does not match.
+ *
+ * `VALUE_LOST` and `VALUE_TRUNCATED` were split out of `VALUE_MISMATCH` because they are different
+ * problems with different fixes. A value that arrived wrong is usually a mapping or a
+ * transformation; a value that arrived empty is usually a required column the source could not
+ * fill; a value that arrived shortened is a column too narrow for the data, which is the one that
+ * silently destroys information and still looks plausible.
+ */
 export type DifferenceType =
-  'MISSING_IN_TARGET' | 'VALUE_MISMATCH' | 'LOOKUP_MISMATCH' | 'BROKEN_REFERENCE' | 'PRE_EXISTING_DIFFERENCE';
+  | 'MISSING_IN_TARGET'
+  | 'VALUE_MISMATCH'
+  /** The source had a value after transformation; the target has none. */
+  | 'VALUE_LOST'
+  /** The target holds a prefix of the expected value, in a column too narrow to hold it. */
+  | 'VALUE_TRUNCATED'
+  | 'LOOKUP_MISMATCH'
+  | 'BROKEN_REFERENCE'
+  | 'PRE_EXISTING_DIFFERENCE';
 
 export interface ValidationCheckDto {
-  check: 'SCHEMA' | 'ROW_COUNT' | 'RECORD_EXISTENCE' | 'FIELD_VALUES' | 'REFERENCES';
+  check:
+    | 'SCHEMA'
+    | 'ROW_COUNT'
+    | 'RECORD_EXISTENCE'
+    | 'FIELD_VALUES'
+    | 'REFERENCES'
+    /**
+     * Repeated key values in the target. Its own name rather than a FIELD_VALUES result, because it
+     * answers a different question — not "is this record right" but "is there more than one of it" —
+     * and because what it proves depends entirely on which key was grouped on. See `uniqueness`.
+     */
+    | 'UNIQUENESS'
+    /**
+     * Totals compared across the two sides. Kept apart from ROW_COUNT because they answer different
+     * questions: ROW_COUNT compares whole tables, this compares figures over the records this run
+     * wrote, and a report that merged them would let a pass on one read as a pass on the other.
+     */
+    | 'AGGREGATES';
   outcome: ValidationOutcome;
   message: string;
 }
@@ -1130,8 +1495,60 @@ export interface ValidationEntityResultDto {
   outcome: ValidationOutcome;
   sourceCount: number | null;
   targetCount: number | null;
-  migratedRecords: number;
+  /**
+   * What the run did with this table's records, or null for a report produced before the platform
+   * recorded the breakdown. Null means "not recorded", which a report must say rather than show as
+   * a row of zeros.
+   */
+  accounting: RecordAccounting | null;
+  /** Records actually compared against the source. A sample when the table is large. */
   checkedRecords: number;
+  /**
+   * Records the run itself reported as failed, confirmed absent here.
+   *
+   * Separate from `missing`, which is validation's own finding. Adding them together made
+   * matched + missing + different exceed the number of records examined, because a failed record
+   * was never examined — it is not in the target to compare against.
+   */
+  failedInRun: number;
+  /**
+   * Records the run could not account for, which is why this report cannot pass.
+   *
+   * Excluded from the comparison — a record whose write outcome is unknown may or may not be in the
+   * target, and comparing it would report either "missing" for something possibly present or "matched"
+   * for something nobody can account for. Reported as its own number instead.
+   */
+  unresolvedInRun: number;
+  /**
+   * How much of this table was examined, and how those records were chosen. Null for a report
+   * produced before coverage was recorded, which the report says rather than implying FULL.
+   */
+  coverage: ValidationCoverage | null;
+  /** Repeated key values found in the target, or null when this connector cannot look. */
+  duplicates: DuplicateFindingDto[] | null;
+  /**
+   * Totals compared across the two sides. Supplementary evidence: totals agreeing does not prove
+   * the records agree. Null for a report produced before aggregates were computed.
+   */
+  aggregates: AggregateCheck[] | null;
+  /** Coverage of the duplicate check specifically: it can be NOT_VERIFIED while values pass. */
+  duplicateCoverage: ValidationCoverage | null;
+  /**
+   * Which kind of uniqueness the duplicate scan tested, and therefore what finding none proves.
+   * Null on reports produced before the basis was recorded — which a report must say rather than let
+   * a primary-key scan be read as evidence of business uniqueness.
+   */
+  uniqueness: UniquenessCheck | null;
+  /**
+   * Columns the comparison could not honestly answer for, and why.
+   *
+   * A JSON document that repeats a key, or a binary value past the size this platform will read, is
+   * genuinely unknown — not equal and not different. Counting such a record as matched would be a
+   * silent false pass, and counting it as different would report a problem nobody has shown. So the
+   * limitation is recorded where it actually lives, which is the column, and the record is still
+   * compared on everything else. Null on reports produced before this was recorded.
+   */
+  uncomparedColumns: UncomparedColumn[] | null;
   matched: number;
   missing: number;
   different: number;
@@ -1139,18 +1556,73 @@ export interface ValidationEntityResultDto {
   checks: ValidationCheckDto[];
 }
 
+/**
+ * One column the comparison declined to answer for, and how many records it affected.
+ *
+ * `reason` is written by the comparison itself, so what a report prints is what the code decided
+ * rather than a restatement of it.
+ */
+export interface UncomparedColumn {
+  field: string;
+  reason: string;
+  /** How many of the examined records hit this. */
+  records: number;
+}
+
 export interface ValidationSummary {
   tablesValidated: number;
   sourceRows: number;
   targetRows: number;
-  migratedRows: number;
+  /** The run's own accounting, totalled across the validated tables. Null for older reports. */
+  accounting: RecordAccounting | null;
+  /** The weakest coverage any validated table can support. Null for older reports. */
+  coverage: ValidationCoverage | null;
+  /** How deep this validation was asked to go. Null for reports that predate the setting. */
+  depth: ValidationDepth | null;
+  /** Records sharing a key value that should be unique, across every validated table. */
+  duplicateRecords: number;
+  /**
+   * How many validated tables had their *business-level* uniqueness tested — grouped on a key the
+   * target does not simply enforce for us.
+   *
+   * Zero alongside `duplicateRecords: 0` is the case worth stating out loud: every table was counted
+   * over its own primary key, which can never repeat, so the report establishes nothing about whether
+   * the data is unique. Without this number a clean summary reads as "no duplicates" when what was
+   * proven is "no duplicate primary keys". Null on reports produced before it was recorded.
+   */
+  businessUniquenessVerifiedTables: number | null;
   matchedRecords: number;
   missingRecords: number;
+  /** Records the run reported as failed. Not a validation finding; the run already knew. */
+  failedInRunRecords: number;
   differentRecords: number;
   brokenReferences: number;
   pass: number;
   warning: number;
   fail: number;
+}
+
+/**
+ * A key value that occurs more than once where it should occur at most once.
+ *
+ * `attributable` answers the question a migration lead actually asks — did we do this? — and is
+ * only set when the evidence supports an answer: the run's own identity map says how many of these
+ * records it wrote. Null means the duplicates are there and nothing in this run's records proves
+ * who put them there.
+ */
+export interface DuplicateFindingDto {
+  /** The columns that were expected to be unique together. */
+  columns: string[];
+  /** The repeated value, rendered for display. */
+  value: string;
+  /** How many records share it. */
+  occurrences: number;
+  /** A few of the records, for somebody to go and look at. Never the whole group. */
+  sampleIds: string[];
+  /** How many of these records this run wrote, when the identity map can say. */
+  writtenByThisRun: number | null;
+  /** Whether this run appears to have introduced the duplication. Null when unprovable. */
+  attributable: boolean | null;
 }
 
 export interface ValidationRunDto {
@@ -1161,6 +1633,8 @@ export interface ValidationRunDto {
   sourceEnvironment: EnvRef;
   targetEnvironment: EnvRef;
   tables: string[];
+  /** How deep this validation was asked to go. */
+  depth: ValidationDepth;
   summary: ValidationSummary | null;
   entities: ValidationEntityResultDto[];
   errorMessage: string | null;
@@ -1205,6 +1679,17 @@ export interface PreflightEntityResultDto extends PreflightTotals {
   matchDescription: string;
   /** True when only part of the table was analyzed (very large tables). */
   sampled: boolean;
+  /**
+   * How many records the drill-down actually holds.
+   *
+   * Separate from the totals on purpose. The totals count every record analysed; the per-record list
+   * is capped per action, so a table can report 47,000 blocked records and store 2,000 of them. That
+   * gap is invisible unless it is stated, and the remediation package — the artefact a migration team
+   * works from — is built from the stored list.
+   */
+  recordsStored: number;
+  /** True when at least one action hit the per-action storage cap. */
+  recordsTruncated: boolean;
 }
 
 export interface FieldChangeDto {
@@ -1226,6 +1711,8 @@ export interface PreflightRecordDto {
   reasonCode: string | null;
   reason: string | null;
   changes: FieldChangeDto[];
+  /** Fields where a transformation discarded information for this record. */
+  lossy?: LossyRecordDetail[];
 }
 
 export interface PreflightRunDto {
@@ -1240,6 +1727,8 @@ export interface PreflightRunDto {
   entities: PreflightEntityResultDto[];
   /** Unresolved/ambiguous identities found while analyzing, for the acknowledgement screen. */
   identityImpact: IdentityImpactDto;
+  /** Exactly how many records each lossy transformation actually changes. */
+  lossyImpact: LossyImpactDto[];
   progressMessage: string | null;
   errorMessage: string | null;
   createdAt: string;
@@ -1331,6 +1820,14 @@ export interface AuditEventDto {
 
 export interface DashboardDto {
   environments: { total: number; connected: number };
+  /** Work in progress, which is what the dashboard is now organized around. */
+  projects: { analysis: number; migration: number };
+  analyses: { total: number; completed: number; active: number; blockers: number };
+  schedules: { total: number; enabled: number; paused: number; needsAttention: number };
+  recentProjects: ProjectDto[];
+  recentAnalyses: AnalysisRunListItemDto[];
+  /** Schedules due next, so the dashboard says what will happen without anyone asking. */
+  upcomingSchedules: MigrationScheduleDto[];
   migrationRuns: { total: number; completed: number; withErrors: number; failed: number; active: number };
   validationRuns: { total: number; pass: number; warning: number; fail: number };
   recentMigrationRuns: MigrationRunListItemDto[];
@@ -1343,6 +1840,520 @@ export interface DashboardDto {
     createdAt: string;
   }[];
   lastComparison: ComparisonRunDto | null;
+}
+
+// ---------------------------------------------------------------------------
+// Projects: the container a piece of work belongs to
+// ---------------------------------------------------------------------------
+
+/**
+ * What a project is for. The distinction is real, not cosmetic: an analysis project reads a source
+ * and never has a target, while a migration project writes and therefore carries every safety gate.
+ */
+export const PROJECT_KINDS = ['ANALYSIS', 'MIGRATION', 'COMPARISON'] as const;
+export type ProjectKind = (typeof PROJECT_KINDS)[number];
+
+export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
+  ANALYSIS: 'Data analysis',
+  MIGRATION: 'Data migration',
+  COMPARISON: 'Comparison & validation',
+};
+
+export const PROJECT_KIND_DESCRIPTIONS: Record<ProjectKind, string> = {
+  ANALYSIS:
+    'Connect to a source and understand it: tables, columns, volumes, data quality and relationships. Read-only — nothing is ever written.',
+  MIGRATION:
+    'Move data into a target. Can start from an analysis project, so the mapping begins from what the source actually contains.',
+  COMPARISON:
+    'Compare two datasets record by record: what matches, what differs field by field, what exists on only one side. Read-only on both sides — it never writes anywhere.',
+};
+
+export type ProjectStatus = 'ACTIVE' | 'ARCHIVED';
+
+export interface ProjectDto {
+  id: string;
+  name: string;
+  kind: ProjectKind;
+  description: string | null;
+  status: ProjectStatus;
+  /** The source being analysed or migrated. Set on both kinds once chosen. */
+  sourceEnvironment: EnvRef | null;
+  /** Migration projects only. */
+  targetEnvironment: EnvRef | null;
+  /** A migration project may be informed by an analysis project's findings. */
+  analysisProject: { id: string; name: string } | null;
+  /** How many analyses (analysis projects) or plans (migration projects) it holds. */
+  itemCount: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Data comparison: two datasets, reconciled record by record
+// ---------------------------------------------------------------------------
+
+/**
+ * Deliberately not called "comparison" on its own: this product already has one of those, and it
+ * compares *schemas* between two environments. This compares the data — the rows, field by field —
+ * and the two answer different questions. `DataComparison` everywhere keeps them apart.
+ */
+export type DataComparisonStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+/**
+ * How a record on one side relates to the other side.
+ *
+ * `DUPLICATE_KEY` is not a comparison result so much as a reason the comparison cannot be trusted
+ * for those records: if a key appears twice, no honest answer exists to "which one does it match?",
+ * so they are reported rather than silently paired with the first.
+ */
+export type ComparisonDifferenceType =
+  'VALUE_DIFFERS' | 'ONLY_IN_LEFT' | 'ONLY_IN_RIGHT' | 'DUPLICATE_KEY' | 'BLANK_KEY';
+
+/** One column on each side, paired. The names differ between systems more often than not. */
+export interface ComparisonFieldPairDto {
+  left: string;
+  right: string;
+}
+
+export interface ComparisonTablePairDto {
+  leftTable: string;
+  rightTable: string;
+  /** The columns that identify the same real-world record on each side. At least one. */
+  key: ComparisonFieldPairDto[];
+  /** Columns compared field by field. Empty means keys only: existence, not content. */
+  fields: ComparisonFieldPairDto[];
+}
+
+export interface DataComparisonOptions {
+  pairs: ComparisonTablePairDto[];
+}
+
+/**
+ * The numbers, arranged so that no record can go missing without the arithmetic showing it:
+ *
+ *     matched + different + onlyInLeft  === leftRecords  - leftExcluded
+ *     matched + different + onlyInRight === rightRecords - rightExcluded
+ *
+ * That identity is asserted by a test. A reconciliation tool whose own totals do not reconcile has
+ * no business telling anyone their data does not.
+ */
+export interface ComparisonTotalsDto {
+  /** Records read from each side, after the per-side cap. */
+  leftRecords: number;
+  rightRecords: number;
+  /** Records set aside because their key was empty or not unique, and so cannot be paired. */
+  leftExcluded: number;
+  rightExcluded: number;
+  /** Left records paired with a right record and equal on every compared field. */
+  matched: number;
+  /** Paired, but at least one compared field differs. */
+  different: number;
+  onlyInLeft: number;
+  onlyInRight: number;
+  /** Excluded records, by reason. Both sides summed, for display. */
+  duplicateKeys: number;
+  blankKeys: number;
+  /** Individual field differences across every compared record. */
+  fieldDifferences: number;
+}
+
+export interface DataComparisonTableResultDto extends ComparisonTotalsDto {
+  leftTable: string;
+  rightTable: string;
+  displayName: string;
+  outcome: ValidationOutcome;
+  /** Exact row counts from each side, independent of how many were read. */
+  leftCount: number | null;
+  rightCount: number | null;
+  /** True when the per-side cap stopped the read before the end of the table. */
+  leftTruncated: boolean;
+  rightTruncated: boolean;
+  /** Columns compared, and the ones that exist on one side only — the "missing fields" answer. */
+  comparedFields: ComparisonFieldPairDto[];
+  fieldsOnlyInLeft: string[];
+  fieldsOnlyInRight: string[];
+  checks: ValidationCheckDto[];
+}
+
+export interface DataComparisonDto {
+  id: string;
+  projectId: string;
+  name: string;
+  status: DataComparisonStatus;
+  leftEnvironment: EnvRef | null;
+  rightEnvironment: EnvRef | null;
+  options: DataComparisonOptions;
+  totals: ComparisonTotalsDto;
+  outcome: ValidationOutcome;
+  tables: DataComparisonTableResultDto[];
+  progressMessage: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface DataComparisonListItemDto {
+  id: string;
+  name: string;
+  status: DataComparisonStatus;
+  outcome: ValidationOutcome;
+  totals: ComparisonTotalsDto;
+  tableCount: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ComparisonDifferenceDto {
+  leftTable: string;
+  /** The key value this difference is about, rendered as the user chose the key. */
+  keyValue: string;
+  differenceType: ComparisonDifferenceType;
+  /** Null for a whole-record difference (only on one side, duplicate key). */
+  field: string | null;
+  leftValue: string | null;
+  rightValue: string | null;
+}
+
+/** What the setup screen proposes, so a comparison is a confirmation rather than data entry. */
+export interface ComparisonSuggestionDto {
+  leftTable: string;
+  rightTable: string;
+  displayName: string;
+  key: ComparisonFieldPairDto[];
+  fields: ComparisonFieldPairDto[];
+  /** Why this pairing was proposed, and what a person should check about it. */
+  rationale: string;
+  /** False when no usable key could be proposed: the pair needs a person to choose one. */
+  keyProposed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Source analysis
+// ---------------------------------------------------------------------------
+
+export type AnalysisStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+export interface AnalysisOptions {
+  /** Tables to analyse. Empty means every migratable table in the source. */
+  tables: string[];
+  /** Records examined per table when not running a full analysis. */
+  sampleSize: number;
+  /** Examine every record, honoured up to the profiling service's own ceiling. */
+  full: boolean;
+}
+
+export interface AnalysisTotalsDto {
+  tables: number;
+  columns: number;
+  records: number;
+  /** True when any table could only report an estimated row count. */
+  recordsApproximate: boolean;
+  examined: number;
+  findings: number;
+  blockers: number;
+  warnings: number;
+  emptyTables: number;
+  /** Tables holding a column whose values are all null or blank. */
+  unusedColumns: number;
+}
+
+export interface AnalysisRunDto {
+  id: string;
+  projectId: string;
+  projectName: string;
+  name: string;
+  environment: EnvRef;
+  status: AnalysisStatus;
+  options: AnalysisOptions;
+  totals: AnalysisTotalsDto;
+  /** EXACT only when every table was read in full against an exact row count. */
+  basis: StatisticBasis | null;
+  progressMessage: string | null;
+  errorMessage: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  tables: AnalysisTableDto[];
+}
+
+export interface AnalysisRunListItemDto {
+  id: string;
+  projectId: string;
+  name: string;
+  environmentName: string;
+  status: AnalysisStatus;
+  basis: StatisticBasis | null;
+  totals: AnalysisTotalsDto;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+/**
+ * An entity relationship diagram of what an analysis looked at.
+ *
+ * Laid out by the same dependency analysis that decides load order, so the picture and the order a
+ * migration runs in are the same fact drawn two ways: a table to the left of another must exist
+ * before it.
+ */
+export interface ErdNodeDto {
+  logicalName: string;
+  displayName: string;
+  recordCount: number;
+  columnCount: number;
+  /** Distance from a table that depends on nothing. Drawn as the column it sits in. */
+  depth: number;
+  /** The column that identifies a row, where the source names one. */
+  keyColumn: string | null;
+  /** Tables in a reference cycle share a group, and the order between them cannot be resolved. */
+  cycleGroup: number | null;
+}
+
+export interface ErdEdgeDto {
+  /** The referenced table: it must exist first. */
+  from: string;
+  /** The referencing table: it holds the column. */
+  to: string;
+  /** The column on `to` that points at `from`. */
+  attribute: string;
+  required: boolean;
+  /** Part of a cycle, so this reference is resolved in a second pass. */
+  deferred: boolean;
+}
+
+export interface ErdDto {
+  nodes: ErdNodeDto[];
+  edges: ErdEdgeDto[];
+  /** References to tables outside the analysis, which the diagram cannot draw. */
+  externalReferences: { from: string; attribute: string; to: string }[];
+}
+
+export interface AnalysisTableDto {
+  logicalName: string;
+  displayName: string;
+  recordCount: number;
+  recordCountApproximate: boolean;
+  columnCount: number;
+  examined: number;
+  basis: StatisticBasis;
+  blockers: number;
+  warnings: number;
+  /** Where this table sits in a dependency-safe load order. */
+  orderIndex: number;
+  /** Source tables this one points at through a lookup or foreign key. */
+  dependsOn: string[];
+  /** Columns whose values were entirely null or blank in everything examined. */
+  emptyColumns: string[];
+  primaryKeyField: string | null;
+  duplicateKeyCount: number;
+}
+
+/** The full column-level profile of one analysed table, loaded on demand. */
+export interface AnalysisTableDetailDto extends AnalysisTableDto {
+  profile: TableProfileDto;
+  findings: AnalysisFindingDto[];
+}
+
+export interface AnalysisFindingDto {
+  table: string;
+  field: string | null;
+  severity: 'BLOCKER' | 'WARNING';
+  code: string;
+  message: string;
+  affected: number;
+  basis: StatisticBasis;
+  resolution: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// The mapping workbook
+// ---------------------------------------------------------------------------
+
+/**
+ * The columns of the field-mapping sheet, in order. Exported as data because the importer matches
+ * a returned workbook on these labels — someone will reorder them, and that has to keep working.
+ */
+export const MAPPING_SHEET_COLUMNS = [
+  'Source table',
+  'Source field',
+  'Source type',
+  'Required',
+  'Max length',
+  'Records',
+  'Nulls',
+  'Blanks',
+  'Distinct',
+  'Sample value',
+  'Target table',
+  'Target field',
+  /** Read-only: a one-line rendering. Pipelines are edited on the Transformations sheet. */
+  'Transformation (reference)',
+  'Notes',
+] as const;
+
+/** What an imported workbook would change, before anything is written. */
+export interface MappingImportPreviewDto {
+  /** Rows the workbook contained that name a field this plan has. */
+  matched: number;
+  /** Rows naming a table or field the plan does not contain. */
+  unmatched: { row: number; table: string; field: string; reason: string }[];
+  changes: MappingImportChangeDto[];
+  /** Rows that asked for something the plan cannot hold, each naming its row. */
+  rejected: { row: number; table: string; field: string; reason: string }[];
+  /** Columns whose transformation pipeline the workbook changes. */
+  transformationsChanged: number;
+  applied: boolean;
+}
+
+export interface MappingImportChangeDto {
+  table: string;
+  field: string;
+  from: string | null;
+  to: string | null;
+  action: 'MAP' | 'REMAP' | 'IGNORE' | 'UNCHANGED';
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled and triggered runs
+// ---------------------------------------------------------------------------
+
+/**
+ * How a scheduled run reads the source.
+ *
+ * FULL re-reads every record; the engine still only writes what differs, so a repeated full run is
+ * idempotent. INCREMENTAL additionally asks the source for records changed since the last run's
+ * high-water mark, which is the only way to keep up with a table that changes continuously.
+ */
+export const SCHEDULE_MODES = ['FULL', 'INCREMENTAL'] as const;
+export type ScheduleMode = (typeof SCHEDULE_MODES)[number];
+
+export interface MigrationScheduleDto {
+  id: string;
+  planId: string;
+  planName: string;
+  name: string;
+  /** Five-field cron expression: minute hour day-of-month month day-of-week. */
+  cron: string;
+  /** IANA zone the expression is interpreted in, so 02:00 means 02:00 locally all year. */
+  timeZone: string;
+  description: string;
+  enabled: boolean;
+  mode: ScheduleMode;
+  /** The column INCREMENTAL compares against, e.g. `modifiedon`. */
+  watermarkField: string | null;
+  /** Highest watermark value a run of this schedule has read. */
+  lastWatermark: string | null;
+  /** Warning codes reviewed when this schedule was last confirmed. */
+  acknowledgedWarnings: string[];
+  /**
+   * Warning codes the plan has now that were not reviewed. Non-empty means the schedule will refuse
+   * to fire until someone looks and re-confirms.
+   */
+  unreviewedWarnings: string[];
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunId: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+  /** Paused automatically after repeated failures rather than retrying forever. */
+  pausedReason: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduleRunHistoryItemDto {
+  runId: string;
+  status: string;
+  trigger: RunTrigger;
+  startedAt: string | null;
+  completedAt: string | null;
+  created: number;
+  updated: number;
+  failed: number;
+}
+
+/** Why a run started. Recorded on the run so history distinguishes a person from a schedule. */
+export const RUN_TRIGGERS = ['MANUAL', 'SCHEDULED', 'TRIGGERED'] as const;
+export type RunTrigger = (typeof RUN_TRIGGERS)[number];
+
+// ---------------------------------------------------------------------------
+// Staged sources: everything that is not a live queryable database
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a staged table's rows came from.
+ *
+ * A spreadsheet, a list and a file in cloud storage have something in common that separates all of
+ * them from a database: you cannot ask them a question. There is no server to plan a query, no index
+ * to page by, no transaction. So instead of pretending otherwise, the rows are read once, kept, and
+ * re-read on demand — which also means the provenance of every row is recorded, and a migration can
+ * be repeated against exactly the data somebody signed off.
+ */
+export const STAGED_SOURCE_KINDS = ['UPLOAD', 'ONEDRIVE', 'SHAREPOINT'] as const;
+export type StagedSourceKind = (typeof STAGED_SOURCE_KINDS)[number];
+
+export const STAGED_SOURCE_LABELS: Record<StagedSourceKind, string> = {
+  UPLOAD: 'Uploaded file',
+  ONEDRIVE: 'OneDrive / SharePoint file',
+  SHAREPOINT: 'SharePoint list',
+};
+
+/** One imported table, with how it was read and what was inferred about it. */
+export interface StagedTableDto {
+  logicalName: string;
+  displayName: string;
+  kind: StagedSourceKind;
+  /** The file name, drive item or list this came from. */
+  sourceRef: string;
+  /** The sheet within a workbook, when there was more than one. */
+  sheetName: string | null;
+  rowCount: number;
+  columnCount: number;
+  /** The column that identifies a row, and whether it had to be invented. */
+  keyColumn: string;
+  keyIsSynthetic: boolean;
+  importedAt: string;
+  importedBy: string | null;
+  columns: StagedColumnDto[];
+}
+
+/** One inferred column, with the reasoning, so the guess is inspectable rather than magic. */
+export interface StagedColumnDto {
+  name: string;
+  type: AttributeType;
+  maxLength: number | null;
+  blanks: number;
+  distinct: number | null;
+  unique: boolean;
+  /** Why this type was chosen, in one line. */
+  reason: string;
+}
+
+/** What an import did, or would do. */
+export interface StagedImportResultDto {
+  tables: StagedTableDto[];
+  /** Sheets that were skipped, and why — an empty tab is normal and should not look like a failure. */
+  skipped: { name: string; reason: string }[];
+  totalRows: number;
+  /**
+   * Tables this import overwrote.
+   *
+   * A table's name is its identity here: importing over it deletes the rows that were there, which
+   * is right for a snapshot and wrong to do silently. Re-importing the same file is the ordinary
+   * case; `previousSourceRef` differing from the file just imported means two different files
+   * resolved to one name, and the earlier one's rows are now gone.
+   */
+  replaced: {
+    logicalName: string;
+    displayName: string;
+    previousRows: number;
+    previousSourceRef: string;
+  }[];
 }
 
 export interface ApiErrorBody {

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { AutomationInfo, PrincipalDto, PrincipalTable } from '../../../../shared/domain';
 import {
@@ -21,8 +21,11 @@ import type {
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
-import { DATAVERSE_CAPABILITIES } from '../types';
+import type { AggregateKind } from '../../../../shared/aggregates';
+import type { DuplicateGroup, DuplicateScanOptions } from '../../connectors/types';
+import { DATAVERSE_CAPABILITIES, newerThanWatermark } from '../types';
 import {
   DEMO_ORGANIZATION_ID,
   DEMO_SIGNED_IN_USER,
@@ -56,9 +59,23 @@ export class DemoConnection implements DataverseConnection {
     private readonly db: AppDb,
     private readonly logger: Logger,
     private readonly latencyMs: number,
+    /** The organization whose copy of the simulated data this connection reads and writes. */
+    private readonly organizationId: string,
   ) {
     this.url = env.url;
     this.tables = new Map(demoMetadata(env.key).map((t) => [t.logicalName, t]));
+  }
+
+  /**
+   * Every read and write of the simulated data, narrowed to the organization that owns this
+   * environment. Used in place of a bare environment-key filter so a missed call site cannot
+   * quietly read another evaluator's copy.
+   */
+  private scope(): SQL {
+    return and(
+      eq(demoRecords.organizationId, this.organizationId),
+      eq(demoRecords.environmentKey, this.env.key),
+    )!;
   }
 
   private async simulate(factor = 1) {
@@ -132,8 +149,44 @@ export class DemoConnection implements DataverseConnection {
     const [row] = await this.db
       .select({ n: count() })
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)));
     return { count: Number(row?.n ?? 0), approximate: false };
+  }
+
+  /**
+   * A total computed by the database rather than by reading the table.
+   *
+   * The simulated environment keeps each record as a JSON document, so a column total means
+   * aggregating over `data ->> 'column'`. The cast matters: `->>` returns text, and MAX over text
+   * says '9' is larger than '10'. Numbers are cast to numeric and timestamps to timestamptz, so the
+   * answer is the same one a real column would give.
+   *
+   * The column name is bound as a parameter, never concatenated, exactly as everywhere else.
+   */
+  async aggregate(t: TableMetadata, column: string | null, kind: AggregateKind): Promise<string | null> {
+    await this.simulate();
+    this.table(t.logicalName);
+    const where = and(this.scope(), eq(demoRecords.logicalName, t.logicalName));
+    if (kind === 'COUNT') {
+      const [row] = await this.db.select({ n: count() }).from(demoRecords).where(where);
+      return String(Number(row?.n ?? 0));
+    }
+    const attribute = t.attributes.find((a) => a.logicalName === column);
+    if (!attribute) return null;
+    // Only the types the shared rules already allow reach here, so there is one cast per family
+    // rather than a guess per value.
+    const value =
+      attribute.type === 'DateTime'
+        ? sql`(${demoRecords.data} ->> ${column})::timestamptz`
+        : sql`(${demoRecords.data} ->> ${column})::numeric`;
+    const expression =
+      kind === 'SUM' ? sql`sum(${value})` : kind === 'MIN' ? sql`min(${value})` : sql`max(${value})`;
+    const rows = await this.db
+      .select({ agg: sql<string | null>`(${expression})::text` })
+      .from(demoRecords)
+      .where(where);
+    const agg = rows[0]?.agg;
+    return agg === null || agg === undefined ? null : String(agg);
   }
 
   private project(t: TableMetadata, data: Record<string, unknown>, columns: string[]): DvRecord {
@@ -145,24 +198,30 @@ export class DemoConnection implements DataverseConnection {
     return { id: String(data[t.primaryIdAttribute]), values };
   }
 
-  async *queryRecords(
-    t: TableMetadata,
-    columns: string[],
-    opts: { pageSize: number },
-  ): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(t: TableMetadata, columns: string[], opts: ReadOptions): AsyncGenerator<DvRecord[]> {
     this.table(t.logicalName);
+    if (opts.since && !t.attributes.some((a) => a.logicalName === opts.since!.field)) {
+      throw new Error(`Cannot read incrementally: ${t.logicalName} has no column ${opts.since.field}`);
+    }
     let offset = 0;
     for (;;) {
       await this.simulate();
       const rows = await this.db
         .select()
         .from(demoRecords)
-        .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, t.logicalName)))
+        .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)))
         .orderBy(asc(demoRecords.recordId))
         .limit(opts.pageSize)
         .offset(offset);
       if (rows.length === 0) return;
-      yield rows.map((r) => this.project(t, r.data, columns));
+      // The real connectors filter in the platform; a page is filtered here instead, with the same
+      // comparison, so an incremental schedule behaves the same against the demo source.
+      const page = opts.since
+        ? rows.filter((r) =>
+            newerThanWatermark((r.data as Record<string, unknown>)[opts.since!.field], opts.since!.value),
+          )
+        : rows;
+      if (page.length) yield page.map((r) => this.project(t, r.data, columns));
       if (rows.length < opts.pageSize) return;
       offset += rows.length;
     }
@@ -177,7 +236,7 @@ export class DemoConnection implements DataverseConnection {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.env.key),
+          this.scope(),
           eq(demoRecords.logicalName, t.logicalName),
           inArray(
             demoRecords.recordId,
@@ -223,15 +282,64 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(
-        and(
-          eq(demoRecords.environmentKey, this.env.key),
-          eq(demoRecords.logicalName, t.logicalName),
-          ...(conditions as never[]),
-        ),
-      )
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(2);
     return rows.find((r) => r.recordId !== excludeId)?.data ?? null;
+  }
+
+  /**
+   * Repeated key values, grouped by the database holding the simulated rows.
+   *
+   * The simulated data lives in Postgres as JSONB, so the grouping is a real `GROUP BY ... HAVING
+   * COUNT(*) > 1` rather than a scan in this process — the same shape the real SQL connectors use,
+   * which is what makes the demo an honest demonstration of the check rather than a mock of it.
+   *
+   * A lookup is compared by the id it points at, matching how every other read here treats one.
+   */
+  async findDuplicateKeys(
+    tableMeta: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]> {
+    if (columns.length === 0) return [];
+    await this.simulate();
+    const t = this.table(tableMeta.logicalName);
+    const keyOf = (field: string) =>
+      sql`coalesce(${demoRecords.data}->${field}->>'id', ${demoRecords.data}->>${field})`;
+    const keyExpr = sql.join(
+      columns.map((c) => keyOf(c)),
+      sql` || ' ' || `,
+    );
+    // NULL is not a duplicate: a thousand unknown values are not one value a thousand times.
+    const notNull = sql.join(
+      columns.map((c) => sql`${keyOf(c)} is not null`),
+      sql` and `,
+    );
+    const rows = await this.db
+      .select({
+        key: sql<string>`${keyExpr}`.as('dup_key'),
+        n: sql<number>`count(*)::int`.as('dup_count'),
+        ids: sql<
+          string[]
+        >`(array_agg(${demoRecords.recordId} order by ${demoRecords.recordId}))[1:${Math.max(1, Math.min(opts.idsPerGroup, 20))}]`.as(
+          'dup_ids',
+        ),
+      })
+      .from(demoRecords)
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), notNull))
+      .groupBy(sql`dup_key`)
+      .having(sql`count(*) > 1`)
+      .orderBy(sql`dup_count desc, dup_key`)
+      .limit(Math.max(1, Math.min(opts.maxGroups, 1000)));
+
+    return rows.map((r) => {
+      const parts = String(r.key).split(' ');
+      const values: Record<string, FieldValue> = {};
+      columns.forEach((c, i) => {
+        values[c] = parts[i] ?? null;
+      });
+      return { values, count: Number(r.n), sampleIds: r.ids ?? [] };
+    });
   }
 
   async findByFields(
@@ -251,13 +359,7 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(
-        and(
-          eq(demoRecords.environmentKey, this.env.key),
-          eq(demoRecords.logicalName, t.logicalName),
-          ...(conditions as never[]),
-        ),
-      )
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(Math.max(1, Math.min(limit, 50)));
     return rows.map((r) => this.project(t, r.data, columns));
   }
@@ -353,7 +455,7 @@ export class DemoConnection implements DataverseConnection {
             .from(demoRecords)
             .where(
               and(
-                eq(demoRecords.environmentKey, this.env.key),
+                this.scope(),
                 eq(demoRecords.logicalName, value.logicalName),
                 eq(demoRecords.recordId, value.id.toLowerCase()),
               ),
@@ -467,7 +569,13 @@ export class DemoConnection implements DataverseConnection {
         this.computed(t, data);
         const inserted = await this.db
           .insert(demoRecords)
-          .values({ environmentKey: this.env.key, logicalName: t.logicalName, recordId: id, data })
+          .values({
+            organizationId: this.organizationId,
+            environmentKey: this.env.key,
+            logicalName: t.logicalName,
+            recordId: id,
+            data,
+          })
           .onConflictDoNothing()
           .returning({ id: demoRecords.recordId });
         if (inserted.length === 0) {
@@ -495,11 +603,7 @@ export class DemoConnection implements DataverseConnection {
           .select()
           .from(demoRecords)
           .where(
-            and(
-              eq(demoRecords.environmentKey, this.env.key),
-              eq(demoRecords.logicalName, t.logicalName),
-              eq(demoRecords.recordId, recordId),
-            ),
+            and(this.scope(), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)),
           );
         if (!existing) {
           throw new DataverseError(
@@ -535,11 +639,7 @@ export class DemoConnection implements DataverseConnection {
           .update(demoRecords)
           .set({ data, updatedAt: new Date() })
           .where(
-            and(
-              eq(demoRecords.environmentKey, this.env.key),
-              eq(demoRecords.logicalName, t.logicalName),
-              eq(demoRecords.recordId, recordId),
-            ),
+            and(this.scope(), eq(demoRecords.logicalName, t.logicalName), eq(demoRecords.recordId, recordId)),
           );
       },
       { operation: 'update', table: t.logicalName },
@@ -563,7 +663,7 @@ export class DemoConnection implements DataverseConnection {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.env.key), eq(demoRecords.logicalName, table)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, table)));
     return rows
       .map((r) => {
         const d = r.data as Record<string, string | boolean | null>;
@@ -586,7 +686,7 @@ export class DemoConnection implements DataverseConnection {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.env.key),
+          this.scope(),
           eq(demoRecords.logicalName, 'systemuser'),
           eq(demoRecords.recordId, targetUserId.toLowerCase()),
         ),

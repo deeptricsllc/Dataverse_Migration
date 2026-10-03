@@ -12,6 +12,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type {
+  AnalysisOptions,
+  AnalysisStatus,
+  AnalysisTotalsDto,
   ComparisonSummary,
   DependencyAnalysisDto,
   DependencyEdgeDto,
@@ -21,6 +24,8 @@ import type {
   ColumnDiff,
   RelationshipDiff,
   KeyDiff,
+  DuplicateFindingDto,
+  UncomparedColumn,
   ValidationCheckDto,
   ValidationSummary,
   AutomationInfo,
@@ -32,6 +37,8 @@ import type {
   FieldChangeDto,
   FieldTransformDto,
   IdentityImpactDto,
+  LossyImpactDto,
+  LossyRecordDetail,
   ObjectMappingStatus,
   SqlConnectionConfig,
   TransformationMetricsDto,
@@ -42,8 +49,28 @@ import type {
   PrincipalDto,
   PrincipalMatchStatus,
   PrincipalTable,
+  ProjectKind,
+  ProjectStatus,
+  ComparisonDifferenceType,
+  ComparisonTotalsDto,
+  DataComparisonOptions,
+  DataComparisonStatus,
+  StagedColumnDto,
+  StagedSourceKind,
+  RecordOutcome,
+  RunTrigger,
+  ScheduleMode,
+  StatisticBasis,
+  TableProfileDto,
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
+import type { RecordAccounting } from '../../../shared/run-metrics';
+import type { WorkspaceRole } from '../../../shared/authorization';
+import type { AggregateCheck } from '../../../shared/aggregates';
+import type { UniquenessCheck } from '../../../shared/uniqueness';
+import type { ReadinessAssessment } from '../../../shared/readiness';
+import type { ReconciliationEvidence, WriteState } from '../../../shared/write-state';
+import type { ValidationCoverage, ValidationDepth } from '../../../shared/validation-coverage';
 import type { RunPlanSnapshot } from '../services/run-snapshot';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -76,7 +103,12 @@ export const users = pgTable(
     authProvider: text('auth_provider').$type<'microsoft' | 'demo'>().notNull(),
     email: text('email'),
     displayName: text('display_name').notNull(),
-    role: text('role').$type<'ADMIN' | 'MEMBER'>().notNull().default('MEMBER'),
+    /**
+     * `MEMBER` predates the four-role model and is read as `MIGRATION_OPERATOR`, which is exactly
+     * what it could already do. Stored rather than migrated: rewriting rows to a new vocabulary
+     * would make an old backup mean something different from what it said.
+     */
+    role: text('role').$type<WorkspaceRole | 'MEMBER'>().notNull().default('MEMBER'),
     /** MSAL home account id used to acquire tokens silently. */
     msalHomeAccountId: text('msal_home_account_id'),
     createdAt: createdAt(),
@@ -258,7 +290,9 @@ export const jobs = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    type: text('type').$type<'COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT'>().notNull(),
+    type: text('type')
+      .$type<'COMPARISON' | 'DATA_COMPARISON' | 'MIGRATION' | 'VALIDATION' | 'PREFLIGHT' | 'ANALYSIS'>()
+      .notNull(),
     targetId: uuid('target_id').notNull(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED'>().notNull().default('QUEUED'),
     attempts: integer('attempts').notNull().default(0),
@@ -350,6 +384,8 @@ export const migrationPlans = pgTable(
       .notNull()
       .references(() => environments.id),
     comparisonRunId: uuid('comparison_run_id').references(() => comparisonRuns.id, { onDelete: 'set null' }),
+    /** The migration project this plan belongs to. Null for plans created before projects existed. */
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
     options: jsonb('options').$type<PlanOptions>().notNull(),
     issues: jsonb('issues')
       .$type<PlanIssue[]>()
@@ -486,6 +522,17 @@ export const migrationRuns = pgTable(
     planSnapshot: jsonb('plan_snapshot').$type<RunPlanSnapshot>().notNull(),
     /** Aggregate record of what the transformation engine did during this run. */
     transformationMetrics: jsonb('transformation_metrics').$type<TransformationMetricsDto | null>(),
+    /** Why this run started: a person, a schedule, or an explicit trigger. */
+    trigger: text('trigger').$type<RunTrigger>().notNull().default('MANUAL'),
+    /** The schedule that started it, when it was not a person. */
+    scheduleId: uuid('schedule_id'),
+    /**
+     * For an incremental run, the watermark it read up to. The next run of the same schedule starts
+     * from here, so a table that changes continuously does not have to be re-read in full.
+     */
+    watermark: text('watermark'),
+    /** The column an incremental run compares against, and where it started. Null for a full run. */
+    incremental: jsonb('incremental').$type<{ field: string; since: string | null } | null>(),
     currentEntity: text('current_entity'),
     total: integer('total').notNull().default(0),
     processed: integer('processed').notNull().default(0),
@@ -494,9 +541,23 @@ export const migrationRuns = pgTable(
     unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
+    /** Records whose write outcome is unknown. A run with any of these is not complete. */
+    unresolved: integer('unresolved').notNull().default(0),
     cancelRequested: boolean('cancel_requested').notNull().default(false),
     pauseRequested: boolean('pause_requested').notNull().default(false),
     attempt: integer('attempt').notNull().default(1),
+    /**
+     * The readiness assessment as it stood when this run was executed.
+     *
+     * Stored rather than re-assessed, because the two are different documents. A plan can be re-mapped
+     * after a run; the target is populated by the run itself, so a finding like TARGET_ALREADY_POPULATED
+     * means something different afterwards. The evidence package used to re-assess at packaging time and
+     * describe the result as "the pre-migration assessment", which it was not.
+     *
+     * Null for runs executed before this was recorded. A reader is told that rather than shown a current
+     * assessment wearing the old one's label.
+     */
+    readinessSnapshot: jsonb('readiness_snapshot').$type<ReadinessAssessment>(),
     errorMessage: text('error_message'),
     /** User on whose delegated authority the run executes. */
     executedByUserId: uuid('executed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -529,6 +590,8 @@ export const migrationRunEntities = pgTable(
     unchanged: integer('unchanged').notNull().default(0),
     skipped: integer('skipped').notNull().default(0),
     failed: integer('failed').notNull().default(0),
+    /** Records whose write outcome is unknown. A run with any of these is not complete. */
+    unresolved: integer('unresolved').notNull().default(0),
     deferredPending: integer('deferred_pending').notNull().default(0),
     deferredResolved: integer('deferred_resolved').notNull().default(0),
     deferredFailed: integer('deferred_failed').notNull().default(0),
@@ -553,7 +616,21 @@ export const migrationRecordMaps = pgTable(
     logicalName: text('logical_name').notNull(),
     sourceId: text('source_id').notNull(),
     targetId: text('target_id'),
-    outcome: text('outcome').$type<'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED'>().notNull(),
+    outcome: text('outcome').$type<RecordOutcome>().notNull(),
+    /**
+     * Whether we know what happened to this record, which is not the same question as `outcome`.
+     *
+     * Written before the target write and replaced after it, so a row found as `INTENDED` means the
+     * record may or may not be in the target. Null for rows written before this protocol existed, and
+     * for outcomes that never write anything (unchanged, skipped). See `shared/write-state.ts`.
+     */
+    writeState: text('write_state').$type<WriteState>(),
+    /** What the write was going to be, so reconciliation knows what to look for. */
+    intendedOperation: text('intended_operation').$type<'CREATE' | 'UPDATE'>(),
+    /** What could identify this record in the target, decided before the write rather than after. */
+    reconcileEvidence: text('reconcile_evidence').$type<ReconciliationEvidence>(),
+    /** What reconciliation concluded, for the evidence package and for the person reading it. */
+    reconcileNote: text('reconcile_note'),
     matchMethod: text('match_method'),
     /** Lookups deferred to pass 2: attribute -> source lookup value. */
     deferredLookups: jsonb('deferred_lookups').$type<Record<
@@ -571,6 +648,17 @@ export const migrationRecordMaps = pgTable(
     } | null>(),
     auditStatus: text('audit_status').$type<'PENDING' | 'DONE' | 'FAILED' | null>(),
     attempts: integer('attempts').notNull().default(1),
+    /**
+     * Which attempt of the run last touched this record.
+     *
+     * Not the same thing as `attempts` above, which counts how many times this one record was written.
+     * This says which execution of the run is responsible for the state the row is now in, which is what
+     * makes a per-attempt breakdown possible: every record belongs to exactly one attempt, so the
+     * attempts sum to the run total without counting anything twice.
+     *
+     * Null on rows written before this was recorded, which a report says rather than guessing at 1.
+     */
+    runAttempt: integer('run_attempt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -584,6 +672,9 @@ export const migrationRecordMaps = pgTable(
       t.sourceId,
     ),
     index('migration_record_maps_deferred_idx').on(t.runId, t.deferredStatus),
+    // Reconciliation and the completion check both ask "anything unresolved in this run?", which is the
+    // one question whose answer decides whether a run may be called complete.
+    index('migration_record_maps_write_state_idx').on(t.runId, t.writeState),
   ],
 );
 
@@ -699,6 +790,11 @@ export const preflightRuns = pgTable(
     options: jsonb('options').$type<PlanOptions>().notNull(),
     totals: jsonb('totals').$type<PreflightTotals>(),
     identityImpact: jsonb('identity_impact').$type<IdentityImpactDto>(),
+    /** Exactly how many records each configured lossy transformation actually changes. */
+    lossyImpact: jsonb('lossy_impact')
+      .$type<LossyImpactDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     progressMessage: text('progress_message'),
     errorMessage: text('error_message'),
     createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -720,6 +816,10 @@ export const preflightEntityResults = pgTable(
     displayName: text('display_name').notNull(),
     matchDescription: text('match_description').notNull(),
     sampled: boolean('sampled').notNull().default(false),
+    /** How many records the per-record drill-down actually holds for this table. */
+    recordsStored: integer('records_stored').notNull().default(0),
+    /** True when a per-action storage cap was reached, so the drill-down is a subset. */
+    recordsTruncated: boolean('records_truncated').notNull().default(false),
     totals: jsonb('totals').$type<PreflightTotals>().notNull(),
   },
   (t) => [uniqueIndex('preflight_entity_results_uq').on(t.preflightRunId, t.logicalName)],
@@ -743,6 +843,11 @@ export const preflightRecords = pgTable(
     reason: text('reason'),
     changes: jsonb('changes')
       .$type<FieldChangeDto[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Per-field loss detail, so the acknowledgement can drill into the affected records. */
+    lossy: jsonb('lossy')
+      .$type<LossyRecordDetail[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
   },
@@ -771,6 +876,8 @@ export const validationRuns = pgTable(
       .notNull()
       .references(() => environments.id),
     tables: jsonb('tables').$type<string[]>().notNull(),
+    /** How deep this validation was asked to go. Null predates the setting; read as STANDARD. */
+    depth: text('depth').$type<ValidationDepth>(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'>().notNull().default('QUEUED'),
     outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>(),
     summary: jsonb('summary').$type<ValidationSummary>(),
@@ -799,8 +906,34 @@ export const validationEntityResults = pgTable(
     outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
     sourceCount: integer('source_count'),
     targetCount: integer('target_count'),
+    /**
+     * Superseded by `recordAccounting`. It held every identity-map row that was not FAILED, which
+     * counted records the run deliberately did not write as records it had migrated. Kept so old
+     * reports are not silently restated, never read back.
+     */
     migratedRecords: integer('migrated_records').notNull().default(0),
+    /** Null on reports produced before the breakdown was recorded, which the report says out loud. */
+    recordAccounting: jsonb('record_accounting').$type<RecordAccounting>(),
+    /** How much of this table was examined. Null predates coverage being recorded. */
+    coverage: jsonb('coverage').$type<ValidationCoverage>(),
+    /** Repeated key values found, and how thoroughly the search for them ran. */
+    duplicates: jsonb('duplicates').$type<DuplicateFindingDto[]>(),
+    duplicateCoverage: jsonb('duplicate_coverage').$type<ValidationCoverage>(),
+    /**
+     * Which kind of uniqueness the duplicate scan tested. Null on rows written before it was
+     * recorded, so an old report shows "not recorded" rather than implying business uniqueness was
+     * proven by a primary-key scan.
+     */
+    uniqueness: jsonb('uniqueness').$type<UniquenessCheck>(),
+    /** Columns the comparison declined to answer for, with the reason each time. */
+    uncomparedColumns: jsonb('uncompared_columns').$type<UncomparedColumn[]>(),
+    /** Totals compared across the two sides, with the scope each comparison covered. */
+    aggregates: jsonb('aggregates').$type<AggregateCheck[]>(),
     checkedRecords: integer('checked_records').notNull().default(0),
+    /** Records the run reported as failed. Kept apart from `missing`, which is our own finding. */
+    failedInRun: integer('failed_in_run').notNull().default(0),
+    /** Records the run could not account for, which is why a report carrying any cannot pass. */
+    unresolvedInRun: integer('unresolved_in_run').notNull().default(0),
     matched: integer('matched').notNull().default(0),
     missing: integer('missing').notNull().default(0),
     different: integer('different').notNull().default(0),
@@ -858,9 +991,382 @@ export const auditEvents = pgTable(
 // Demo Dataverse storage (only used by DEMO_MODE simulated environments)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+/**
+ * The container a piece of work belongs to. A project is either an analysis of a source or a
+ * migration into a target; the kind decides which columns are meaningful, which is why the
+ * environment references are nullable rather than split across two tables.
+ */
+export const projects = pgTable(
+  'projects',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    kind: text('kind').$type<ProjectKind>().notNull(),
+    description: text('description'),
+    status: text('status').$type<ProjectStatus>().notNull().default('ACTIVE'),
+    sourceEnvironmentId: uuid('source_environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    /** Migration projects only. */
+    targetEnvironmentId: uuid('target_environment_id').references(() => environments.id, {
+      onDelete: 'set null',
+    }),
+    /**
+     * The analysis project a migration project starts from. Self-referential, and deliberately
+     * `set null`: losing the reference must never delete the migration work that used it.
+     */
+    analysisProjectId: uuid('analysis_project_id'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('projects_org_kind_idx').on(t.organizationId, t.kind, t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
+// Source analysis
+// ---------------------------------------------------------------------------
+
+export const analysisRuns = pgTable(
+  'analysis_runs',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id),
+    name: text('name').notNull(),
+    status: text('status').$type<AnalysisStatus>().notNull().default('QUEUED'),
+    options: jsonb('options').$type<AnalysisOptions>().notNull(),
+    totals: jsonb('totals').$type<AnalysisTotalsDto>(),
+    /** EXACT only when every table was read in full against an exact row count. */
+    basis: text('basis').$type<StatisticBasis>(),
+    progressMessage: text('progress_message'),
+    errorMessage: text('error_message'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    startedAt: ts('started_at'),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [index('analysis_runs_project_idx').on(t.projectId, t.createdAt)],
+);
+
+/**
+ * One analysed table. The full column profile is stored because profiling costs a full read of the
+ * source: an analysis nobody can come back to next week is not an analysis.
+ */
+export const analysisTables = pgTable(
+  'analysis_tables',
+  {
+    id: id(),
+    analysisRunId: uuid('analysis_run_id')
+      .notNull()
+      .references(() => analysisRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    displayName: text('display_name').notNull(),
+    recordCount: integer('record_count').notNull().default(0),
+    recordCountApproximate: boolean('record_count_approximate').notNull().default(false),
+    columnCount: integer('column_count').notNull().default(0),
+    examined: integer('examined').notNull().default(0),
+    basis: text('basis').$type<StatisticBasis>().notNull().default('SAMPLED'),
+    blockers: integer('blockers').notNull().default(0),
+    warnings: integer('warnings').notNull().default(0),
+    orderIndex: integer('order_index').notNull().default(0),
+    dependsOn: jsonb('depends_on')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    emptyColumns: jsonb('empty_columns')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    primaryKeyField: text('primary_key_field'),
+    duplicateKeyCount: integer('duplicate_key_count').notNull().default(0),
+    profile: jsonb('profile').$type<TableProfileDto>().notNull(),
+  },
+  (t) => [uniqueIndex('analysis_tables_run_name_idx').on(t.analysisRunId, t.logicalName)],
+);
+
+/** Findings flattened out of the profiles, so they can be listed, filtered and exported. */
+export const analysisFindings = pgTable(
+  'analysis_findings',
+  {
+    id: id(),
+    analysisRunId: uuid('analysis_run_id')
+      .notNull()
+      .references(() => analysisRuns.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    field: text('field'),
+    severity: text('severity').$type<'BLOCKER' | 'WARNING'>().notNull(),
+    code: text('code').notNull(),
+    message: text('message').notNull(),
+    affected: integer('affected').notNull().default(0),
+    basis: text('basis').$type<StatisticBasis>().notNull().default('SAMPLED'),
+    resolution: text('resolution'),
+  },
+  (t) => [index('analysis_findings_run_idx').on(t.analysisRunId, t.severity)],
+);
+
+// ---------------------------------------------------------------------------
+// Scheduled runs
+// ---------------------------------------------------------------------------
+
+/**
+ * A recurring migration.
+ *
+ * The environment names confirmed when the schedule was created are stored on it: a scheduled run
+ * has nobody present to type them, so the schedule re-checks them at fire time and refuses if the
+ * plan has since been pointed somewhere else. That is the same protection the interactive confirm
+ * gives, moved to the moment of creation.
+ */
+export const migrationSchedules = pgTable(
+  'migration_schedules',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => migrationPlans.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    cron: text('cron').notNull(),
+    timeZone: text('time_zone').notNull().default('UTC'),
+    enabled: boolean('enabled').notNull().default(true),
+    mode: text('mode').$type<ScheduleMode>().notNull().default('FULL'),
+    watermarkField: text('watermark_field'),
+    lastWatermark: text('last_watermark'),
+    confirmSourceName: text('confirm_source_name').notNull(),
+    confirmTargetName: text('confirm_target_name').notNull(),
+    /**
+     * The warnings a person had seen when they last confirmed this schedule, as issue codes.
+     * A firing whose plan has warnings outside this set is refused: those are warnings nobody
+     * reviewed, and a run with nobody watching is the wrong moment to decide they are acceptable.
+     */
+    acknowledgedWarnings: jsonb('acknowledged_warnings')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    nextRunAt: ts('next_run_at'),
+    lastRunAt: ts('last_run_at'),
+    lastRunId: uuid('last_run_id'),
+    lastStatus: text('last_status'),
+    lastError: text('last_error'),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    /** Set when the scheduler stops firing on its own, so the reason survives. */
+    pausedReason: text('paused_reason'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('migration_schedules_due_idx').on(t.enabled, t.nextRunAt),
+    index('migration_schedules_plan_idx').on(t.planId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Staged sources (files, lists — anything read once and kept)
+// ---------------------------------------------------------------------------
+
+/**
+ * One imported table belonging to a staged connection.
+ *
+ * The metadata is stored because it was inferred, not declared: re-deriving it later from the rows
+ * could produce a different answer than the one the mapping was built against.
+ */
+export const stagedTables = pgTable(
+  'staged_tables',
+  {
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    displayName: text('display_name').notNull(),
+    kind: text('kind').$type<StagedSourceKind>().notNull(),
+    /** The file, drive item or list the rows were read from. */
+    sourceRef: text('source_ref').notNull(),
+    sheetName: text('sheet_name'),
+    rowCount: integer('row_count').notNull().default(0),
+    keyColumn: text('key_column').notNull(),
+    keyIsSynthetic: boolean('key_is_synthetic').notNull().default(true),
+    metadata: jsonb('metadata').$type<TableMetadata>().notNull(),
+    columns: jsonb('columns').$type<StagedColumnDto[]>().notNull(),
+    importedByUserId: uuid('imported_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    importedAt: ts('imported_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.environmentId, t.logicalName] })],
+);
+
+/**
+ * The rows themselves, one JSON object each.
+ *
+ * `ordinal` preserves the order the file had, which is the only order a spreadsheet has. It is also
+ * what the synthetic row key is built from, so a re-import of the same file addresses the same rows.
+ */
+export const stagedRows = pgTable(
+  'staged_rows',
+  {
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    logicalName: text('logical_name').notNull(),
+    recordId: text('record_id').notNull(),
+    ordinal: integer('ordinal').notNull(),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.environmentId, t.logicalName, t.recordId] }),
+    index('staged_rows_order_idx').on(t.environmentId, t.logicalName, t.ordinal),
+  ],
+);
+
+/**
+ * A data comparison: two datasets reconciled record by record.
+ *
+ * Separate from `comparisons`, which diffs schemas. This one answers "does the data agree?", and
+ * the two are different enough that sharing a table would have meant a row where half the columns
+ * are always null.
+ *
+ * Left and right rather than source and target, deliberately. Neither side is written to, and
+ * calling one of them a target would imply otherwise.
+ */
+export const dataComparisons = pgTable(
+  'data_comparisons',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    leftEnvironmentId: uuid('left_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    rightEnvironmentId: uuid('right_environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    status: text('status').$type<DataComparisonStatus>().notNull().default('QUEUED'),
+    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull().default('PASS'),
+    options: jsonb('options').$type<DataComparisonOptions>().notNull(),
+    totals: jsonb('totals').$type<ComparisonTotalsDto>(),
+    progressMessage: text('progress_message'),
+    errorMessage: text('error_message'),
+    startedAt: ts('started_at'),
+    completedAt: ts('completed_at'),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('data_comparisons_project_idx').on(t.projectId, t.createdAt),
+    index('data_comparisons_org_idx').on(t.organizationId),
+  ],
+);
+
+export const dataComparisonTables = pgTable(
+  'data_comparison_tables',
+  {
+    id: id(),
+    dataComparisonId: uuid('data_comparison_id')
+      .notNull()
+      .references(() => dataComparisons.id, { onDelete: 'cascade' }),
+    leftTable: text('left_table').notNull(),
+    rightTable: text('right_table').notNull(),
+    displayName: text('display_name').notNull(),
+    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
+    /** Exact counts from each side, which is not the same as how many were read. */
+    leftCount: integer('left_count'),
+    rightCount: integer('right_count'),
+    leftTruncated: boolean('left_truncated').notNull().default(false),
+    rightTruncated: boolean('right_truncated').notNull().default(false),
+    totals: jsonb('totals').$type<ComparisonTotalsDto>().notNull(),
+    comparedFields: jsonb('compared_fields').$type<{ left: string; right: string }[]>().notNull(),
+    fieldsOnlyInLeft: jsonb('fields_only_in_left').$type<string[]>().notNull(),
+    fieldsOnlyInRight: jsonb('fields_only_in_right').$type<string[]>().notNull(),
+    checks: jsonb('checks').$type<unknown[]>().notNull(),
+  },
+  (t) => [index('data_comparison_tables_run_idx').on(t.dataComparisonId)],
+);
+
+/**
+ * The per-record detail. Capped per table like every other drill-down in this product, and the
+ * table's own checks say so when the cap was reached.
+ */
+export const dataComparisonDifferences = pgTable(
+  'data_comparison_differences',
+  {
+    id: id(),
+    dataComparisonId: uuid('data_comparison_id')
+      .notNull()
+      .references(() => dataComparisons.id, { onDelete: 'cascade' }),
+    leftTable: text('left_table').notNull(),
+    keyValue: text('key_value').notNull(),
+    differenceType: text('difference_type').$type<ComparisonDifferenceType>().notNull(),
+    field: text('field'),
+    leftValue: text('left_value'),
+    rightValue: text('right_value'),
+  },
+  (t) => [index('data_comparison_differences_run_idx').on(t.dataComparisonId, t.leftTable)],
+);
+
+/**
+ * Someone asking for access, from the public landing page.
+ *
+ * Deliberately outside the organization tree. Nobody has an organization when they submit this —
+ * that is the point of it — and it belongs to whoever runs the deployment rather than to any tenant.
+ *
+ * One row per email address: a second submission bumps `submissions` and refreshes what they said,
+ * because the same person asking twice is a stronger signal than two rows, and it keeps a form that
+ * anyone on the internet can post from turning into unbounded storage.
+ */
+export const accessRequests = pgTable(
+  'access_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Stored lower-cased and trimmed so the unique index actually means "the same person". */
+    email: text('email').notNull(),
+    name: text('name').notNull(),
+    company: text('company'),
+    useCase: text('use_case'),
+    submissions: integer('submissions').notNull().default(1),
+    handledAt: ts('handled_at'),
+    handledByUserId: uuid('handled_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('access_requests_email_idx').on(t.email)],
+);
+
+/**
+ * The simulated Dataverse and SQL Server data behind the demo environments.
+ *
+ * Partitioned by organization. It used to be keyed only by environment, so every evaluator shared
+ * one copy: a prospect migrating into the simulated UAT wrote records the next prospect then found
+ * sitting there. The environments that read this table are themselves owned by an organization, so
+ * that is the partition key — the boundary the rest of the product already enforces, rather than a
+ * second one invented for the demo.
+ */
 export const demoRecords = pgTable(
   'demo_records',
   {
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     environmentKey: text('environment_key').notNull(),
     logicalName: text('logical_name').notNull(),
     recordId: text('record_id').notNull(),
@@ -868,5 +1374,5 @@ export const demoRecords = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [primaryKey({ columns: [t.environmentKey, t.logicalName, t.recordId] })],
+  (t) => [primaryKey({ columns: [t.organizationId, t.environmentKey, t.logicalName, t.recordId] })],
 );

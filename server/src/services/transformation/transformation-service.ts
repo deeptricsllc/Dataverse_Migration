@@ -1,18 +1,27 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   isLossyRule,
+  type LossyRecordDto,
   type LossyTransformationDto,
   type MigrationPlanDto,
   type PreviewFieldDto,
   type PreviewRecordDto,
+  type TransformationKind,
   type TransformationRule,
   type TransformationTemplateDto,
   type TransformPreviewDto,
 } from '../../../../shared/domain';
 import type { AttributeMeta, DvRecord, FieldValue, TableMetadata } from '../../../../shared/metadata';
 import type { AppDb } from '../../db/client';
-import { fieldMappings, migrationPlanEntities, migrationPlans } from '../../db/schema';
+import {
+  fieldMappings,
+  migrationPlanEntities,
+  migrationPlans,
+  preflightEntityResults,
+  preflightRecords,
+  preflightRuns,
+} from '../../db/schema';
 import type { ConnectionFactory } from '../../dataverse/factory';
 import { badRequest, notFound } from '../../lib/errors';
 import type { AuditService } from '../audit-service';
@@ -20,12 +29,22 @@ import type { RequestContext } from '../context';
 import type { EnvironmentService } from '../environment-service';
 import type { MetadataService } from '../metadata-service';
 import type { PlanningService } from '../planning-service';
-import { display, transformField } from './engine';
+import { display, lostSteps, transformField } from './engine';
 import { BUILT_IN_TEMPLATES } from './templates';
 
 /** Rows read for a preview. Bounded: a preview is a sample, never a scan. */
 const PREVIEW_SAMPLE = 25;
 const PREVIEW_SCAN_LIMIT = 500;
+
+/**
+ * Rows read when no preflight has measured the loss yet. A bounded scan can only produce a floor,
+ * which is why anything it reports is labelled SAMPLED rather than presented as a total.
+ */
+const LOSS_SCAN_LIMIT = 5_000;
+
+type PlanRow = typeof migrationPlans.$inferSelect;
+type EntityRow = typeof migrationPlanEntities.$inferSelect;
+type MappingRow = typeof fieldMappings.$inferSelect;
 
 /**
  * Configures and previews transformations.
@@ -258,8 +277,19 @@ export class TransformationService {
     return out;
   }
 
-  /** Every configured transformation that will discard information, for the acknowledgement. */
-  async lossyTransformations(ctx: RequestContext, planId: string): Promise<LossyTransformationDto[]> {
+  /**
+   * Every configured transformation that will discard information, with how many records it
+   * actually affects, for the acknowledgement.
+   *
+   * The count is measured, never assumed: a completed preflight already read every record and
+   * knows exactly which values lost something, so its numbers are preferred. Without one, a
+   * bounded scan through the same engine gives a floor, which is reported as SAMPLED.
+   */
+  async lossyTransformations(
+    ctx: RequestContext,
+    planId: string,
+    opts: { scanLimit?: number } = {},
+  ): Promise<LossyTransformationDto[]> {
     const plan = await this.loadPlan(ctx, planId);
     const entities = await this.db
       .select()
@@ -288,19 +318,232 @@ export class TransformationService {
         out.push({
           table: entity.logicalName,
           field: m.sourceField,
+          targetTable: entity.targetLogicalName,
           targetField: m.targetField,
           kind: rule.kind,
           key: `${entity.logicalName}.${m.sourceField}:${rule.kind}`,
           description: describeLossy(rule),
+          affected: null,
+          examined: null,
+          basis: null,
+          maxSourceLength: null,
+          targetMaxLength: limitOf(rule),
+          fromPreflight: false,
         });
       }
     }
-    return out.sort((a, b) => a.key.localeCompare(b.key));
+    out.sort((a, b) => a.key.localeCompare(b.key));
+    await this.measureLoss(ctx, plan, entities, mappings, out, opts.scanLimit ?? LOSS_SCAN_LIMIT);
+    return out;
+  }
+
+  /**
+   * The records one lossy transformation actually changed, for the drill-down and the export.
+   *
+   * Only a preflight can answer this: it is the pass that looked at every record and kept what
+   * each one lost. Values from a secured column were masked when the preflight stored them, so
+   * nothing here can unmask them.
+   */
+  async lossyRecords(
+    ctx: RequestContext,
+    planId: string,
+    filter: { key?: string; limit: number; offset: number },
+  ): Promise<{ items: LossyRecordDto[]; total: number; preflightId: string | null }> {
+    const plan = await this.loadPlan(ctx, planId);
+    const pf = await this.latestMeasuredPreflight(ctx, plan.id);
+    if (!pf) return { items: [], total: 0, preflightId: null };
+    const target = filter.key ? parseKey(filter.key) : null;
+    if (filter.key && !target) return { items: [], total: 0, preflightId: pf.id };
+    const where = [
+      eq(preflightRecords.preflightRunId, pf.id),
+      sql`jsonb_array_length(${preflightRecords.lossy}) > 0`,
+    ];
+    if (target) where.push(eq(preflightRecords.logicalName, target.table));
+    const rows = await this.db
+      .select()
+      .from(preflightRecords)
+      .where(and(...where))
+      .orderBy(asc(preflightRecords.sourceRecordId));
+
+    const items: LossyRecordDto[] = [];
+    for (const row of rows) {
+      for (const detail of row.lossy) {
+        if (target && (detail.field !== target.field || detail.kind !== target.kind)) continue;
+        items.push({
+          table: row.logicalName,
+          sourceRecordId: row.sourceRecordId,
+          recordName: row.recordName,
+          field: detail.field,
+          targetField: detail.targetField,
+          kind: detail.kind,
+          originalValue: detail.before,
+          transformedValue: detail.after,
+          loss: detail.loss,
+        });
+      }
+    }
+    return {
+      items: items.slice(filter.offset, filter.offset + filter.limit),
+      total: items.length,
+      preflightId: pf.id,
+    };
   }
 
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Fills in how many records each lossy transformation actually changes.
+   *
+   * A completed preflight wins: it examined every record with the same engine, so its count is
+   * the real one. Only what it did not cover falls back to a bounded scan.
+   */
+  private async measureLoss(
+    ctx: RequestContext,
+    plan: PlanRow,
+    entities: EntityRow[],
+    mappings: MappingRow[],
+    items: LossyTransformationDto[],
+    scanLimit: number,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    const pf = await this.latestMeasuredPreflight(ctx, plan.id);
+    if (pf) {
+      const impact = new Map(pf.lossyImpact.map((i) => [i.key, i]));
+      const covered = await this.db
+        .select({
+          logicalName: preflightEntityResults.logicalName,
+          totals: preflightEntityResults.totals,
+          sampled: preflightEntityResults.sampled,
+        })
+        .from(preflightEntityResults)
+        .where(eq(preflightEntityResults.preflightRunId, pf.id));
+      const perTable = new Map(covered.map((e) => [e.logicalName, e]));
+      for (const item of items) {
+        const table = perTable.get(item.table);
+        if (!table) continue;
+        const hit = impact.get(item.key);
+        // A key the preflight did not report is a rule that ran but never discarded anything:
+        // zero affected records, which is exactly what the acknowledgement should say.
+        item.affected = hit?.affected ?? 0;
+        item.examined = table.totals?.analyzed ?? 0;
+        // A preflight that stopped at the per-table cap read a prefix of the table, not all of it.
+        item.basis = table.sampled ? 'SAMPLED' : 'EXACT';
+        item.maxSourceLength = hit?.maxSourceLength ?? null;
+        item.fromPreflight = true;
+      }
+    }
+    const pending = items.filter((i) => i.basis === null);
+    if (pending.length > 0) await this.sampleLoss(ctx, plan, entities, mappings, pending, scanLimit);
+  }
+
+  /** The newest preflight that ran to completion, and therefore measured the loss. */
+  private async latestMeasuredPreflight(ctx: RequestContext, planId: string) {
+    const [pf] = await this.db
+      .select({ id: preflightRuns.id, lossyImpact: preflightRuns.lossyImpact })
+      .from(preflightRuns)
+      .where(
+        and(
+          eq(preflightRuns.planId, planId),
+          eq(preflightRuns.organizationId, ctx.organizationId),
+          eq(preflightRuns.status, 'COMPLETED'),
+        ),
+      )
+      .orderBy(desc(preflightRuns.createdAt))
+      .limit(1);
+    return pf ?? null;
+  }
+
+  /**
+   * A bounded scan for the transformations no preflight has measured, through the same
+   * `transformField` everything else runs. It can only report a floor, so its numbers are
+   * labelled SAMPLED unless the table ended before the cap.
+   */
+  private async sampleLoss(
+    ctx: RequestContext,
+    plan: PlanRow,
+    entities: EntityRow[],
+    mappings: MappingRow[],
+    pending: LossyTransformationDto[],
+    scanLimit: number,
+  ): Promise<void> {
+    const byTable = new Map<string, LossyTransformationDto[]>();
+    for (const item of pending) {
+      const list = byTable.get(item.table) ?? [];
+      list.push(item);
+      byTable.set(item.table, list);
+    }
+    for (const [table, group] of byTable) {
+      const entity = entities.find((e) => e.logicalName === table);
+      if (!entity) continue;
+      let meta: Awaited<ReturnType<TransformationService['metaFor']>>;
+      try {
+        meta = await this.metaFor(ctx, plan, entity);
+      } catch (err) {
+        // The acknowledgement still has to render when the source is unreachable; it simply
+        // cannot say how many records are affected.
+        this.logger.warn({ err, table }, 'lossy impact sample skipped');
+        continue;
+      }
+      const { source, target, sConn } = meta;
+      if (!target) continue;
+      const sourceAttributes = new Map(source.attributes.map((a) => [a.logicalName, a]));
+      const targetAttributes = new Map(target.attributes.map((a) => [a.logicalName, a]));
+      const fields = new Set(group.map((g) => g.field));
+      const active = mappings.filter(
+        (m) => m.planEntityId === entity.id && m.targetField && fields.has(m.sourceField),
+      );
+      const columns = new Set<string>();
+      for (const m of active) {
+        for (const c of this.previewColumns(m.transformations ?? [], m)) columns.add(c);
+      }
+      const counts = new Map<string, { affected: number; maxSourceLength: number | null }>();
+      let scanned = 0;
+      for await (const page of sConn.queryRecords(source, [...columns], { pageSize: 500 })) {
+        for (const record of page) {
+          scanned++;
+          for (const m of active) {
+            const sAttr = sourceAttributes.get(m.sourceField);
+            const tAttr = targetAttributes.get(m.targetField!);
+            if (!sAttr || !tAttr) continue;
+            const raw = record.values[m.sourceField] ?? null;
+            const result = transformField({
+              value: raw,
+              source: sAttr,
+              target: tAttr,
+              rules: m.transformations,
+              legacyTransform: m.transform,
+              choiceMap: m.choiceMap,
+              context: { record, sourceAttributes },
+            });
+            // The same signal the preflight counts: a step that reports it discarded something,
+            // not merely a step that ran.
+            for (const step of lostSteps(result.applied)) {
+              const key = `${table}.${m.sourceField}:${step.kind}`;
+              const entry = counts.get(key) ?? { affected: 0, maxSourceLength: null };
+              entry.affected++;
+              if (typeof raw === 'string') {
+                entry.maxSourceLength = Math.max(entry.maxSourceLength ?? 0, raw.length);
+              }
+              counts.set(key, entry);
+            }
+          }
+          if (scanned >= scanLimit) break;
+        }
+        if (scanned >= scanLimit) break;
+      }
+      for (const item of group) {
+        const hit = counts.get(item.key);
+        item.affected = hit?.affected ?? 0;
+        item.examined = scanned;
+        // Stopping at the cap leaves the rest of the table unread, so the number is a floor.
+        // Reaching the end of the table means every record was examined after all.
+        item.basis = scanned >= scanLimit ? 'SAMPLED' : 'EXACT';
+        item.maxSourceLength = hit?.maxSourceLength ?? null;
+      }
+    }
+  }
 
   /** Columns a preview has to read: the mapped column plus anything CONCAT or a condition needs. */
   private previewColumns(rules: TransformationRule[], mapping: { sourceField: string }): string[] {
@@ -368,6 +611,23 @@ export class TransformationService {
 /** Every rule in a pipeline, including the ones a conditional would run. */
 function flattenRules(rules: TransformationRule[]): TransformationRule[] {
   return rules.flatMap((rule) => [rule, ...flattenRules(rule.then ?? [])]);
+}
+
+/**
+ * The length a rule cuts values to. For a TRUNCATE derived from the target column, this is that
+ * column's maximum length, which is the number the acknowledgement shows next to it.
+ */
+function limitOf(rule: TransformationRule): number | null {
+  return rule.kind === 'TRUNCATE' || rule.kind === 'SUBSTRING' ? (rule.length ?? null) : null;
+}
+
+/** Splits `table.field:RULE` back into its parts. */
+function parseKey(key: string): { table: string; field: string; kind: TransformationKind } | null {
+  const [path, kind] = key.split(':');
+  if (!path || !kind) return null;
+  const dot = path.lastIndexOf('.');
+  if (dot <= 0 || dot === path.length - 1) return null;
+  return { table: path.slice(0, dot), field: path.slice(dot + 1), kind: kind as TransformationKind };
 }
 
 function describeLossy(rule: TransformationRule): string {

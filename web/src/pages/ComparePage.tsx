@@ -118,7 +118,7 @@ export function ComparePage() {
     <>
       <WizardSteps current={2} links={{ 1: '/environments', 3: '/migration/new' }} />
       <PageHeader
-        title="Compare environments"
+        title="Schema comparison"
         description="Schema comparison of tables, columns, relationships and alternate keys. Column-level analysis covers custom tables and common business tables."
         actions={
           <>

@@ -17,6 +17,30 @@ export function toCsv(headers: string[], rows: CsvValue[][]): string {
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
+/**
+ * A CSV written as its rows are found, for exports that scale with the migration.
+ *
+ * `toCsv` builds the whole file, which is right for a summary and wrong for one row per record: a
+ * five-million-record export is a string nobody should have to hold, and the alternative the product
+ * used to take — a cap with a TRUNCATED line at the bottom — answers a different question from the
+ * one the person asked.
+ *
+ * Pages come in, text goes out, and nothing accumulates. Escaping is `csvCell`'s, so a streamed file
+ * and a built one differ in nothing but how they were produced.
+ */
+export async function* csvStream(
+  headers: string[],
+  pages: AsyncIterable<CsvValue[][]>,
+): AsyncGenerator<string> {
+  // Byte order mark first, so Excel reads it as UTF-8 rather than as the local codepage.
+  yield `\uFEFF${headers.map(csvCell).join(',')}\r\n`;
+  for await (const page of pages) {
+    if (page.length === 0) continue;
+    // One string per page rather than per row: fewer, larger writes, still bounded by the page.
+    yield `${page.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+  }
+}
+
 /** Safe, descriptive download file name. */
 export function csvFileName(parts: (string | null | undefined)[]): string {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');

@@ -207,6 +207,17 @@ const STATUS_LABELS: Record<string, string> = {
   TARGET_ONLY: 'Target only',
   COMPLETED_WITH_ERRORS: 'Completed with errors',
   AUTO_MAPPED: 'Auto-mapped',
+  /**
+   * `NEEDS_RECONCILIATION` would read as "Needs reconciliation", and in this product that sentence
+   * already means something else: a Comparison project *reconciles two datasets record by record*, and
+   * validation *reconciles totals* between the two sides. Neither is what this status is about.
+   *
+   * What it is about: some writes cannot be accounted for, and a person has to settle them before the
+   * run can go on. So the badge says that instead of borrowing a word with two other jobs. The enum keeps
+   * its name — it is in a database column and in evidence packages already written — and the label is
+   * where the ambiguity gets fixed. See docs/TERMINOLOGY.md.
+   */
+  NEEDS_RECONCILIATION: 'Unresolved writes',
 };
 
 export function StatusBadge({
@@ -397,11 +408,55 @@ export function SearchInput({
   );
 }
 
+/**
+ * A labelled form field.
+ *
+ * `Select` puts its label in `aria-label` and nothing else, which is right for the filter dropdowns
+ * that sit in a toolbar beside a heading that already says what they filter. In a form it is wrong,
+ * and wrong invisibly: the New Project dialog rendered three "Choose…" boxes with no visible clue
+ * which was the source and which the target. Worse, the browser tests passed, because
+ * `getByLabel` matches an accessible name that no sighted person can see.
+ *
+ * So forms use this, and get a real `<label>`, optional help underneath, and the id wiring that
+ * makes clicking the label focus the control.
+ */
+export function Field({
+  label,
+  htmlFor,
+  hint,
+  optional,
+  action,
+  children,
+}: {
+  label: ReactNode;
+  htmlFor: string;
+  /** One line saying what this is for, in the reader's terms rather than the schema's. */
+  hint?: ReactNode;
+  optional?: boolean;
+  /** A control on the label's row, such as a link to create the thing being chosen. */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <label className="block text-sm font-medium text-slate-700" htmlFor={htmlFor}>
+          {label} {optional && <span className="font-normal text-slate-400">(optional)</span>}
+        </label>
+        {action}
+      </div>
+      {children}
+      {hint && <p className="mt-1.5 text-xs text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
 export function Select({
   value,
   onChange,
   options,
   label,
+  id,
   className,
   disabled,
 }: {
@@ -409,11 +464,14 @@ export function Select({
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
   label: string;
+  /** Set when a `Field` supplies the visible label, so the label points at this control. */
+  id?: string;
   className?: string;
   disabled?: boolean;
 }) {
   return (
     <select
+      id={id}
       aria-label={label}
       value={value}
       disabled={disabled}
@@ -432,16 +490,27 @@ export function Select({
   );
 }
 
+/**
+ * A checkbox and the words that say what it does.
+ *
+ * The label is rendered by default. It used to be passed to `aria-label` and nothing else, which
+ * meant every option on the site was a bare square with no text beside it, while the tests went on
+ * passing because they look options up by accessible name. Hiding it is now the thing you have to
+ * ask for, and the only honest reason to ask is a checkbox sitting in a row that already says it.
+ */
 export function Checkbox({
   checked,
   onChange,
   label,
+  hideLabel,
   disabled,
   indeterminate,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  /** For a checkbox beside text that already reads as its label. Screen readers still get it. */
+  hideLabel?: boolean;
   disabled?: boolean;
   indeterminate?: boolean;
 }) {
@@ -449,16 +518,28 @@ export function Checkbox({
   useEffect(() => {
     if (ref.current) ref.current.indeterminate = Boolean(indeterminate);
   }, [indeterminate]);
-  return (
+  const box = (
     <input
       ref={ref}
       type="checkbox"
-      aria-label={label}
+      aria-label={hideLabel ? label : undefined}
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      className="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-500"
+      className="h-4 w-4 flex-none rounded border-slate-300 text-brand-700 focus:ring-brand-500"
     />
+  );
+  if (hideLabel) return box;
+  return (
+    <label
+      className={cx(
+        'inline-flex items-center gap-2 text-sm',
+        disabled ? 'cursor-not-allowed text-slate-400' : 'cursor-pointer text-slate-700',
+      )}
+    >
+      {box}
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -591,14 +672,18 @@ export function ExportButton({
   href,
   label = 'Export CSV',
   size = 'sm',
+  title,
 }: {
   href: string;
   label?: string;
   size?: 'sm' | 'md';
+  /** What the file contains, for somebody deciding whether they want it. */
+  title?: string;
 }) {
   return (
     <a
       href={href}
+      title={title}
       download
       data-testid="export-csv"
       className={cx(

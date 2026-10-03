@@ -65,6 +65,11 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   await page.getByTestId('plan-table-dbo.Customer').click();
   await expect(page.getByText('Suggested, not decided')).toBeVisible();
   await page.getByTestId('confirm-object-mapping').click();
+  // Wait for the confirmation to land, the way the Region one above does. Without it the click can
+  // be sent while the panel is still switching tables, leaving dbo.Customer unconfirmed and the
+  // plan blocked four steps later — which is how this failed against a deployed environment and
+  // passed locally, where the round trip is too fast to notice.
+  await expect(page.getByText('Suggested, not decided')).toBeHidden();
 
   // 6b. Configure the cleanup: TRIM the padded names, normalize the emails
   await mapField(page, 'CustomerName', 'name');
@@ -131,7 +136,6 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   const ack = dialog.getByTestId('ack-warnings');
   if (await ack.isVisible().catch(() => false)) await ack.check();
-  await dialog.getByLabel(/Type the target environment name/).fill('DeepTrics QA');
   await dialog.getByRole('button', { name: /Write data to DeepTrics QA/ }).click();
 
   await expect(page).toHaveURL(/\/runs\//);

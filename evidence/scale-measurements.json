@@ -1,0 +1,83 @@
+{
+  "measuredAt": "2026-10-02T07:25:46.377Z",
+  "store": "PGlite, the platform database embedded in the process",
+  "host": "win32 x64, 8 cpus, 32304.6 MB",
+  "node": "v24.14.1",
+  "pageSize": 500,
+  "proves": "How the platform’s own bookkeeping behaves as a table grows, at these sizes, on this host.",
+  "doesNotProve": "Anything about a customer’s source or target. Read and write throughput against Dataverse, SQL Server or any other real system is that system’s, and it is usually the slower half.",
+  "measurements": [
+    {
+      "records": 10000,
+      "writeSeconds": 1.12,
+      "writeRatePerSecond": 8930,
+      "countMilliseconds": 7,
+      "pagedReadSeconds": 0.061,
+      "pagedReadRatePerSecond": 165135,
+      "pagedReadPages": 20,
+      "pagedReadPeakHeapMb": 25.3,
+      "wholeMapSeconds": 0.171,
+      "wholeMapHeapMb": 3.1
+    },
+    {
+      "records": 50000,
+      "writeSeconds": 4.807,
+      "writeRatePerSecond": 10402,
+      "countMilliseconds": 21,
+      "pagedReadSeconds": 0.277,
+      "pagedReadRatePerSecond": 180182,
+      "pagedReadPages": 100,
+      "pagedReadPeakHeapMb": 51.9,
+      "wholeMapSeconds": 0.863,
+      "wholeMapHeapMb": -15.9
+    },
+    {
+      "records": 200000,
+      "writeSeconds": 20.098,
+      "writeRatePerSecond": 9951,
+      "countMilliseconds": 63,
+      "pagedReadSeconds": 0.979,
+      "pagedReadRatePerSecond": 204373,
+      "pagedReadPages": 400,
+      "pagedReadPeakHeapMb": 66.1,
+      "wholeMapSeconds": 3.278,
+      "wholeMapHeapMb": 293.2
+    },
+    {
+      "records": 500000,
+      "writeSeconds": 44.71,
+      "writeRatePerSecond": 11183,
+      "countMilliseconds": 299,
+      "pagedReadSeconds": 2.852,
+      "pagedReadRatePerSecond": 175324,
+      "pagedReadPages": 1000,
+      "pagedReadPeakHeapMb": 67.1,
+      "wholeMapSeconds": null,
+      "wholeMapHeapMb": null
+    },
+    {
+      "records": 1000000,
+      "writeSeconds": 111.222,
+      "writeRatePerSecond": 8991,
+      "countMilliseconds": 999,
+      "pagedReadSeconds": 7.913,
+      "pagedReadRatePerSecond": 126379,
+      "pagedReadPages": 2000,
+      "pagedReadPeakHeapMb": 69.1,
+      "wholeMapSeconds": null,
+      "wholeMapHeapMb": null
+    },
+    {
+      "records": 1500000,
+      "writeSeconds": 260.296,
+      "writeRatePerSecond": 5763,
+      "countMilliseconds": 988,
+      "pagedReadSeconds": 7.875,
+      "pagedReadRatePerSecond": 190477,
+      "pagedReadPages": 3000,
+      "pagedReadPeakHeapMb": 74.4,
+      "wholeMapSeconds": null,
+      "wholeMapHeapMb": null
+    }
+  ]
+}

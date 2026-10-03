@@ -1,0 +1,2 @@
+ALTER TABLE "preflight_records" ADD COLUMN "lossy" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "preflight_runs" ADD COLUMN "lossy_impact" jsonb DEFAULT '[]'::jsonb NOT NULL;

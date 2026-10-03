@@ -40,6 +40,31 @@ export interface OptionMeta {
   label: string;
 }
 
+/**
+ * The kind of system a column came from.
+ *
+ * It decides whether a value needs converting when it moves: within one family the types mean the
+ * same thing, between families they do not. `TABULAR` covers everything whose columns are inferred
+ * from the data rather than declared by a server — a spreadsheet, a delimited file, a list.
+ */
+export type ProviderFamily = 'DATAVERSE' | 'SQL' | 'TABULAR';
+
+/**
+ * A column's family.
+ *
+ * The fallback exists because Dataverse and SQL metadata predate the field: a SQL column always
+ * carries `sql`, and anything else at the time was Dataverse. Every provider added since states its
+ * family outright, which is the point — inferring it from whether one optional property happened to
+ * be populated is how a spreadsheet column ends up being treated as a Dataverse column and skipping
+ * type conversion altogether.
+ */
+export const familyOf = (attr: AttributeMeta): ProviderFamily =>
+  attr.family ?? (attr.sql ? 'SQL' : 'DATAVERSE');
+
+/** True when two columns come from different kinds of system, so values have to be converted. */
+export const crossFamily = (source: AttributeMeta, target: AttributeMeta): boolean =>
+  familyOf(source) !== familyOf(target);
+
 export interface AttributeMeta {
   logicalName: string;
   schemaName: string;
@@ -73,6 +98,11 @@ export interface AttributeMeta {
   targets?: string[];
   /** SQL-specific column facts, preserved for diagnostics and for writing SQL targets. */
   sql?: SqlColumnMeta;
+  /**
+   * Which kind of system this column came from. Optional only for backward compatibility with
+   * metadata cached before it existed; see {@link familyOf}.
+   */
+  family?: ProviderFamily;
 }
 
 /** What a SQL column is, beyond the normalized type. */

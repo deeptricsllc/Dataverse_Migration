@@ -25,6 +25,12 @@
   #root {
     height: 100%;
   }
+  /* In-page navigation on the landing page. Honours a reduced-motion preference. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
     font-feature-settings: 'cv11', 'ss01';

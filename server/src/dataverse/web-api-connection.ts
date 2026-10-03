@@ -23,12 +23,13 @@ import { DEFAULT_RETRY_POLICY, Semaphore, withRetry, type RetryPolicy } from './
 import type {
   ConnectionTestResult,
   DataverseConnection,
+  ReadOptions,
   RecordCount,
   WhoAmI,
   WriteOptions,
   WriteRecord,
 } from './types';
-import { DATAVERSE_CAPABILITIES } from './types';
+import { DATAVERSE_CAPABILITIES, WATERMARK_VALUE } from './types';
 
 type Raw = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -337,11 +338,15 @@ export class WebApiConnection implements DataverseConnection {
   async *queryRecords(
     table: TableMetadata,
     columns: string[],
-    opts: { pageSize: number },
+    opts: ReadOptions,
   ): AsyncGenerator<DvRecord[]> {
     const { select, attrs } = this.selectList(table, columns);
+    // An incremental read filters server-side, so the platform sends only what changed rather than
+    // the caller discarding most of a full table. The value is a literal in an OData filter, so it
+    // is validated to the shape Dataverse watermarks actually take and the column has to exist.
+    const filter = opts.since ? this.sinceFilter(table, opts.since) : '';
     let next: string | undefined =
-      `${table.entitySetName}?$select=${select}&$orderby=${table.primaryIdAttribute}`;
+      `${table.entitySetName}?$select=${select}${filter}&$orderby=${table.primaryIdAttribute}`;
     let absolute = false;
     while (next) {
       const { data }: { data: Raw } = await this.request<Raw>('GET', next, {
@@ -355,6 +360,26 @@ export class WebApiConnection implements DataverseConnection {
       next = data['@odata.nextLink'];
       absolute = true;
     }
+  }
+
+  /**
+   * `$filter=modifiedon gt 2026-09-26T10:00:00Z`.
+   *
+   * Both halves are checked rather than interpolated on trust: the column must be one this table
+   * really has, and the value must be an ISO timestamp or a plain number. An OData filter is a
+   * query language, and a watermark that arrives from a stored schedule is still input.
+   */
+  private sinceFilter(table: TableMetadata, since: { field: string; value: string }): string {
+    const attr = table.attributes.find((a) => a.logicalName === since.field);
+    if (!attr) {
+      throw new Error(`Cannot read incrementally: ${table.logicalName} has no column ${since.field}`);
+    }
+    if (!WATERMARK_VALUE.test(since.value)) {
+      throw new Error(`Watermark value "${since.value}" is not an ISO timestamp or a number`);
+    }
+    // A timestamp and a number are both written bare in OData; only a string would be quoted, and
+    // a watermark is never a string here.
+    return `&$filter=${encodeURIComponent(`${attr.logicalName} gt ${since.value}`)}`;
   }
 
   async retrieveByIds(table: TableMetadata, ids: string[], columns: string[]): Promise<DvRecord[]> {

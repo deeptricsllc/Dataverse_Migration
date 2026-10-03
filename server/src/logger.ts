@@ -34,8 +34,14 @@ export function createLogger(level: string, pretty = false): Logger {
 
 /** Strips bearer tokens or JWT-looking strings from free text before it is logged or persisted. */
 export function scrubSecrets(text: string): string {
-  return text
-    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [REDACTED]')
-    .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[REDACTED_JWT]')
-    .replace(/(client_secret|refresh_token|access_token|code)=([^&\s]+)/gi, '$1=[REDACTED]');
+  return (
+    text
+      .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [REDACTED]')
+      // A connection string carries its password, and an error message is where one escapes.
+      .replace(/(password|pwd)\s*=\s*[^;&\s]+/gi, '$1=[REDACTED]')
+      // And the URI form, `postgres://user:secret@host`.
+      .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^:/?#\s]+):[^@\s]+@/gi, '$1:[REDACTED]@')
+      .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[REDACTED_JWT]')
+      .replace(/(client_secret|refresh_token|access_token|code)=([^&\s]+)/gi, '$1=[REDACTED]')
+  );
 }

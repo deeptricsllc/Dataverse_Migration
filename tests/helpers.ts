@@ -84,4 +84,5 @@ export class ApiClient {
     this.request<T>('POST', url, body ?? {}, expect);
   put = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('PUT', url, body, expect);
   patch = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('PATCH', url, body, expect);
+  del = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('DELETE', url, body, expect);
 }

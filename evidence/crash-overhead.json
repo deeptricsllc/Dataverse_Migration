@@ -1,0 +1,91 @@
+{
+  "measuredAt": "2026-10-02T02:57:54.315Z",
+  "host": "win32 x64, 8 cpus",
+  "node": "v24.14.1",
+  "target": "the simulated environment, in process \u2014 so this is the platform\u2019s own cost and nothing else",
+  "proves": "What the write-ahead intent costs in database statements, wall clock and rows, on this host, against an in-process target.",
+  "doesNotProve": "Anything about a real target. A network round trip per record is orders of magnitude larger than any of this, so the proportional cost against a real connector is smaller than measured here, not larger.",
+  "summary": "Two runs at different sizes bracket the overhead at -0.1% and +4.2% of wall clock, which is the scale of run-to-run variation on this host. The write-ahead intent adds one statement per batch \u2014 measured at 0.005 extra identity-map statements per record \u2014 and no extra rows. Against a real connector, where each record costs a network round trip, the proportional cost is smaller than this, not larger.",
+  "runs": [
+    {
+      "records": 4000,
+      "measurements": [
+        {
+          "label": "without write-ahead intent",
+          "intentsWritten": false,
+          "status": "COMPLETED",
+          "processed": 4021,
+          "created": 4021,
+          "seconds": 9.104,
+          "recordsPerSecond": 442,
+          "intentStatements": 22,
+          "resultStatements": 22,
+          "identityMapStatementsPerRecord": 0.005,
+          "identityRows": 4021,
+          "heapGrowthMb": 60.2
+        },
+        {
+          "label": "with write-ahead intent",
+          "intentsWritten": true,
+          "status": "COMPLETED",
+          "processed": 4021,
+          "created": 4021,
+          "seconds": 9.098,
+          "recordsPerSecond": 442,
+          "intentStatements": 22,
+          "resultStatements": 22,
+          "identityMapStatementsPerRecord": 0.011,
+          "identityRows": 4021,
+          "heapGrowthMb": 18.2
+        },
+        {
+          "label": "overhead",
+          "wallClockRatio": 0.999,
+          "wallClockPercent": -0.1,
+          "extraStatementsPerRecord": 0.006,
+          "note": "22 extra statement(s) across 4021 records: one per batch, not one per record."
+        }
+      ]
+    },
+    {
+      "records": 8000,
+      "measurements": [
+        {
+          "label": "without write-ahead intent",
+          "intentsWritten": false,
+          "status": "COMPLETED",
+          "processed": 8021,
+          "created": 8021,
+          "seconds": 16.601,
+          "recordsPerSecond": 483,
+          "intentStatements": 42,
+          "resultStatements": 42,
+          "identityMapStatementsPerRecord": 0.005,
+          "identityRows": 8021,
+          "heapGrowthMb": 11.5
+        },
+        {
+          "label": "with write-ahead intent",
+          "intentsWritten": true,
+          "status": "COMPLETED",
+          "processed": 8021,
+          "created": 8021,
+          "seconds": 17.306,
+          "recordsPerSecond": 463,
+          "intentStatements": 42,
+          "resultStatements": 42,
+          "identityMapStatementsPerRecord": 0.01,
+          "identityRows": 8021,
+          "heapGrowthMb": 12
+        },
+        {
+          "label": "overhead",
+          "wallClockRatio": 1.042,
+          "wallClockPercent": 4.2,
+          "extraStatementsPerRecord": 0.005,
+          "note": "42 extra statement(s) across 8021 records: one per batch, not one per record."
+        }
+      ]
+    }
+  ]
+}

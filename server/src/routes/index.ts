@@ -1,11 +1,24 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { CONDITION_OPERATORS, TRANSFORMATION_KINDS } from '../../../shared/domain';
+import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
+import { writtenByRun } from '../../../shared/run-metrics';
+import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
+import { signInFailureCode } from '../../../shared/sign-in-failures';
+import { buildIdentity, publicBuildIdentity } from '../build-info';
+import { attemptMetrics } from '../services/attempt-metrics';
+import { evidenceChain } from '../services/evidence-chain';
+import { describeAuthConfiguration } from '../auth/auth-configuration';
+import { describeWriteScope } from '../write-scope';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
-import { csvFileName, toCsv, type CsvValue } from '../lib/csv';
+import { Readable } from 'node:stream';
+import { csvFileName, csvStream, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
+import { verifyEvidencePackage } from '../services/evidence-verifier';
+import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
+import { registerProjectRoutes } from './projects';
+import { transformationRulesSchema } from './schemas';
 
 const uuid = z.string().uuid();
 /** Dataverse logical name (`account`) or schema-qualified SQL table (`dbo.Customer`). */
@@ -18,8 +31,37 @@ const page = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/**
+ * Per-route limits for the requests that cost real work.
+ *
+ * The global allowance is 900 a minute, which is right for reading screens and badly wrong for the
+ * handful of endpoints that each scan a customer's database, inflate a 48 MB upload, or queue a job
+ * over two hundred tables. Those do not need a generous allowance — a person clicks them a few times
+ * an hour — and leaving them on the global bucket means one authenticated account can saturate this
+ * deployment or, worse, the customer's source database.
+ */
+const EXPENSIVE = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } };
+/** Queues a job that can profile hundreds of tables; a handful an hour is the real usage. */
+const VERY_EXPENSIVE = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+/**
+ * Opens a connection to a host and port the caller chose, and reports what happened. That is useful
+ * for configuring a connection and also a way to probe the network this deployment sits in, so it gets
+ * the tightest allowance of all.
+ */
+const PROBES_A_HOST = { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } };
+
+/** Turns pages of one shape into pages of CSV cells, without collecting either. */
+async function* map<T>(
+  pages: AsyncIterable<T[]>,
+  row: (item: T) => CsvValue[],
+): AsyncGenerator<CsvValue[][]> {
+  for await (const page of pages) yield page.map(row);
+}
+
 export async function registerRoutes(app: FastifyInstance, s: Services) {
   const { config } = s;
+  // Projects, analysis, mapping workbooks and schedules live in their own module.
+  await registerProjectRoutes(app, s);
   const cookieOptions = {
     httpOnly: true,
     sameSite: 'lax' as const,
@@ -31,12 +73,28 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Health & auth
   // ---------------------------------------------------------------------------
 
-  app.get('/api/health', async () => ({ status: 'ok', time: new Date().toISOString() }));
+  /**
+   * Public, so it says only what a hostname already reveals: which version, and which deployment. The
+   * commit lives behind the session in `/api/settings`, where the person asking "which build produced
+   * this report" actually is.
+   */
+  const build = buildIdentity(config);
+  app.get('/api/health', async () => ({
+    status: 'ok',
+    time: new Date().toISOString(),
+    ...publicBuildIdentity(build),
+  }));
 
   app.get('/api/auth/config', async () => ({
     microsoftEnabled: config.microsoftEnabled,
     demoEnabled: config.DEMO_MODE,
     realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
+    // A tenant allow-list means an unknown tenant is turned away at the callback, so offering
+    // "sign up with Microsoft" on the landing page would send people into a dead end.
+    // Whether a tenant nobody has heard of can sign in. A deliberate setting now, not the
+    // side effect of an empty variable.
+    signUpEnabled: config.microsoftEnabled && config.ACCESS_MODE === 'OPEN_BETA',
+    contactEmail: config.CONTACT_EMAIL ?? null,
   }));
 
   app.get('/api/auth/session', async (req) => {
@@ -70,13 +128,13 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         })
         .parse(req.query);
       if (q.error || !q.code || !q.state) {
-        req.log.warn({ error: q.error }, 'Microsoft sign-in returned an error');
-        const reason = encodeURIComponent(
-          q.error === 'access_denied'
-            ? 'Consent was declined or access was denied.'
-            : 'Microsoft sign-in did not complete.',
+        // The description is logged and never shown: it is where Microsoft puts AADSTS codes.
+        req.log.warn(
+          { error: q.error, description: q.error_description },
+          'Microsoft sign-in returned an error',
         );
-        return reply.redirect(`/login?error=${reason}`);
+        const code = q.error === 'access_denied' ? 'ACCESS_DENIED' : 'INCOMPLETE';
+        return reply.redirect(`/login?error=${code}`);
       }
       try {
         const { userId, returnTo } = await s.auth.completeMicrosoftSignIn(
@@ -87,24 +145,134 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
         return reply.redirect(returnTo);
       } catch (err) {
-        const message = err instanceof AppError ? err.message : 'Microsoft sign-in failed.';
+        // Whatever went wrong, the browser is told one of a closed set of codes. An MSAL failure
+        // carries Microsoft's own text, which belongs in the log and nowhere near a visitor.
         if (!(err instanceof AppError)) req.log.error({ err }, 'Microsoft sign-in failed');
-        return reply.redirect(`/login?error=${encodeURIComponent(message)}`);
+        const code = signInFailureCode(err instanceof AppError ? err.code : undefined);
+        return reply.redirect(`/login?error=${code}`);
       }
     },
   );
 
   app.post(
     '/api/auth/demo-login',
-    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    // Tighter than the other auth routes because each anonymous sign-in seeds a workspace and runs
+    // two real migrations, so a flood here is a flood of work rather than of rows.
+    //
+    // Not as tight as it first was. Several people behind one office address are a normal way for
+    // a demo to be used, and six a minute made them block each other — which is the failure mode
+    // where a protection costs more than the thing it protects against. The ceiling on live
+    // workspaces is what actually bounds the cost; this only stops a script.
+    { config: { rateLimit: { max: 15, timeWindow: '1 minute' } } },
     async (req, reply) => {
-      const userId = await s.auth.demoSignIn(req.id);
+      const { name } = z.object({ name: z.string().max(80).optional() }).parse(req.body ?? {});
+      const userId = await s.auth.demoSignIn(req.id, name);
       const session = await s.auth.createSession(userId, req.headers['user-agent']);
       reply.setCookie(SESSION_COOKIE, session.token, { ...cookieOptions, expires: session.expiresAt });
       const resolved = await s.auth.resolveSession(session.token);
+      // The two worked examples a prospective customer should find already done. Built in the
+      // background by running real migrations, so signing in is not held up by them; the demo
+      // workspace fills in while the dashboard is being read.
+      if (config.DEMO_SCENARIOS && config.RUN_WORKER) {
+        void s.demoScenarios.ensure({
+          userId: resolved!.user.id,
+          organizationId: resolved!.user.organization.id,
+          role: normaliseRole(resolved!.user.role),
+          isDemoOrg: true,
+          displayName: resolved!.user.displayName,
+          requestId: req.id,
+          platformOperator: false,
+        });
+      }
       return { user: resolved!.user, csrfToken: resolved!.csrfToken };
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Access requests: the public sign-up path, and the operator's view of it
+  // ---------------------------------------------------------------------------
+
+  app.post(
+    '/api/access-requests',
+    // Tighter than anything else in the product. It is the only unauthenticated write, so the
+    // limit is what stands between a form on the open internet and a table full of noise.
+    { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } },
+    async (req, reply) => {
+      await s.accessRequests.submit(accessRequestSchema.parse(req.body), req.id);
+      // Always the same answer, whether it was stored, merged into an earlier ask or dropped by the
+      // honeypot. Anything more specific tells a stranger who is already in the table.
+      return reply.code(202).send({ received: true });
+    },
+  );
+
+  app.get('/api/access-requests', async (req) => s.accessRequests.list(req.ctx));
+
+  /**
+   * Sends a test alert, and says what happened.
+   *
+   * A webhook that is silently misconfigured is worse than none, because the deployment looks
+   * covered. This is how an operator finds out before an incident does.
+   */
+  app.post('/api/alerts/test', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('Sending a test alert is for the operators of this deployment.');
+    }
+    if (!s.alerts.configured) {
+      return { ok: false, reason: 'No ALERT_WEBHOOK_URL is configured, so nothing is announced.' };
+    }
+    return s.alerts.deliver({ kind: 'TEST', requestedBy: req.ctx.displayName });
+  });
+
+  /**
+   * What sign-in is configured to do, and who it will refuse.
+   *
+   * Operator-only, because the findings name environment variables in order to be actionable. A
+   * prospect who cannot sign in gets a sentence and a way forward; the person who can fix it gets
+   * this. No secret value is included — only whether each one is present.
+   */
+  /**
+   * What an operator needs while a pilot is running: is it healthy, is anything stuck, is anything
+   * waiting for a person. Operator-only — none of it is secret, and all of it is a map of the
+   * deployment's internals, which is nobody else's business.
+   */
+  app.get('/api/platform/operations', async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('Operational diagnostics are for the operators of this deployment.');
+    }
+    return s.operations.report();
+  });
+
+  app.get('/api/platform/auth-configuration', async (req) => {
+    if (!req.ctx.platformOperator) {
+      throw forbidden('The sign-in configuration is for the operators of this deployment.');
+    }
+    return describeAuthConfiguration(config);
+  });
+
+  /**
+   * Who is in this workspace, and what each of them may do.
+   *
+   * Readable by anybody in it: knowing who else can see your data is not privileged information, and a
+   * read-only member who cannot tell whom to ask for access has been given a dead end.
+   */
+  app.get('/api/team', async (req) => s.team.list(req.ctx));
+
+  /**
+   * Changes a role. Administrators only, never your own, and never the last administrator — the two
+   * lockouts a workspace cannot recover from without a support tool this product does not have.
+   */
+  app.patch('/api/team/:userId', async (req) => {
+    const { userId } = z.object({ userId: uuid }).parse(req.params);
+    const { role } = z.object({ role: z.enum(WORKSPACE_ROLES) }).parse(req.body);
+    return s.team.setRole(req.ctx, userId, role);
+  });
+
+  app.patch('/api/access-requests/:id', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { handled } = z.object({ handled: z.boolean() }).parse(req.body);
+    await s.accessRequests.setHandled(req.ctx, id, handled);
+    return { ok: true };
+  });
 
   app.post('/api/auth/logout', async (req, reply) => {
     const provider = req.session!.user.authProvider;
@@ -169,7 +337,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Comparison
   // ---------------------------------------------------------------------------
 
-  app.post('/api/comparisons', async (req) => {
+  app.post('/api/comparisons', VERY_EXPENSIVE, async (req) => {
     const body = z
       .object({
         sourceEnvironmentId: uuid,
@@ -217,6 +385,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         sourceEnvironmentId: uuid,
         targetEnvironmentId: uuid,
         tables: z.array(tableName).max(500),
+        /** Set when the plan is created inside a migration project. */
+        projectId: uuid.nullish(),
       })
       .parse(req.body);
     return s.planning.create(req.ctx, body);
@@ -343,8 +513,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.post('/api/plans/:id/execute', async (req) => {
     const body = z
       .object({
-        confirmSourceName: z.string().max(300),
-        confirmTargetName: z.string().max(300),
+        // Optional here, required by the service for a production or unclassified target. The
+        // rule lives there because it is a property of the target, not of the request shape.
+        confirmSourceName: z.string().max(300).optional(),
+        confirmTargetName: z.string().max(300).optional(),
+        confirmed: z.boolean().optional(),
         acknowledgeWarnings: z.boolean(),
       })
       .parse(req.body);
@@ -352,14 +525,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   // ---------------------------------------------------------------------------
-  // Connections (SQL Server / Azure SQL). Dataverse environments come from discovery.
+  // Connections (SQL Server, Azure SQL, PostgreSQL). Dataverse comes from discovery.
   // ---------------------------------------------------------------------------
 
   const sqlConnectionBody = z.object({
     displayName: z.string().min(1).max(200),
-    connectionType: z.enum(['SQL_SERVER', 'AZURE_SQL']),
+    connectionType: z.enum(SQL_CONNECTION_TYPES),
     host: z.string().min(1).max(255),
-    port: z.coerce.number().int().min(1).max(65535).default(1433),
+    // No default: each server listens somewhere different, and the client sends the one it showed.
+    port: z.coerce.number().int().min(1).max(65535),
     database: z.string().min(1).max(128),
     authType: z
       .enum(['SQL_LOGIN', 'ENTRA_PASSWORD', 'ENTRA_INTEGRATED', 'MANAGED_IDENTITY', 'WINDOWS'])
@@ -385,11 +559,11 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Tests settings that have not been saved yet, so nothing is stored until they work. */
-  app.post('/api/connections/test', async (req) =>
+  app.post('/api/connections/test', PROBES_A_HOST, async (req) =>
     s.connectionAdmin.testUnsaved(req.ctx, sqlConnectionBody.parse(req.body)),
   );
 
-  app.post('/api/connections/:id/test', async (req) =>
+  app.post('/api/connections/:id/test', PROBES_A_HOST, async (req) =>
     s.connectionAdmin.test(req.ctx, idParams.parse(req.params).id),
   );
 
@@ -401,52 +575,10 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Profiling, data quality and transformations
   // ---------------------------------------------------------------------------
 
-  /**
-   * A transformation rule, validated server-side. The `kind` is a closed enum, so configuration
-   * can never smuggle in code: there is no expression, script or SQL anywhere in this shape.
-   */
-  const conditionSchema = z.object({
-    field: fieldName.nullish(),
-    operator: z.enum(CONDITION_OPERATORS),
-    value: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]).optional(),
-  });
-  const baseRule = {
-    kind: z.enum(TRANSFORMATION_KINDS),
-    find: z.string().max(200).nullish(),
-    replaceWith: z.string().max(200).nullish(),
-    value: z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]).optional(),
-    start: z.number().int().min(0).max(10_000).nullish(),
-    length: z.number().int().min(0).max(1_000_000).nullish(),
-    inputFormat: z.string().max(20).nullish(),
-    scale: z.number().int().min(0).max(10).nullish(),
-    map: z
-      .array(
-        z.object({
-          from: z.string().max(400),
-          to: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]),
-        }),
-      )
-      .max(500)
-      .optional(),
-    onUnmapped: z.enum(['BLOCK', 'IGNORE', 'DEFAULT']).optional(),
-    defaultValue: z.union([z.string().max(400), z.number(), z.boolean(), z.null()]).optional(),
-    parts: z
-      .array(z.object({ field: fieldName.nullish(), literal: z.string().max(200).nullish() }))
-      .max(20)
-      .optional(),
-    separator: z.string().max(20).nullish(),
-    skipEmptyParts: z.boolean().nullish(),
-    condition: conditionSchema.nullish(),
-    action: z.enum(['SET_VALUE', 'SET_NULL', 'APPLY']).nullish(),
-  };
-  // One level of nesting only: a conditional may apply rules, but those rules may not nest again.
-  const transformationRule = z.object({ ...baseRule, then: z.array(z.object(baseRule)).max(10).optional() });
-  const transformationRules = z.array(transformationRule).max(20);
-
   app.get('/api/transformation-templates', async () => s.transformations.templates());
 
   /** Profiles a source table for a plan, using the rules its target schema implies. */
-  app.post('/api/plans/:id/entities/:entityId/profile', async (req) => {
+  app.post('/api/plans/:id/entities/:entityId/profile', EXPENSIVE, async (req) => {
     const { id, entityId } = z.object({ id: uuid, entityId: uuid }).parse(req.params);
     const body = z
       .object({ sampleSize: z.number().int().min(1).max(200_000).optional(), full: z.boolean().optional() })
@@ -460,7 +592,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** The workspace data-quality summary: every mapped table profiled and grouped by category. */
-  app.post('/api/plans/:id/data-quality', async (req) => {
+  app.post('/api/plans/:id/data-quality', EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z
       .object({ sampleSize: z.number().int().min(1).max(200_000).optional() })
@@ -470,7 +602,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
 
   /** Profiles any table of any connection, independently of a plan. */
-  app.post('/api/environments/:id/tables/:table/profile', async (req) => {
+  app.post('/api/environments/:id/tables/:table/profile', EXPENSIVE, async (req) => {
     const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
     const body = z
       .object({
@@ -482,7 +614,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return s.profiling.profileTable(req.ctx, { environmentId: id, table, ...body });
   });
 
-  app.get('/api/environments/:id/tables/:table/fields/:field/profile', async (req) => {
+  app.get('/api/environments/:id/tables/:table/fields/:field/profile', EXPENSIVE, async (req) => {
     const { id, table, field } = z.object({ id: uuid, table: tableName, field: fieldName }).parse(req.params);
     const { sampleSize } = z
       .object({ sampleSize: z.coerce.number().int().min(1).max(200_000).optional() })
@@ -493,7 +625,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   /** Replaces the ordered transformation pipeline of one field mapping. */
   app.patch('/api/plans/:id/mappings/:mappingId/transformations', async (req) => {
     const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
-    const { rules } = z.object({ rules: transformationRules }).parse(req.body);
+    const { rules } = z.object({ rules: transformationRulesSchema }).parse(req.body);
     return s.transformations.updatePipeline(req.ctx, id, mappingId, rules);
   });
 
@@ -503,7 +635,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
    */
   app.post('/api/plans/:id/mappings/:mappingId/preview', async (req) => {
     const { id, mappingId } = z.object({ id: uuid, mappingId: uuid }).parse(req.params);
-    const { rules } = z.object({ rules: transformationRules.nullish() }).parse(req.body ?? {});
+    const { rules } = z.object({ rules: transformationRulesSchema.nullish() }).parse(req.body ?? {});
     return s.transformations.previewField(req.ctx, id, mappingId, rules ?? null);
   });
 
@@ -521,6 +653,19 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     s.transformations.lossyTransformations(req.ctx, idParams.parse(req.params).id),
   );
 
+  /** The records one lossy transformation actually changed, from the last completed preflight. */
+  app.get('/api/plans/:id/lossy-records', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const q = z
+      .object({
+        key: z.string().max(300).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(50),
+        offset: z.coerce.number().int().min(0).default(0),
+      })
+      .parse(req.query);
+    return s.transformations.lossyRecords(req.ctx, id, q);
+  });
+
   app.post('/api/plans/:id/lossy-transformations/acknowledge', async (req) => {
     const { id } = idParams.parse(req.params);
     const { accepted } = z.object({ accepted: z.array(z.string().max(300)).max(500) }).parse(req.body);
@@ -531,7 +676,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   // Preflight (dry run) — reads only, never writes to Dataverse
   // ---------------------------------------------------------------------------
 
-  app.post('/api/plans/:id/preflight', async (req) =>
+  app.post('/api/plans/:id/preflight', VERY_EXPENSIVE, async (req) =>
     s.preflight.create(req.ctx, idParams.parse(req.params).id),
   );
 
@@ -570,6 +715,53 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/runs', async (req) => s.runs.list(req.ctx));
   app.get('/api/runs/:id', async (req) => s.runs.get(req.ctx, idParams.parse(req.params).id));
+
+  /**
+   * What each attempt of this run is answerable for.
+   *
+   * A separate call rather than a field on the run, because it is a different kind of number: the run's
+   * counters are what somebody signs for, and this is execution history. Fetching it is a choice the
+   * reader makes, which is also the distinction the report has to carry.
+   */
+  /**
+   * One problem, followed through every stage that saw it: predicted risk, actual outcome, validation
+   * evidence. The stages recorded the same problems in three vocabularies and nothing joined them, so a
+   * reader had three lists and a hypothesis.
+   */
+  app.get('/api/runs/:id/chain', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.runs.get(req.ctx, id);
+    return evidenceChain(s.db, run.id);
+  });
+
+  app.get('/api/runs/:id/attempts', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const run = await s.runs.get(req.ctx, id);
+    const attempts = await attemptMetrics(s.db, run.id);
+    return {
+      runId: run.id,
+      attempt: run.attempt,
+      /** The run's own totals, so the two can be reconciled on one screen rather than from memory. */
+      run: {
+        total: run.total,
+        created: run.created,
+        updated: run.updated,
+        unchanged: run.unchanged,
+        skipped: run.skipped,
+        failed: run.failed,
+        unresolved: run.unresolved,
+      },
+      attempts,
+      /** True when some records predate the attempt being recorded, which a reader must be told. */
+      someRecordsPredateAttemptTracking: attempts.some((a) => a.attempt === null),
+      means:
+        'Run totals are final accountability: every source record, counted once. Attempt figures are ' +
+        'execution history: which attempt is answerable for the state each record is now in. They sum to ' +
+        'the run totals because each record belongs to exactly one attempt — the one that last touched ' +
+        'it — so work an earlier attempt did on a record a later attempt touched again is not separately ' +
+        'visible here.',
+    };
+  });
   app.post('/api/runs/:id/:action', async (req) => {
     const { id, action } = z
       .object({ id: uuid, action: z.enum(['cancel', 'pause', 'resume', 'retry']) })
@@ -600,11 +792,176 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   });
   // --- CSV exports -----------------------------------------------------------
   // Everything a team needs to review or fix issues outside the application.
-  const sendCsv = (reply: FastifyReply, name: string, headers: string[], rows: CsvValue[][]) =>
+  /**
+   * Sends a CSV, and says so in the file when it is not the whole thing.
+   *
+   * An export that stops at its limit and looks complete is worse than one that refuses: somebody
+   * reconciles against it and concludes the numbers agree. `total` is the count the export was drawn
+   * from, so the note is written only when rows were actually left out — and it goes in the file,
+   * because that is what gets opened, forwarded and archived.
+   */
+  /**
+   * A CSV sent as its rows are found, for the exports that scale with the migration.
+   *
+   * `sendCsv` holds the file and caps it, which is the right trade for a summary and the wrong one for
+   * one row per record: a capped export answers a different question from the one somebody asked, and
+   * a TRUNCATED line at the bottom does not make it the right answer. Nothing here accumulates, so
+   * there is no cap to need.
+   */
+  const streamCsv = (
+    reply: FastifyReply,
+    name: string,
+    headers: string[],
+    pages: AsyncIterable<CsvValue[][]>,
+  ) =>
     reply
       .header('Content-Type', 'text/csv; charset=utf-8')
       .header('Content-Disposition', `attachment; filename="${name}"`)
-      .send(toCsv(headers, rows));
+      .send(Readable.from(csvStream(headers, pages)));
+
+  const sendCsv = (
+    reply: FastifyReply,
+    name: string,
+    headers: string[],
+    rows: CsvValue[][],
+    total?: number,
+  ) => {
+    const body =
+      total !== undefined && total > rows.length
+        ? [
+            ...rows,
+            [
+              `TRUNCATED: showing ${rows.length.toLocaleString()} of ${total.toLocaleString()} rows. Narrow the filters and export again for the rest.`,
+            ] as CsvValue[],
+          ]
+        : rows;
+    return reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${name}"`)
+      .send(toCsv(headers, body));
+  };
+
+  /**
+   * The retainable record of a run.
+   *
+   * A zip rather than a page: the point is something that outlives the deployment, can be attached
+   * to a change record and read by somebody who was not there.
+   */
+  /**
+   * Streamed rather than built: a package for a large run holds one lineage row per record, and the
+   * download should not require the server to hold the archive. The audit entry is written once the
+   * manifest is known, which is before the last byte leaves.
+   */
+  /** What somebody has to decide before this plan runs, assembled from findings that already exist. */
+  app.get('/api/plans/:id/readiness', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.readiness.assess(req.ctx, id);
+  });
+
+  /**
+   * Accepts one overridable blocker. One finding, one reason, one person — there is deliberately no
+   * form of this that accepts a list.
+   */
+  app.post('/api/plans/:id/readiness/override', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({
+        code: z.string().min(1).max(100),
+        object: z.string().max(400).nullable(),
+        reason: z.string().min(10).max(1000),
+      })
+      .parse(req.body);
+    return s.readiness.override(req.ctx, id, body);
+  });
+
+  app.delete('/api/plans/:id/readiness/override', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({ code: z.string().min(1).max(100), object: z.string().max(400).nullable() })
+      .parse(req.body);
+    return s.readiness.clearOverride(req.ctx, id, body);
+  });
+
+  /** The records a person has to settle before this run can go any further. */
+  app.get('/api/runs/:id/reconciliation', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.runs.awaitingReconciliation(req.ctx, id);
+  });
+
+  /**
+   * Records what a person found in the target.
+   *
+   * The way out of NEEDS_RECONCILIATION, and deliberately per record: a present record must come with
+   * the identifier it has in the target, and every resolution carries the reason it was reached.
+   */
+  app.post('/api/runs/:id/reconcile', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const body = z
+      .object({
+        resolutions: z
+          .array(
+            z.object({
+              logicalName: tableName,
+              sourceId: z.string().min(1).max(400),
+              found: z.enum(['PRESENT', 'ABSENT']),
+              targetId: z.string().max(400).nullable().optional(),
+              note: z.string().min(5).max(1000),
+            }),
+          )
+          .min(1)
+          .max(1000),
+      })
+      .parse(req.body);
+    return s.runs.reconcile(req.ctx, id, body.resolutions);
+  });
+
+  app.get('/api/runs/:id/evidence.zip', EXPENSIVE, async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const bundle = await s.evidence.streamBundleForRun(req.ctx, id);
+    void bundle.manifest
+      .then((manifest) =>
+        s.audit.record({
+          organizationId: req.ctx.organizationId,
+          userId: req.ctx.userId,
+          action: 'EVIDENCE_EXPORTED',
+          outcome: 'SUCCESS',
+          runId: id,
+          requestId: req.id,
+          details: { files: manifest.files.length, lineageRows: manifest.lineage?.totalRows ?? 0 },
+        }),
+      )
+      .catch(() => {
+        /* The stream reports its own failure to the client; a missing audit line is not worth a crash. */
+      });
+    return reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="${bundle.filename}"`)
+      .send(bundle.output);
+  });
+
+  /**
+   * Checks a package somebody is holding, which is the only check worth having: re-generating the
+   * package would prove nothing about the copy in their hands.
+   *
+   * The archive arrives base64-encoded in JSON, the same way mapping workbooks do. That bounds it at
+   * the body limit for this route, which is stated in the refusal rather than left to a reader to
+   * discover.
+   */
+  app.post('/api/evidence/verify', { bodyLimit: 96 * 1024 * 1024 }, async (req) => {
+    const body = z.object({ contentBase64: z.string().min(1) }).parse(req.body);
+    const archive = Buffer.from(body.contentBase64, 'base64');
+    const result = verifyEvidencePackage(archive);
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'EVIDENCE_VERIFIED',
+      outcome: result.verdict === 'VALID' ? 'SUCCESS' : 'FAILURE',
+      runId: result.manifest?.run.id ?? null,
+      requestId: req.id,
+      details: { verdict: result.verdict, problems: result.problems.length },
+    });
+    return result;
+  });
 
   app.get('/api/runs/:id/errors.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
@@ -617,7 +974,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items } = await s.runs.errors(req.ctx, id, {
+    const { items, total } = await s.runs.errors(req.ctx, id, {
       ...q,
       includeResolved: q.includeResolved === 'true',
       limit: 50_000,
@@ -652,6 +1009,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.resolved,
         e.createdAt,
       ]),
+      total,
     );
   });
 
@@ -664,20 +1022,72 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items } = await s.runs.records(req.ctx, id, { ...q, limit: 100_000, offset: 0 });
-    return sendCsv(
+    return streamCsv(
       reply,
       csvFileName(['migration-records', run.planName]),
-      ['Table', 'Source id', 'Target id', 'Outcome', 'Matched by', 'Deferred lookups', 'Updated at'],
-      items.map((m) => [
+      /**
+       * The three write-state columns are here because they were, for a while, only inside the
+       * evidence package — so the export somebody actually downloads from a run could not tell them
+       * which records the platform cannot account for. A run says how many are unresolved; this says
+       * which, and what evidence there was for each.
+       */
+      [
+        'Table',
+        'Source id',
+        'Target id',
+        'Outcome',
+        'Matched by',
+        'Deferred lookups',
+        'Write state',
+        'Recovery evidence',
+        'Recovery note',
+        'Updated at',
+      ],
+      map(s.runs.recordPages(req.ctx, id, q), (m) => [
         m.entity,
         m.sourceId,
         m.targetId,
         m.outcome,
         m.matchMethod,
         m.deferredStatus,
+        m.writeState,
+        m.recoveryEvidence,
+        m.recoveryNote,
         m.updatedAt,
       ]),
+    );
+  });
+
+  /** The same drill-down as a file. Secured values were masked before they were ever stored. */
+  app.get('/api/plans/:id/lossy-records.csv', async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const { key } = z.object({ key: z.string().max(300).optional() }).parse(req.query);
+    const [plan, { items, total }] = await Promise.all([
+      s.planning.get(req.ctx, id),
+      s.transformations.lossyRecords(req.ctx, id, { key, limit: 100_000, offset: 0 }),
+    ]);
+    return sendCsv(
+      reply,
+      csvFileName(['affected-records', plan.name]),
+      [
+        'Table',
+        'Record ID',
+        'Field',
+        'Original value',
+        'Transformed value',
+        'Transformation',
+        'Loss description',
+      ],
+      items.map((r) => [
+        r.table,
+        r.sourceRecordId,
+        r.targetField ? `${r.field} → ${r.targetField}` : r.field,
+        r.originalValue,
+        r.transformedValue,
+        r.kind,
+        r.loss,
+      ]),
+      total,
     );
   });
 
@@ -699,8 +1109,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.validation.get(req.ctx, id);
-    const { items } = await s.validation.differences(req.ctx, id, { ...q, limit: 50_000, offset: 0 });
-    return sendCsv(
+    return streamCsv(
       reply,
       csvFileName([
         'validation-differences',
@@ -717,7 +1126,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Difference',
         'Outcome',
       ],
-      items.map((d) => [
+      map(s.validation.differencePages(req.ctx, id, q), (d) => [
         d.entity,
         d.sourceRecordId,
         d.targetRecordId,
@@ -745,7 +1154,14 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Outcome',
         'Source rows',
         'Target rows',
-        'Migrated',
+        // The run's own accounting, not one derived number: an export that says "migrated" without
+        // saying what that includes is how the spreadsheet and the screen end up disagreeing.
+        'Created',
+        'Updated',
+        'Unchanged',
+        'Skipped',
+        'Failed',
+        'Written by this run',
         'Checked',
         'Matched',
         'Missing',
@@ -758,7 +1174,12 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.outcome,
         e.sourceCount,
         e.targetCount,
-        e.migratedRecords,
+        e.accounting?.created ?? '',
+        e.accounting?.updated ?? '',
+        e.accounting?.unchanged ?? '',
+        e.accounting?.skipped ?? '',
+        e.accounting?.failed ?? '',
+        e.accounting ? writtenByRun(e.accounting) : '',
         e.checkedRecords,
         e.matched,
         e.missing,
@@ -1048,6 +1469,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         sourceEnvironmentId: uuid.optional(),
         targetEnvironmentId: uuid.optional(),
         tables: z.array(tableName).max(500).optional(),
+        depth: z.enum(['QUICK', 'STANDARD', 'FULL']).optional(),
       })
       .parse(req.body);
     return s.validation.start(req.ctx, body);
@@ -1080,14 +1502,27 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/dashboard', async (req) => s.insights.dashboard(req.ctx));
   app.get('/api/audit', async (req) => {
-    const { limit } = z
-      .object({ limit: z.coerce.number().int().min(1).max(500).default(100) })
+    const q = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        category: z.enum(AUDIT_CATEGORIES).optional(),
+        outcome: z.enum(['SUCCESS', 'FAILURE', 'REQUESTED']).optional(),
+        user: z.string().max(200).optional(),
+        search: z.string().max(200).optional(),
+        /** Days back from now. Absent means everything the scan covers. */
+        days: z.coerce.number().int().min(1).max(365).optional(),
+      })
       .parse(req.query);
-    return s.audit.list(req.ctx.organizationId, limit);
+    return s.audit.list(req.ctx.organizationId, {
+      ...q,
+      since: q.days ? new Date(Date.now() - q.days * 86_400_000) : undefined,
+    });
   });
   app.get('/api/settings', async (req) => ({
     organization: req.session!.user.organization,
     user: req.session!.user,
+    // Which build produced what this person is looking at. The first question asked of a wrong report.
+    build,
     demoMode: config.DEMO_MODE,
     microsoft: {
       enabled: config.microsoftEnabled,
@@ -1101,24 +1536,41 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       businessLogicBypassAllowed: config.ALLOW_BUSINESS_LOGIC_BYPASS,
       canBypass: s.planning.bypassAllowed(req.ctx),
       realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
+      // Which environments may be written while the deployment calls itself read-only. A scope nobody
+      // can see is the thing the scope exists to avoid being.
+      writeScope: describeWriteScope(config),
     },
     database: s.db ? (config.DATABASE_URL ? 'postgres' : 'pglite') : 'unknown',
   }));
 
+  app.get('/api/demo/status', async (req) => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) return { building: false, ready: true };
+    return s.demoScenarios.status(req.ctx);
+  });
+
   app.post('/api/demo/reset', async (req) => {
     if (!config.DEMO_MODE || !req.ctx.isDemoOrg) throw forbidden('Demo data can only be reset in DEMO MODE');
     if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can reset demo data');
-    await seedDemoData(s.db, { reset: true });
+    // A build that is mid-migration would write into records this is about to delete.
+    await s.demoScenarios.settle();
+    await seedDemoData(s.db, req.ctx.organizationId, { reset: true });
     const envs = await s.environments.list(req.ctx);
     for (const e of envs) s.metadata.invalidateCounts(e.id);
+    // Restoring the simulated records invalidates every migration that ran against them, so a
+    // reset is not finished until the examples have been rebuilt against the data that is there
+    // now. Archived, not deleted: whoever was experimenting can still find their work behind
+    // "Show archived". The rebuild runs in the background; it executes two real migrations.
+    const { archived } = await s.demoScenarios.tidy(req.ctx);
+    if (config.DEMO_SCENARIOS && config.RUN_WORKER) void s.demoScenarios.ensure(req.ctx);
     await s.audit.record({
       organizationId: req.ctx.organizationId,
       userId: req.ctx.userId,
       action: 'DEMO_DATA_RESET',
       outcome: 'SUCCESS',
       requestId: req.id,
+      details: { projectsArchived: archived },
     });
-    return { ok: true };
+    return { ok: true, archived };
   });
 }
 

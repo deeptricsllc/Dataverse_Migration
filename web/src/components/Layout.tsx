@@ -5,8 +5,11 @@ import {
   Boxes,
   ChevronDown,
   Database,
+  FolderKanban,
   GitCompareArrows,
   History,
+  ScrollText,
+  UserCog,
   LayoutDashboard,
   Lock,
   LogOut,
@@ -20,17 +23,30 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { post, setCsrfToken } from '../lib/api';
 import { useSession, useWorkspace } from '../lib/session';
+import { PRODUCT_NAME, PRODUCT_SHORT_NAME, VENDOR_NAME } from '@shared/product';
 import { cx } from './ui';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/environments', label: 'Connections', icon: Database },
-  { to: '/compare', label: 'Compare', icon: GitCompareArrows },
+  // "Compare" and the "Comparison & validation" project kind were two different features
+  // sharing a word: this one compares schemas, that one reconciles records. Routes are
+  // unchanged so existing links keep working.
+  { to: '/compare', label: 'Schema comparison', icon: GitCompareArrows },
   { to: '/users', label: 'User mapping', icon: Users },
   { to: '/migration', label: 'Migration', icon: Truck },
   { to: '/validation', label: 'Validation', icon: ShieldCheck },
   { to: '/runs', label: 'Runs', icon: History },
-  { to: '/diagnostics', label: 'Diagnostics', icon: Stethoscope },
+  // Two destinations the roles and the audit trail never had. Audit lived inside Settings, which is where
+  // a feature goes when nobody has decided what it is, and Team did not exist at all — so four workspace
+  // roles were enforced on every request with no way to assign one.
+  { to: '/team', label: 'Team', icon: UserCog },
+  { to: '/audit', label: 'Audit', icon: ScrollText },
+  // Read-only checks of the Microsoft connection specifically, in a product that also
+  // migrates SQL Server, PostgreSQL, MySQL and files. "Diagnostics" promised the whole
+  // platform and delivered one provider.
+  { to: '/diagnostics', label: 'Microsoft checks', icon: Stethoscope },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -174,7 +190,21 @@ export function WorkspaceHeader() {
 export function Layout() {
   const { user, realTenantReadOnly } = useSession();
   const location = useLocation();
-  const showWorkspace = !['/', '/settings'].includes(location.pathname);
+  // Project, analysis, comparison, run and report pages state their own source and target, so the
+  // global source→target strip would only repeat or contradict them. A run reached from a project
+  // is the clear case: the page says "Development → UAT" and the strip above it said "Legacy SQL
+  // Server → QA", which is a different migration entirely.
+  //
+  // The validation *list* keeps it, because the "validate environment tables" card on that page
+  // acts on the global source and target and needs to say which ones.
+  const path = location.pathname;
+  const showWorkspace =
+    !['/', '/settings', '/runs'].includes(path) &&
+    !path.startsWith('/projects') &&
+    !path.startsWith('/analyses') &&
+    !path.startsWith('/data-comparisons') &&
+    !path.startsWith('/runs/') &&
+    !(path.startsWith('/validation/') && path !== '/validation');
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 flex-none flex-col border-r border-slate-200 bg-slate-900 text-slate-300 md:flex">
@@ -183,8 +213,8 @@ export function Layout() {
             <Boxes className="h-4.5 w-4.5 text-white" aria-hidden />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight text-white">DeepTrics</div>
-            <div className="text-[11px] leading-tight text-slate-400">Dataverse Migration</div>
+            <div className="text-sm font-semibold leading-tight text-white">{VENDOR_NAME}</div>
+            <div className="text-[11px] leading-tight text-slate-400">{PRODUCT_SHORT_NAME}</div>
           </div>
         </div>
         <nav className="mt-2 flex-1 space-y-0.5 px-3" aria-label="Main">
@@ -234,7 +264,7 @@ export function Layout() {
         )}
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-slate-900">Dataverse Migration Platform</span>
+            <span className="text-sm font-semibold text-slate-900">{PRODUCT_NAME}</span>
             {realTenantReadOnly && !user.organization.isDemo && (
               <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-sky-900">
                 READ ONLY

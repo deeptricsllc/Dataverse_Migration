@@ -1,0 +1,1 @@
+ALTER TABLE "migration_record_maps" ADD COLUMN "run_attempt" integer;

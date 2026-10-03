@@ -1,5 +1,5 @@
 import type { TypeCompatibility } from '../../../shared/domain';
-import type { AttributeMeta } from '../../../shared/metadata';
+import { crossFamily, familyOf, type AttributeMeta } from '../../../shared/metadata';
 import { classifyCrossProviderCompatibility } from '../connectors/sql/type-map';
 import { typeCompatibility } from './type-compat';
 
@@ -12,8 +12,7 @@ import { typeCompatibility } from './type-compat';
  */
 export function fieldVerdict(source: AttributeMeta, target: AttributeMeta | undefined): TypeCompatibility {
   if (!target) return 'INCOMPATIBLE';
-  const crossProvider = Boolean(source.sql) !== Boolean(target.sql);
-  if (crossProvider) return classifyCrossProviderCompatibility(source, target).status;
+  if (crossFamily(source, target)) return classifyCrossProviderCompatibility(source, target).status;
   const compat = typeCompatibility(source, target);
   if (!compat.compatible) return 'INCOMPATIBLE';
   return compat.lossy ? 'LOSSY' : 'COMPATIBLE';
@@ -22,8 +21,7 @@ export function fieldVerdict(source: AttributeMeta, target: AttributeMeta | unde
 /** A human-readable reason for {@link fieldVerdict}, used in the mapping UI and exports. */
 export function fieldVerdictReason(source: AttributeMeta, target: AttributeMeta | undefined): string {
   if (!target) return 'No target column is mapped';
-  const crossProvider = Boolean(source.sql) !== Boolean(target.sql);
-  if (crossProvider) return classifyCrossProviderCompatibility(source, target).reason;
+  if (crossFamily(source, target)) return classifyCrossProviderCompatibility(source, target).reason;
   const compat = typeCompatibility(source, target);
   if (!compat.compatible) return compat.note;
   return compat.note ?? `${source.type} → ${target.type}`;
@@ -34,6 +32,7 @@ export function needsChoiceMapping(source: AttributeMeta, target: AttributeMeta 
   if (!target) return false;
   const choiceTarget = target.type === 'Picklist' || target.type === 'State' || target.type === 'Status';
   if (!choiceTarget) return false;
-  // A choice into the same choice is a straight value copy; anything else needs a value map.
-  return source.type !== target.type || Boolean(source.sql);
+  // A choice into the same choice is a straight value copy; anything else needs a value map — and a
+  // value arriving from outside Dataverse never carries the option set's numeric codes.
+  return source.type !== target.type || familyOf(source) !== 'DATAVERSE';
 }

@@ -220,6 +220,14 @@ export function PreflightPage() {
                           sampled
                         </Pill>
                       )}
+                      {e.recordsTruncated && (
+                        <Pill
+                          tone="amber"
+                          title={`The counts are complete. The record list below holds ${e.recordsStored.toLocaleString()} of them — enough to see the pattern, not every row.`}
+                        >
+                          list capped
+                        </Pill>
+                      )}
                     </Td>
                     <Td className="text-xs text-slate-600">{e.matchDescription}</Td>
                     <Td className="text-right">{fmtNumber(e.sourceRecords)}</Td>

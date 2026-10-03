@@ -1,15 +1,20 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { isUnresolved, needsHumanReconciliation, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
+import { refreshRunCounters } from './run-counters';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
+  needsTypedConfirmation,
   type MigrationErrorDto,
   type MigrationRunDto,
   type MigrationRunListItemDto,
   type RecordMapDto,
   type RollbackPreviewDto,
+  type RunTrigger,
 } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
+import { decideWriteScope } from '../write-scope';
 import {
   environments,
   fieldMappings,
@@ -25,10 +30,12 @@ import {
 import type { AppConfig } from '../config';
 import type { JobQueue } from '../jobs/queue';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors';
+import { requireAdminForProductionTarget } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { PlanningService } from './planning-service';
+import type { ReadinessService } from './readiness-service';
 import type { TransformationService } from './transformation/transformation-service';
 import type { RunPlanSnapshot } from './run-snapshot';
 import { envRef } from './env-ref';
@@ -42,6 +49,7 @@ export class MigrationRunService {
     private readonly planning: PlanningService,
     private readonly transformations: TransformationService,
     private readonly environmentsSvc: EnvironmentService,
+    private readonly readiness: ReadinessService,
     private readonly queue: JobQueue,
     private readonly audit: AuditService,
     private readonly logger: Logger,
@@ -53,9 +61,50 @@ export class MigrationRunService {
    * clear error before a run is even queued.
    */
   private async assertWritesAllowed(ctx: RequestContext, targetEnvironmentId: string, action: string) {
+    // A member may migrate to a sandbox; production takes someone accountable for it. Checked before
+    // the read-only switch so the answer is about who you are, not about how this deployment is
+    // configured.
+    const env = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
+    requireAdminForProductionTarget(
+      ctx,
+      env,
+      action === 'EXECUTE' ? 'Migrating' : `${action[0]}${action.slice(1).toLowerCase()}ing`,
+    );
     if (!this.config.REAL_TENANT_READ_ONLY) return;
     const target = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
-    if (target.provider !== 'dataverse') return;
+    /**
+     * Every real target, not only Dataverse. A SQL target used to be accepted and queued, with the
+     * refusal arriving later per statement inside the connector — so the data was safe but the run
+     * history and the audit trail both said the attempt was allowed.
+     *
+     * The same decision the Dataverse client will make, made here first so the person is told before a
+     * run exists rather than after it fails. The two must agree; that is why there is one function.
+     */
+    const scope = decideWriteScope(this.config, target);
+    if (scope.allowed) {
+      if (scope.reason === 'CERTIFICATION_SCOPE') {
+        /**
+         * A permitted write under a read-only deployment is the single most important thing in this
+         * audit trail. It is recorded as its own action, with the environment, so "we were read-only"
+         * can never be claimed for a window in which something was written.
+         */
+        await this.audit.record({
+          organizationId: ctx.organizationId,
+          userId: ctx.userId,
+          action: 'CERTIFICATION_WRITE_PERMITTED',
+          outcome: 'SUCCESS',
+          targetEnvironmentId,
+          requestId: ctx.requestId,
+          details: {
+            action,
+            environmentType: target.environmentType,
+            displayName: target.displayName,
+            reason: scope.reason,
+          },
+        });
+      }
+      return;
+    }
     await this.audit.record({
       organizationId: ctx.organizationId,
       userId: ctx.userId,
@@ -63,19 +112,38 @@ export class MigrationRunService {
       outcome: 'FAILURE',
       targetEnvironmentId,
       requestId: ctx.requestId,
-      details: { action },
+      details: { action, reason: scope.reason, environmentType: target.environmentType },
     });
-    throw new AppError(
-      403,
-      'REAL_TENANT_READ_ONLY',
-      'REAL_TENANT_READ_ONLY is enabled. Dataverse write operations are disabled for this deployment.',
-    );
+    throw new AppError(403, 'REAL_TENANT_READ_ONLY', scope.message);
+  }
+
+  /**
+   * The plan a schedule is about to be built against, validated the same way a run validates it.
+   * Exposed so the schedule can capture the confirmed environment names at creation time.
+   */
+  async planForSchedule(ctx: RequestContext, planId: string) {
+    return this.planning.get(ctx, planId);
   }
 
   async start(
     ctx: RequestContext,
     planId: string,
-    input: { confirmSourceName: string; confirmTargetName: string; acknowledgeWarnings: boolean },
+    input: {
+      confirmSourceName?: string;
+      confirmTargetName?: string;
+      /** Explicit confirmation, for a target where typing the name is not required. */
+      confirmed?: boolean;
+      acknowledgeWarnings: boolean;
+    },
+    /**
+     * Why this run is starting. A scheduled or triggered run takes the identical path — every gate
+     * below applies — and only records who asked and, for an incremental run, where to read from.
+     */
+    meta: {
+      trigger?: RunTrigger;
+      scheduleId?: string | null;
+      incremental?: { field: string; since: string | null } | null;
+    } = {},
   ): Promise<MigrationRunDto> {
     // Always re-validate against current metadata before writing anything.
     const plan = await this.planning.revalidate(ctx, planId);
@@ -88,11 +156,36 @@ export class MigrationRunService {
         plan.issues.filter((i) => i.severity === 'BLOCKER'),
       );
     }
-    if (
-      input.confirmSourceName.trim() !== plan.sourceEnvironment.displayName ||
-      input.confirmTargetName.trim() !== plan.targetEnvironment.displayName
-    ) {
-      throw badRequest('Environment confirmation does not match the plan source and target names');
+    /**
+     * The readiness gate.
+     *
+     * Plan validation above refuses what cannot work. This refuses what *can* work and should not
+     * happen by accident: a table whose resume path cannot recover an interruption, a connector
+     * capability the matrix says is absent. Each one is accepted individually, by name, with a reason
+     * — there is no form of this that accepts a list, because a button that dismisses six findings is
+     * a button nobody read.
+     */
+    const readiness = await this.readiness.assess(ctx, planId);
+    if (readiness.verdict === 'BLOCKED' || readiness.verdict === 'BLOCKED_PENDING_OVERRIDE') {
+      const accepted = new Set(readiness.overrides.map((o) => `${o.code}::${o.object ?? ''}`));
+      const outstanding = readiness.findings.filter(
+        (f) => f.severity === 'BLOCKER' && !accepted.has(`${f.code}::${f.object?.name ?? ''}`),
+      );
+      throw new AppError(409, 'READINESS_BLOCKED', readiness.summary, outstanding);
+    }
+    // The gate scales with the consequence: see `needsTypedConfirmation`. Production still means
+    // typing the name; a sandbox means an explicit, deliberate click that named the target.
+    const typedMatches =
+      input.confirmSourceName?.trim() === plan.sourceEnvironment.displayName &&
+      input.confirmTargetName?.trim() === plan.targetEnvironment.displayName;
+    if (needsTypedConfirmation(plan.targetEnvironment)) {
+      if (!typedMatches) {
+        throw badRequest(
+          `${plan.targetEnvironment.displayName} is a production environment, or one this deployment could not classify. Type its name exactly to confirm.`,
+        );
+      }
+    } else if (!typedMatches && input.confirmed !== true) {
+      throw badRequest('Confirm the target environment before executing');
     }
     if (plan.warningCount > 0 && !input.acknowledgeWarnings) {
       throw badRequest(`Acknowledge the ${plan.warningCount} warning(s) before executing`);
@@ -138,6 +231,18 @@ export class MigrationRunService {
         status: 'QUEUED',
         options: plan.options,
         planSnapshot: snapshot,
+        /**
+         * What was predicted, kept with the run that was predicted about. This is the first half of the
+         * chain a buyer follows — predicted risk, actual outcome, validation evidence — and it only works
+         * if the prediction is the one that was made before the work rather than one made afterwards.
+         */
+        readinessSnapshot: readiness,
+        trigger: meta.trigger ?? 'MANUAL',
+        scheduleId: meta.scheduleId ?? null,
+        // Where an incremental run starts reading. Null means "everything", which is also what the
+        // first run of an incremental schedule does.
+        watermark: meta.incremental?.since ?? null,
+        incremental: meta.incremental ?? null,
         executedByUserId: ctx.userId,
       })
       .returning();
@@ -170,6 +275,9 @@ export class MigrationRunService {
       requestId: ctx.requestId,
       details: {
         planId,
+        trigger: meta.trigger ?? 'MANUAL',
+        scheduleId: meta.scheduleId ?? null,
+        incremental: meta.incremental ?? null,
         tables: snapshot.entities.map((e) => e.logicalName),
         conflictStrategy: plan.options.conflictStrategy,
         bypassCustomBusinessLogic: plan.options.bypassCustomBusinessLogic,
@@ -289,9 +397,38 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
       await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RETRY');
-      if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
+      if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED', 'NEEDS_RECONCILIATION'].includes(run.status)) {
         throw conflict(
           `Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`,
+        );
+      }
+      /**
+       * A retry is refused exactly when another attempt cannot settle what is outstanding.
+       *
+       * A record in doubt with something that could identify it is resolved by the next attempt asking
+       * the target. A record with nothing to identify it cannot be resolved by any number of attempts,
+       * and retrying it is the one action that could create a second copy — so the retry is refused and
+       * the records are named instead.
+       */
+      const outstanding = await this.db
+        .select({
+          logicalName: migrationRecordMaps.logicalName,
+          sourceId: migrationRecordMaps.sourceId,
+          writeState: migrationRecordMaps.writeState,
+          evidence: migrationRecordMaps.reconcileEvidence,
+        })
+        .from(migrationRecordMaps)
+        .where(
+          and(
+            eq(migrationRecordMaps.runId, runId),
+            inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+          ),
+        );
+      const needHuman = outstanding.filter((r) => needsHumanReconciliation(r.writeState, r.evidence));
+      if (needHuman.length > 0) {
+        throw conflict(
+          `${needHuman.length} record(s) must be reconciled by hand before this run can continue: a write may have been applied and nothing in the target can identify the record. Retrying could create a second copy. See /api/runs/${runId}/reconciliation for the list.`,
+          needHuman.slice(0, 50).map((r) => ({ table: r.logicalName, sourceId: r.sourceId })),
         );
       }
       const [active] = await this.db
@@ -313,6 +450,135 @@ export class MigrationRunService {
       });
     }
     return this.get(ctx, runId);
+  }
+
+  /**
+   * Records what a person found when they looked in the target.
+   *
+   * The way out of `NEEDS_RECONCILIATION`. The platform stopped because a write may have been applied
+   * and nothing it can query would settle it; the only remaining evidence is somebody opening the target
+   * and looking. This is where what they saw is written down — per record, with the identifier when they
+   * found one — and it is audited, because it is a human assertion about data rather than a measurement.
+   *
+   * Deliberately not a bulk "assume they are all fine" button. Each record is named. A person who
+   * resolves four hundred records has looked at four hundred records, or has made a decision they are
+   * accountable for either way.
+   */
+  async reconcile(
+    ctx: RequestContext,
+    runId: string,
+    resolutions: {
+      logicalName: string;
+      sourceId: string;
+      /** PRESENT: it is in the target. ABSENT: it is not, so the write never happened. */
+      found: 'PRESENT' | 'ABSENT';
+      /** The target's identifier, required when the record is present. */
+      targetId?: string | null;
+      /** How they determined it, in their words, for the evidence package. */
+      note: string;
+    }[],
+  ): Promise<MigrationRunDto> {
+    const run = await this.loadRun(ctx.organizationId, runId);
+    if (run.status !== 'NEEDS_RECONCILIATION') {
+      throw conflict(`This run is ${run.status} and has nothing awaiting reconciliation`);
+    }
+    let resolved = 0;
+    for (const r of resolutions) {
+      if (r.found === 'PRESENT' && !r.targetId) {
+        throw badRequest(
+          `${r.logicalName} ${r.sourceId}: a record reported as present needs the identifier it has in the target, so the identity map can point at it.`,
+        );
+      }
+      const [row] = await this.db
+        .select({ id: migrationRecordMaps.id, writeState: migrationRecordMaps.writeState })
+        .from(migrationRecordMaps)
+        .where(
+          and(
+            eq(migrationRecordMaps.runId, runId),
+            eq(migrationRecordMaps.logicalName, r.logicalName),
+            eq(migrationRecordMaps.sourceId, r.sourceId.toLowerCase()),
+          ),
+        );
+      if (!row) throw badRequest(`${r.logicalName} ${r.sourceId} is not a record of this run`);
+      if (!isUnresolved(row.writeState)) continue; // already settled; saying so twice changes nothing
+      await this.db
+        .update(migrationRecordMaps)
+        .set({
+          // PRESENT means the write did happen, so the record was created by this run and is now known.
+          // ABSENT means it did not, so the record is a plain failure the next attempt will try again.
+          outcome: r.found === 'PRESENT' ? 'CREATED' : 'FAILED',
+          writeState: r.found === 'PRESENT' ? 'CONFIRMED' : null,
+          targetId: r.found === 'PRESENT' ? (r.targetId ?? null) : null,
+          reconcileNote: `Resolved by ${ctx.displayName}: ${r.found === 'PRESENT' ? 'found in the target' : 'not in the target'}. ${r.note}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(migrationRecordMaps.id, row.id));
+      resolved++;
+    }
+
+    // The counters are derived, so they are rebuilt rather than adjusted.
+    await refreshRunCounters(this.db, runId);
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'MIGRATION_RECONCILED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: run.sourceEnvironmentId,
+      targetEnvironmentId: run.targetEnvironmentId,
+      runId,
+      requestId: ctx.requestId,
+      details: {
+        resolved,
+        present: resolutions.filter((r) => r.found === 'PRESENT').length,
+        absent: resolutions.filter((r) => r.found === 'ABSENT').length,
+      },
+    });
+
+    // Once nothing is outstanding the run is retryable again, and says so.
+    const [remaining] = await this.db
+      .select({ n: count() })
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+        ),
+      );
+    if (Number(remaining?.n ?? 0) === 0) {
+      await this.db
+        .update(migrationRuns)
+        .set({ status: 'COMPLETED_WITH_ERRORS', updatedAt: new Date() })
+        .where(eq(migrationRuns.id, runId));
+    }
+    return this.get(ctx, runId);
+  }
+
+  /** The records a person has to look at, with everything known about each one. */
+  async awaitingReconciliation(ctx: RequestContext, runId: string) {
+    await this.loadRun(ctx.organizationId, runId);
+    const rows = await this.db
+      .select()
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+        ),
+      )
+      .orderBy(asc(migrationRecordMaps.logicalName), asc(migrationRecordMaps.sourceId));
+    return {
+      total: rows.length,
+      items: rows.map((r) => ({
+        logicalName: r.logicalName,
+        sourceId: r.sourceId,
+        targetId: r.targetId,
+        intendedOperation: r.intendedOperation,
+        writeState: r.writeState,
+        evidence: r.reconcileEvidence,
+        note: r.reconcileNote,
+        attempts: r.attempts,
+      })),
+    };
   }
 
   private async requeue(ctx: RequestContext, runId: string, newAttempt: boolean) {
@@ -380,6 +646,7 @@ export class MigrationRunService {
       unchanged: r.unchanged,
       skipped: r.skipped,
       failed: r.failed,
+      unresolved: r.unresolved,
       entities: entities.map((e) => ({
         id: e.id,
         logicalName: e.logicalName,
@@ -393,6 +660,7 @@ export class MigrationRunService {
         unchanged: e.unchanged,
         skipped: e.skipped,
         failed: e.failed,
+        unresolved: e.unresolved,
         deferredPending: e.deferredPending,
         deferredResolved: e.deferredResolved,
         deferredFailed: e.deferredFailed,
@@ -524,9 +792,72 @@ export class MigrationRunService {
         outcome: m.outcome,
         matchMethod: m.matchMethod,
         deferredStatus: m.deferredStatus,
+        writeState: m.writeState ?? null,
+        recoveryEvidence: m.reconcileEvidence ?? null,
+        recoveryNote: m.reconcileNote ?? null,
         updatedAt: m.updatedAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * The same records, as pages, for an export that must not be capped.
+   *
+   * Walked by keyset on `(logicalName, sourceId)` — the identity map's own unique index — rather than
+   * by offset, because `OFFSET 2000000` makes the database count two million rows it then discards,
+   * and the last page of a large export is the slowest one exactly when it matters most.
+   */
+  async *recordPages(
+    ctx: RequestContext,
+    runId: string,
+    filter: {
+      entity?: string;
+      outcome?: 'CREATED' | 'UPDATED' | 'UNCHANGED' | 'SKIPPED' | 'FAILED';
+      pageSize?: number;
+    } = {},
+  ): AsyncGenerator<RecordMapDto[]> {
+    await this.loadRun(ctx.organizationId, runId);
+    const size = Math.max(1, Math.min(filter.pageSize ?? 1000, 5000));
+    const conditions = [eq(migrationRecordMaps.runId, runId)];
+    if (filter.entity) conditions.push(eq(migrationRecordMaps.logicalName, filter.entity));
+    if (filter.outcome) conditions.push(eq(migrationRecordMaps.outcome, filter.outcome));
+    const scope = and(...conditions)!;
+    type Row = typeof migrationRecordMaps.$inferSelect;
+    let cursor: { logicalName: string; sourceId: string } | null = null;
+    for (;;) {
+      const rows: Row[] = await this.db
+        .select()
+        .from(migrationRecordMaps)
+        .where(
+          cursor === null
+            ? scope
+            : and(
+                scope,
+                gt(
+                  sql`(${migrationRecordMaps.logicalName}, ${migrationRecordMaps.sourceId})`,
+                  sql`(${cursor.logicalName}, ${cursor.sourceId})`,
+                ),
+              ),
+        )
+        .orderBy(asc(migrationRecordMaps.logicalName), asc(migrationRecordMaps.sourceId))
+        .limit(size);
+      if (rows.length === 0) return;
+      yield rows.map((m) => ({
+        entity: m.logicalName,
+        sourceId: m.sourceId,
+        targetId: m.targetId,
+        outcome: m.outcome,
+        matchMethod: m.matchMethod,
+        deferredStatus: m.deferredStatus,
+        writeState: m.writeState ?? null,
+        recoveryEvidence: m.reconcileEvidence ?? null,
+        recoveryNote: m.reconcileNote ?? null,
+        updatedAt: m.updatedAt.toISOString(),
+      }));
+      const last = rows[rows.length - 1]!;
+      cursor = { logicalName: last.logicalName, sourceId: last.sourceId };
+      if (rows.length < size) return;
+    }
   }
 
   /**

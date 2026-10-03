@@ -30,13 +30,21 @@ import {
 // --- queries ---------------------------------------------------------------------------------
 
 /** Tables and views with an approximate row count. Uses sys.tables, sys.views, sys.schemas, sys.dm_db_partition_stats. */
+/**
+ * Every table and view, with an estimated row count from partition statistics.
+ *
+ * `rowCount` is bracketed because ROWCOUNT is a reserved word in SQL Server: unbracketed, the whole
+ * query is a syntax error and `listTables` fails at the first step. It went unnoticed for as long
+ * as it did because the end-to-end journeys run against a simulator that never executes this SQL —
+ * which is the argument for the real-engine conformance suite in one sentence.
+ */
 export const TABLES_QUERY = `
 SELECT s.name AS schemaName,
        t.name AS tableName,
        'table' AS objectType,
        ISNULL((SELECT SUM(ps.row_count)
                FROM sys.dm_db_partition_stats ps
-               WHERE ps.object_id = t.object_id AND ps.index_id IN (0, 1)), 0) AS rowCount
+               WHERE ps.object_id = t.object_id AND ps.index_id IN (0, 1)), 0) AS [rowCount]
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE t.is_ms_shipped = 0
@@ -44,7 +52,7 @@ UNION ALL
 SELECT s.name AS schemaName,
        v.name AS tableName,
        'view' AS objectType,
-       NULL AS rowCount
+       NULL AS [rowCount]
 FROM sys.views v
 JOIN sys.schemas s ON s.schema_id = v.schema_id
 WHERE v.is_ms_shipped = 0
@@ -263,7 +271,39 @@ export function buildTableSummaries(rows: SqlTableRow[]): TableSummary[] {
   }));
 }
 
-export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadata {
+/**
+ * How one server names and sizes its types.
+ *
+ * Everything else in this module is the same reasoning for any relational database; the type
+ * vocabulary is not. Injecting it keeps one normalization path while letting PostgreSQL say that
+ * `timestamp` is a point in time and SQL Server say it is a row version.
+ */
+export interface SqlTypeVocabulary {
+  toAttributeType(
+    dataType: string,
+    precision: number | null,
+    scale: number | null,
+    maxLength: number | null,
+  ): AttributeType;
+  charLength(dataType: string, maxLength: number | null): number | null;
+  integerRange(dataType: string): { min: number; max: number } | null;
+  dateTimeBehavior(dataType: string): string | null;
+  unsupported: ReadonlySet<string>;
+}
+
+/** SQL Server's, which is what every existing caller means when it passes nothing. */
+export const SQL_SERVER_TYPES: SqlTypeVocabulary = {
+  toAttributeType: sqlToAttributeType,
+  charLength: sqlCharLength,
+  integerRange: sqlIntegerRange,
+  dateTimeBehavior: sqlDateTimeBehavior,
+  unsupported: SQL_UNSUPPORTED_TYPES,
+};
+
+export function buildTableMetadata(
+  input: BuildTableMetadataInput,
+  types: SqlTypeVocabulary = SQL_SERVER_TYPES,
+): TableMetadata {
   const { table } = input;
   const logicalName = sqlTableName(table.schemaName, table.tableName);
 
@@ -295,14 +335,14 @@ export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadat
   const { lookupTargets, manyToOne } = buildRelationships(fkRows, logicalName);
 
   const attributes: AttributeMeta[] = columnRows.map((row) =>
-    buildAttribute(row, {
+    buildAttribute(row, types, {
       isPk: pkSet.has(row.columnName.toLowerCase()),
       isPrimaryId: hasSinglePk && pkSet.has(row.columnName.toLowerCase()),
       lookupTarget: lookupTargets.get(row.columnName.toLowerCase()) ?? null,
     }),
   );
 
-  const nameAttribute = pickPrimaryName(attributes, pkSet);
+  const nameAttribute = pickPrimaryName(attributes, pkSet, types.unsupported);
   if (nameAttribute) nameAttribute.isPrimaryName = true;
 
   return {
@@ -327,12 +367,33 @@ export function buildTableMetadata(input: BuildTableMetadataInput): TableMetadat
   };
 }
 
+/**
+ * A catalog number, whatever the driver chose to call it.
+ *
+ * `information_schema` columns are wide integer types, and drivers disagree about whether that
+ * means a JavaScript number or a string. mysql2 returns `CHARACTER_MAXIMUM_LENGTH` as the string
+ * "200"; the type says `number | null` and TypeScript cannot see the difference at runtime.
+ *
+ * It mattered quietly rather than loudly, which is worse: a string length compares unequal to every
+ * number, so truncation detection — which asks whether a value's length is exactly the column's
+ * maximum — could never fire on MySQL. Nothing failed. The check simply never found anything.
+ */
+function num(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function buildAttribute(
   row: SqlColumnRow,
+  types: SqlTypeVocabulary,
   ctx: { isPk: boolean; isPrimaryId: boolean; lookupTarget: string | null },
 ): AttributeMeta {
   const dataType = row.dataType;
-  const charLength = sqlCharLength(dataType, row.maxLength);
+  const maxLength = num(row.maxLength);
+  const precision = num(row.precision);
+  const scale = num(row.scale);
+  const charLength = types.charLength(dataType, maxLength);
   const isIdentity = yes(row.isIdentity);
   const isComputed = yes(row.isComputed);
   const isRowVersion = yes(row.isRowVersion);
@@ -346,9 +407,9 @@ function buildAttribute(
   // would rewrite the row's identity and break every foreign key pointing at it.
   const isValidForUpdate = !serverGenerated && !ctx.isPk;
 
-  const scalarType = sqlToAttributeType(dataType, row.precision, row.scale, charLength);
+  const scalarType = types.toAttributeType(dataType, precision, scale, charLength);
   const type = ctx.lookupTarget ? 'Lookup' : scalarType;
-  const range = sqlIntegerRange(dataType);
+  const range = types.integerRange(dataType);
   const isText = scalarType === 'String' || scalarType === 'Memo';
 
   return {
@@ -356,6 +417,7 @@ function buildAttribute(
     schemaName: row.columnName,
     displayName: row.columnName,
     type,
+    family: 'SQL',
     // The raw SQL type name is what diagnostics and the compatibility rules need; it is also how
     // `SQL_UNSUPPORTED_TYPES` recognises a column that cannot be migrated at all.
     rawType: dataType,
@@ -374,17 +436,17 @@ function buildAttribute(
     // The shared model's `precision` means "decimal places", which is SQL's `scale`. It is only
     // meaningful for the fractional numeric types: a `datetime2(7)` also reports a scale, and
     // copying it here would make the column look like it had 7 decimal places.
-    precision: FRACTIONAL_TYPES.has(scalarType) ? (row.scale ?? null) : null,
+    precision: FRACTIONAL_TYPES.has(scalarType) ? scale : null,
     minValue: range?.min ?? null,
     maxValue: range?.max ?? null,
     format: null,
-    dateTimeBehavior: sqlDateTimeBehavior(dataType),
+    dateTimeBehavior: types.dateTimeBehavior(dataType),
     targets: ctx.lookupTarget ? [ctx.lookupTarget] : undefined,
     sql: {
       dataType,
       maxLength: charLength,
-      precision: row.precision ?? null,
-      scale: row.scale ?? null,
+      precision,
+      scale,
       isNullable,
       isIdentity,
       isComputed,
@@ -400,13 +462,17 @@ function buildAttribute(
  * is guessed — a numeric or date column is never a name, and a wrong guess would show up as the
  * record's identity in every report and mapping screen.
  */
-function pickPrimaryName(attributes: AttributeMeta[], pkSet: Set<string>): AttributeMeta | null {
+function pickPrimaryName(
+  attributes: AttributeMeta[],
+  pkSet: Set<string>,
+  unsupported: ReadonlySet<string>,
+): AttributeMeta | null {
   return (
     attributes.find(
       (a) =>
         !pkSet.has(a.logicalName.toLowerCase()) &&
         (a.type === 'String' || a.type === 'Memo') &&
-        !SQL_UNSUPPORTED_TYPES.has((a.sql?.dataType ?? '').toLowerCase()) &&
+        !unsupported.has((a.sql?.dataType ?? '').toLowerCase()) &&
         NAME_LIKE.test(a.logicalName),
     ) ?? null
   );

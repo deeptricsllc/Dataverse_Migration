@@ -1,12 +1,15 @@
+import { graphScopes } from '../auth/microsoft-identity';
 import { and, count, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
 import { POWER_PLATFORM_SCOPE } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
-import type { SqlConnectionConfig } from '../../../shared/domain';
+import { isStagedConnection } from '../../../shared/domain';
+import type { SqlConnectionConfig, SqlConnectionType } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { demoRecords, type environments } from '../db/schema';
 import { AppError } from '../lib/errors';
+import { decideWriteScope } from '../write-scope';
 import { DemoConnection } from './demo/demo-connection';
 import { DEMO_DATA_VERSION, DEMO_ENVIRONMENTS, datasetFor, type DemoEnvKey } from './demo/fixtures';
 
@@ -14,9 +17,14 @@ import { DEMO_DATA_VERSION, DEMO_ENVIRONMENTS, datasetFor, type DemoEnvKey } fro
 const SEED_MARKER = '__seed_version';
 import { GlobalDiscoveryProvider, type EnvironmentDiscoveryProvider } from './discovery';
 import type { DiscoveredEnvironment } from './types';
+import { DEFAULT_RETRY_POLICY } from './retry';
 import { WebApiConnection } from './web-api-connection';
 import type { MigrationConnector } from '../connectors/types';
 import { DemoSqlConnection } from '../connectors/sql/demo-sql-connector';
+import { MysqlConnector } from '../connectors/sql/mysql-connector';
+import { PostgresConnector } from '../connectors/sql/postgres-connector';
+import { graphRequester } from '../connectors/staged/graph';
+import { StagedConnector, stagedProvider } from '../connectors/staged/staged-connector';
 import { SqlConnector } from '../connectors/sql/sql-connector';
 import {
   DEMO_SQL_ENVIRONMENTS,
@@ -77,8 +85,15 @@ export class ConnectionFactory {
     env: EnvironmentRow,
     userId: string,
     logContext: Record<string, unknown> = {},
+    /**
+     * How many times a transient failure is retried. A migration carries the plan's own setting,
+     * because a tenant that throttles hard needs more attempts than a screen refresh does.
+     */
+    opts: { maxAttempts?: number } = {},
   ): Promise<MigrationConnector> {
-    if (env.connectionType === 'DATAVERSE') return this.forEnvironment(env, userId, logContext);
+    if (env.connectionType === 'DATAVERSE') {
+      return this.forEnvironment(env, userId, logContext, opts);
+    }
     const logger = this.logger.child({ environmentId: env.id, ...logContext });
     if (env.provider === 'demosql') {
       if (!this.config.DEMO_MODE) throw new AppError(400, 'DEMO_DISABLED', 'Demo connections are disabled');
@@ -87,10 +102,49 @@ export class ConnectionFactory {
         this.db,
         logger,
         this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+        env.organizationId,
+      );
+    }
+    // An imported source has no server to reach: its rows live in the platform's own database.
+    if (isStagedConnection(env.connectionType)) {
+      const kind =
+        env.connectionType === 'ONEDRIVE'
+          ? 'ONEDRIVE'
+          : env.connectionType === 'SHAREPOINT'
+            ? 'SHAREPOINT'
+            : 'UPLOAD';
+      return new StagedConnector(
+        stagedProvider(kind),
+        env.url,
+        env.id,
+        this.db,
+        logger,
+        // Only for the kinds that fetch, and only when the feature is switched on. Without it the
+        // connection test reports that the feature is off rather than failing on a token it was
+        // never going to get.
+        kind !== 'UPLOAD' && this.config.MICROSOFT_FILES_ENABLED && this.config.microsoftEnabled
+          ? async () => graphRequester(await this.identity.getAccessToken(userId, graphScopes()))
+          : undefined,
       );
     }
     if (!env.sqlConfig) {
       throw new AppError(400, 'CONNECTION_INCOMPLETE', 'This SQL connection has no configuration');
+    }
+    if (env.connectionType === 'POSTGRES') {
+      return new PostgresConnector({
+        config: env.sqlConfig,
+        password: await this.loadSecret(env.id),
+        logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
+    if (env.connectionType === 'MYSQL') {
+      return new MysqlConnector({
+        config: env.sqlConfig,
+        password: await this.loadSecret(env.id),
+        logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
     }
     return new SqlConnector(
       {
@@ -108,6 +162,7 @@ export class ConnectionFactory {
     env: EnvironmentRow,
     userId: string,
     logContext: Record<string, unknown> = {},
+    opts: { maxAttempts?: number } = {},
   ): MigrationConnector {
     const logger = this.logger.child({ environmentId: env.id, ...logContext });
     if (env.connectionType !== 'DATAVERSE') {
@@ -128,6 +183,24 @@ export class ConnectionFactory {
         this.db,
         logger,
         this.config.NODE_ENV === 'test' ? 0 : this.config.DEMO_LATENCY_MS,
+        env.organizationId,
+      );
+    }
+    /**
+     * Per environment, not per deployment.
+     *
+     * This used to be `this.config.REAL_TENANT_READ_ONLY` alone, which meant the only way to write to one
+     * sandbox was to permit writes to every environment the signed-in user can reach. The decision now
+     * also consults the certification scope, and refuses production and unclassified environments even
+     * when they are named in it — see `write-scope.ts` for why being listed is necessary and not enough.
+     */
+    const scope = decideWriteScope(this.config, env);
+    if (scope.reason === 'CERTIFICATION_SCOPE') {
+      // Loud on purpose. A deployment that can write to a real environment while calling itself
+      // read-only should say which one, every time it builds the connection that can do it.
+      logger.warn(
+        { environmentUrl: env.url, environmentType: env.environmentType },
+        'Writes permitted to this environment by the certification scope',
       );
     }
     return new WebApiConnection({
@@ -136,17 +209,40 @@ export class ConnectionFactory {
       url: env.apiUrl || env.url,
       apiVersion: this.config.DATAVERSE_API_VERSION,
       logger,
-      readOnly: this.config.REAL_TENANT_READ_ONLY,
+      readOnly: !scope.allowed,
+      // `maxRetries` on a plan was settable and read nowhere: a customer could raise it against a
+      // throttling tenant and nothing changed. This is where it belongs — the transient-failure
+      // retry that already honours Retry-After.
+      retryPolicy:
+        opts.maxAttempts === undefined
+          ? undefined
+          : { ...DEFAULT_RETRY_POLICY, maxAttempts: Math.max(1, opts.maxAttempts) },
       getAccessToken: () => this.identity.getResourceToken(userId, env.apiUrl || env.url),
     });
   }
 
   /** Builds a connector from an unsaved SQL configuration, for "test connection" before saving. */
   sqlConnectorFor(
-    connectionType: 'SQL_SERVER' | 'AZURE_SQL',
+    connectionType: SqlConnectionType,
     config: SqlConnectionConfig,
     password: string | null,
-  ): SqlConnector {
+  ): MigrationConnector {
+    if (connectionType === 'POSTGRES') {
+      return new PostgresConnector({
+        config,
+        password,
+        logger: this.logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
+    if (connectionType === 'MYSQL') {
+      return new MysqlConnector({
+        config,
+        password,
+        logger: this.logger,
+        readOnly: this.config.REAL_TENANT_READ_ONLY,
+      });
+    }
     return new SqlConnector(
       { config, password, logger: this.logger, readOnly: this.config.REAL_TENANT_READ_ONLY },
       connectionType === 'AZURE_SQL' ? 'azuresql' : 'sqlserver',
@@ -210,26 +306,31 @@ export class ConnectionFactory {
 }
 
 /**
- * Seeds simulated Dataverse data for demo environments. Idempotent: an environment is only
+ * Seeds one organization's copy of the simulated data. Idempotent: an environment is only
  * (re-)seeded when it is empty, when the fixtures version changed, or on an explicit reset.
+ *
+ * Per organization, not global. Every evaluator gets their own copy, so one prospect migrating
+ * into the simulated UAT cannot leave records for the next one to find.
  */
 export async function seedDemoData(
   db: AppDb,
+  organizationId: string,
   opts: { reset?: boolean; logger?: { info: (o: object, m: string) => void } } = {},
 ) {
-  if (opts.reset) await db.delete(demoRecords);
-  await seedDemoSqlData(db, opts);
+  if (opts.reset) await db.delete(demoRecords).where(eq(demoRecords.organizationId, organizationId));
+  await seedDemoSqlData(db, organizationId, opts);
   for (const env of DEMO_ENVIRONMENTS) {
     const [existing] = await db
       .select({ n: count() })
       .from(demoRecords)
-      .where(eq(demoRecords.environmentKey, env.key));
+      .where(and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, env.key)));
     if (Number(existing?.n ?? 0) > 0) {
       const [marker] = await db
         .select({ id: demoRecords.recordId })
         .from(demoRecords)
         .where(
           and(
+            eq(demoRecords.organizationId, organizationId),
             eq(demoRecords.environmentKey, env.key),
             eq(demoRecords.logicalName, SEED_MARKER),
             eq(demoRecords.recordId, DEMO_DATA_VERSION),
@@ -238,11 +339,14 @@ export async function seedDemoData(
       if (marker) continue;
       // Fixtures changed: replace this demo environment's data.
       opts.logger?.info({ environment: env.key, version: DEMO_DATA_VERSION }, 'Re-seeding demo environment');
-      await db.delete(demoRecords).where(eq(demoRecords.environmentKey, env.key));
+      await db
+        .delete(demoRecords)
+        .where(and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, env.key)));
     }
     const dataset = datasetFor(env.key as DemoEnvKey);
     const rows = Object.entries(dataset).flatMap(([logicalName, records]) =>
       records.map((data) => ({
+        organizationId,
         environmentKey: env.key,
         logicalName,
         recordId: String(data[`${logicalName}id`]).toLowerCase(),
@@ -257,16 +361,28 @@ export async function seedDemoData(
     }
     await db
       .insert(demoRecords)
-      .values({ environmentKey: env.key, logicalName: SEED_MARKER, recordId: DEMO_DATA_VERSION, data: {} })
+      .values({
+        organizationId,
+        environmentKey: env.key,
+        logicalName: SEED_MARKER,
+        recordId: DEMO_DATA_VERSION,
+        data: {},
+      })
       .onConflictDoNothing();
   }
 }
 
-export async function demoRecordCount(db: AppDb, envKey: string, table: string) {
+export async function demoRecordCount(db: AppDb, organizationId: string, envKey: string, table: string) {
   const [row] = await db
     .select({ n: count() })
     .from(demoRecords)
-    .where(and(eq(demoRecords.environmentKey, envKey), eq(demoRecords.logicalName, table)));
+    .where(
+      and(
+        eq(demoRecords.organizationId, organizationId),
+        eq(demoRecords.environmentKey, envKey),
+        eq(demoRecords.logicalName, table),
+      ),
+    );
   return Number(row?.n ?? 0);
 }
 
@@ -277,18 +393,22 @@ export async function demoRecordCount(db: AppDb, envKey: string, table: string) 
  */
 export async function seedDemoSqlData(
   db: AppDb,
+  organizationId: string,
   opts: { logger?: { info: (o: object, m: string) => void } } = {},
 ) {
   const [existing] = await db
     .select({ n: count() })
     .from(demoRecords)
-    .where(eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY));
+    .where(
+      and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY)),
+    );
   if (Number(existing?.n ?? 0) > 0) {
     const [marker] = await db
       .select({ id: demoRecords.recordId })
       .from(demoRecords)
       .where(
         and(
+          eq(demoRecords.organizationId, organizationId),
           eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY),
           eq(demoRecords.logicalName, SEED_MARKER),
           eq(demoRecords.recordId, DEMO_DATA_VERSION),
@@ -296,7 +416,11 @@ export async function seedDemoSqlData(
       );
     if (marker) return;
     opts.logger?.info({ version: DEMO_DATA_VERSION }, 'Re-seeding demo SQL Server');
-    await db.delete(demoRecords).where(eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY));
+    await db
+      .delete(demoRecords)
+      .where(
+        and(eq(demoRecords.organizationId, organizationId), eq(demoRecords.environmentKey, DEMO_SQL_ENV_KEY)),
+      );
   }
   const tables = new Map(demoSqlTables().map((t) => [t.logicalName, t]));
   const data = demoSqlData();
@@ -304,6 +428,7 @@ export async function seedDemoSqlData(
     const meta = tables.get(logicalName);
     if (!meta) continue;
     const values = rows.map((r) => ({
+      organizationId,
       environmentKey: DEMO_SQL_ENV_KEY,
       logicalName,
       recordId: String(r[meta.primaryIdAttribute]).toLowerCase(),
@@ -319,6 +444,7 @@ export async function seedDemoSqlData(
   await db
     .insert(demoRecords)
     .values({
+      organizationId,
       environmentKey: DEMO_SQL_ENV_KEY,
       logicalName: SEED_MARKER,
       recordId: DEMO_DATA_VERSION,

@@ -1,0 +1,37 @@
+{
+  "recordedAt": "2026-10-02T03:17:37.212Z",
+  "proves": "What each engine does at the boundary the crash-consistency protocol depends on: that a committed row is findable by its business key, that a repeated insert on a unique key is refused as a definite rejection, that two identical inserts into a table with no unique key cannot be told apart afterwards, and that a repeated update is idempotent.",
+  "doesNotProve": "That the process surviving a real crash behaves identically. The process is not killed: the failure moment is simulated by stopping after a write. The server, the driver, the statements and the row counts are real, and every count is taken through the raw driver rather than through the connector that wrote it.",
+  "engines": [
+    {
+      "engine": "postgresql",
+      "notes": [
+        "A committed row is findable by business key, which is what recovery relies on.",
+        "A repeated insert on a unique key is refused as VALIDATION, which is classified as a definite rejection.",
+        "Two identical inserts into a table with no unique key both succeed and cannot be told apart afterwards. This is why no-evidence records stop for a person.",
+        "Repeating an update is idempotent, which is why an interrupted update is retried.",
+        "Updating a row that does not exist is refused rather than creating one."
+      ]
+    },
+    {
+      "engine": "mysql",
+      "notes": [
+        "A committed row is findable by business key, which is what recovery relies on.",
+        "A repeated insert on a unique key is refused as DUPLICATE_RECORD, which is classified as a definite rejection.",
+        "Two identical inserts into a table with no unique key both succeed and cannot be told apart afterwards. This is why no-evidence records stop for a person.",
+        "Repeating an update is idempotent, which is why an interrupted update is retried.",
+        "Updating a row that does not exist is refused rather than creating one."
+      ]
+    },
+    {
+      "engine": "sqlserver",
+      "notes": [
+        "A committed row is findable by business key, which is what recovery relies on.",
+        "A repeated insert on a unique key is refused as VALIDATION, which is classified as a definite rejection.",
+        "Two identical inserts into a table with no unique key both succeed and cannot be told apart afterwards. This is why no-evidence records stop for a person.",
+        "Repeating an update is idempotent, which is why an interrupted update is retried.",
+        "Updating a row that does not exist is refused rather than creating one."
+      ]
+    }
+  ]
+}

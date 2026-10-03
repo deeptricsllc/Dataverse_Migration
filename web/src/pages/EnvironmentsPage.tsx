@@ -1,10 +1,11 @@
+import { levelRank, summaryLevel, VERIFICATION_LABELS } from '@shared/connector-verification';
 import type {
   ConnectionTestResultDto,
   ConnectionType,
   ConnectorCapabilities,
   EnvironmentDto,
 } from '@shared/domain';
-import { CONNECTION_TYPE_LABELS } from '@shared/domain';
+import { CONNECTION_TYPE_LABELS, isSqlConnection, isStagedConnection } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -12,7 +13,10 @@ import {
   CheckCircle2,
   Cloud,
   Database,
+  FileSpreadsheet,
+  FolderOpen,
   Globe,
+  List,
   MapPin,
   Minus,
   Pencil,
@@ -24,9 +28,9 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
-import { WizardSteps } from '../components/WizardSteps';
+import { StagedSourceCard } from '../components/StagedSourceCard';
 import {
   Button,
   Callout,
@@ -49,12 +53,22 @@ const TYPE_ICONS: Record<ConnectionType, typeof Database> = {
   DATAVERSE: Database,
   SQL_SERVER: Server,
   AZURE_SQL: Cloud,
+  POSTGRES: Server,
+  MYSQL: Server,
+  FILE: FileSpreadsheet,
+  ONEDRIVE: FolderOpen,
+  SHAREPOINT: List,
 };
 
-const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal'> = {
+const TYPE_TONES: Record<ConnectionType, 'violet' | 'blue' | 'teal' | 'slate' | 'amber'> = {
   DATAVERSE: 'violet',
   SQL_SERVER: 'blue',
   AZURE_SQL: 'teal',
+  POSTGRES: 'slate',
+  MYSQL: 'slate',
+  FILE: 'amber',
+  ONEDRIVE: 'amber',
+  SHAREPOINT: 'amber',
 };
 
 /** Capabilities shown on every card. Read from the connector, never inferred from the provider. */
@@ -65,6 +79,33 @@ const CAPABILITIES: [keyof ConnectorCapabilities, string, string][] = [
   ['supportsOwnership', 'Ownership', 'Records have an owner the migration can set'],
   ['supportsAuditImpersonation', 'Audit attribution', 'Created by / modified by can be preserved'],
 ];
+
+/**
+ * What we have actually seen this connector do, beside what it is allowed to do.
+ *
+ * The pills above answer "may the planner use this?". This answers "have we run it, and against
+ * what?" — which is the question somebody about to move their data is really asking. A capability
+ * flag set to true is a statement about code; a verification level is a statement about evidence,
+ * and the card says both because they are not the same thing.
+ *
+ * The headline is the connector's *weakest* meaningful capability, never its best. A connector with
+ * nine verified capabilities and one simulated one has a simulated capability in it, and somebody
+ * glancing at a single badge must not be told otherwise.
+ */
+function VerificationNote({ type }: { type: ConnectionType }) {
+  const level = summaryLevel(type);
+  if (!level) return null;
+  const meta = VERIFICATION_LABELS[level];
+  const strong = levelRank(level) >= levelRank('ENGINE_VERIFIED');
+  const absent = level === 'NOT_SUPPORTED';
+  return (
+    <div className="mt-2 text-xs text-slate-500">
+      <Pill tone={strong ? 'teal' : absent ? 'slate' : 'amber'}>{meta.label}</Pill>{' '}
+      <span>{meta.meaning}</span>
+      <p className="mt-1 text-[11px] text-slate-400">{meta.evidence}</p>
+    </div>
+  );
+}
 
 function CapabilityList({ capabilities }: { capabilities: ConnectorCapabilities }) {
   return (
@@ -198,8 +239,31 @@ export function EnvironmentsPage() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [kindFilter, setKindFilter] = useState('ALL');
   const [editing, setEditing] = useState<EnvironmentDto | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  /**
+   * `?new=1` opens the form on arrival, so "add a connection" from somewhere else lands on the form
+   * rather than on the list with the button still to find. A URL rather than router state, because
+   * it survives a reload and can be linked to.
+   */
+  const [params, setParams] = useSearchParams();
+  const [formOpen, setFormOpen] = useState(params.get('new') === '1');
+  /** Closing also drops `?new=1`, so a reload does not reopen the form. */
+  const closeForm = () => {
+    setFormOpen(false);
+    if (params.get('new')) {
+      const next = new URLSearchParams(params);
+      next.delete('new');
+      setParams(next, { replace: true });
+    }
+  };
   const [deleting, setDeleting] = useState<EnvironmentDto | null>(null);
+  /**
+   * The file source just created, so the page can take you to its import control.
+   *
+   * Creating one used to close the dialog and leave you at the top of the connections page, with
+   * the file picker in a section below every other connection. The source existed and there was
+   * nothing on screen to suggest what to do next.
+   */
+  const [createdStagedId, setCreatedStagedId] = useState<string | null>(null);
 
   const envs = useQuery({
     queryKey: ['environments'],
@@ -240,6 +304,16 @@ export function EnvironmentsPage() {
   }, [autoDiscover]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const list = useMemo(() => envs.data ?? [], [envs.data]);
+  /** File sources get their own section: what matters about them is their data, not their settings. */
+  const staged = useMemo(() => list.filter((e) => isStagedConnection(e.connectionType)), [list]);
+
+  useEffect(() => {
+    if (!createdStagedId) return;
+    const card = document.querySelector(`[data-testid="staged-source-${createdStagedId}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
+  }, [createdStagedId, list]);
   const types = useMemo(
     () => ['ALL', ...new Set(list.map((e) => e.environmentType).filter((t): t is string => Boolean(t)))],
     [list],
@@ -250,6 +324,9 @@ export function EnvironmentsPage() {
   );
   const filtered = list.filter(
     (e) =>
+      // File sources have their own section below, with the import control. Showing them here as
+      // well produced a second card whose every row was "—".
+      !isStagedConnection(e.connectionType) &&
       (typeFilter === 'ALL' || e.environmentType === typeFilter) &&
       (kindFilter === 'ALL' || e.connectionType === kindFilter) &&
       `${e.displayName} ${e.url} ${e.uniqueName ?? ''} ${e.sql?.database ?? ''}`
@@ -277,7 +354,13 @@ export function EnvironmentsPage() {
 
   return (
     <>
-      <WizardSteps current={1} />
+      {/*
+        No step indicator here. Connections is a platform area — somebody adding a database or
+        rotating a credential is not at step 1 of 9 of a migration, and saying they are made every
+        workspace-level task look like part of a flow they had not started. The guided path into
+        the flow is the "Continue to Analyze" action below, which appears once a source and target
+        are chosen.
+      */}
       <PageHeader
         title="Connections"
         description={
@@ -391,7 +474,12 @@ export function EnvironmentsPage() {
           const isTarget = workspace.target?.id === env.id;
           // Dataverse without the Dataverse API is unusable; a SQL connection always is.
           const usable = env.connectionType !== 'DATAVERSE' || env.dataverseAvailable;
-          const editable = env.connectionType !== 'DATAVERSE';
+          const staged = isStagedConnection(env.connectionType);
+          // An upload has nothing to reach; OneDrive and SharePoint do, so those keep the test that
+          // tells someone which of consent, scope or reachability is the problem.
+          const testable = !staged || env.connectionType !== 'FILE';
+          // A staged source has no settings to edit — it has data to import, which is its own card.
+          const editable = env.connectionType !== 'DATAVERSE' && !staged;
           const TypeIcon = TYPE_ICONS[env.connectionType];
           return (
             <article
@@ -437,6 +525,7 @@ export function EnvironmentsPage() {
                 </div>
                 <ConnectionDetails env={env} />
                 <CapabilityList capabilities={env.capabilities} />
+                <VerificationNote type={env.connectionType} />
                 <div className="mt-3 flex items-center gap-2 text-xs">
                   <StatusBadge
                     status={env.connectionStatus}
@@ -462,15 +551,17 @@ export function EnvironmentsPage() {
                   </p>
                 )}
                 <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                  <Button
-                    size="sm"
-                    icon={<PlugZap className="h-3.5 w-3.5" />}
-                    loading={test.isPending && test.variables?.id === env.id}
-                    onClick={() => test.mutate(env)}
-                    disabled={!usable}
-                  >
-                    Test connection
-                  </Button>
+                  {testable && (
+                    <Button
+                      size="sm"
+                      icon={<PlugZap className="h-3.5 w-3.5" />}
+                      loading={test.isPending && test.variables?.id === env.id}
+                      onClick={() => test.mutate(env)}
+                      disabled={!usable}
+                    >
+                      Test connection
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant={isSource ? 'primary' : 'secondary'}
@@ -479,14 +570,17 @@ export function EnvironmentsPage() {
                   >
                     {isSource ? 'Source' : 'Set as source'}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={isTarget ? 'primary' : 'secondary'}
-                    disabled={isTarget || workspace.saving || !usable}
-                    onClick={() => select('target', env)}
-                  >
-                    {isTarget ? 'Target' : 'Set as target'}
-                  </Button>
+                  {/* A file can never be written to, so it is never offered as a target. */}
+                  {!staged && (
+                    <Button
+                      size="sm"
+                      variant={isTarget ? 'primary' : 'secondary'}
+                      disabled={isTarget || workspace.saving || !usable}
+                      onClick={() => select('target', env)}
+                    >
+                      {isTarget ? 'Target' : 'Set as target'}
+                    </Button>
+                  )}
                   {editable && (
                     <>
                       <Button
@@ -529,13 +623,29 @@ export function EnvironmentsPage() {
           </Callout>
         </div>
       )}
-      {list.some((e) => e.connectionType !== 'DATAVERSE') && (
+      {list.some((e) => isSqlConnection(e.connectionType)) && (
         <div className="mt-4">
-          <Callout tone="info" title="SQL connections are opened directly">
-            A SQL Server has to be reachable from wherever this application runs. A hosted deployment normally
-            cannot reach a server behind a corporate firewall; the agent that would connect outward from your
-            network is designed in docs/ON_PREM_AGENT_ARCHITECTURE.md and does not exist yet.
+          <Callout tone="info" title="Database connections are opened directly">
+            A database server has to be reachable from wherever this application runs. A hosted deployment
+            normally cannot reach a server behind a corporate firewall; the agent that would connect outward
+            from your network is designed in docs/ON_PREM_AGENT_ARCHITECTURE.md and does not exist yet. A file
+            source needs none of this — its data is uploaded rather than fetched.
           </Callout>
+        </div>
+      )}
+
+      {staged.length > 0 && (
+        <div className="mt-8 space-y-4">
+          <h2 className="text-sm font-semibold text-slate-700">File sources</h2>
+          {staged.map((env) => (
+            <StagedSourceCard
+              key={env.id}
+              environment={env}
+              justCreated={env.id === createdStagedId}
+              isSource={workspace.source?.id === env.id}
+              onSetSource={() => void select('source', env)}
+            />
+          ))}
         </div>
       )}
 
@@ -543,10 +653,11 @@ export function EnvironmentsPage() {
         <ConnectionModal
           connection={editing}
           discovering={discover.isPending}
-          onClose={() => setFormOpen(false)}
+          onClose={closeForm}
           onDiscover={() => discover.mutate()}
-          onSaved={() => {
-            setFormOpen(false);
+          onSaved={(saved) => {
+            closeForm();
+            if (isStagedConnection(saved.connectionType)) setCreatedStagedId(saved.id);
             void qc.invalidateQueries({ queryKey: ['environments'] });
           }}
         />

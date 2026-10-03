@@ -244,8 +244,17 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
     expect(office.outcome).toBe('PASS');
     expect(office.matched).toBe(15);
     const account = validation.entities.find((x) => x.logicalName === 'account')!;
-    expect(account.missing).toBeGreaterThan(0);
+    // Two different facts, and the report keeps them apart. `failedInRun` is the run's own finding
+    // confirmed — records it already reported as failed, which were never compared because there
+    // is nothing in the target to compare them against. `missing` is validation's own finding: a
+    // record the run claimed to have dealt with that is not there. Adding them together used to
+    // make matched + missing + differing exceed the number of records examined.
+    expect(account.failedInRun, 'the run reported failures here').toBeGreaterThan(0);
     expect(account.brokenReferences).toBe(0);
+    expect(
+      account.matched + account.different + account.missing,
+      'what was examined is what was accounted for',
+    ).toBe(account.checkedRecords);
     const diffs = await api.get(
       `/api/validations/${validation.id}/differences?entity=account&type=PRE_EXISTING_DIFFERENCE`,
     );
@@ -310,7 +319,7 @@ describe('end-to-end workflow (DEMO MODE, API level)', () => {
 
   it('records an audit trail and dashboard data', async () => {
     const audit = await api.get('/api/audit');
-    const actions = new Set(audit.map((a: { action: string }) => a.action));
+    const actions = new Set(audit.items.map((a: { action: string }) => a.action));
     for (const a of [
       'AUTH_SIGN_IN',
       'ENVIRONMENTS_DISCOVERED',

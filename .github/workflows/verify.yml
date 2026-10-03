@@ -1,0 +1,125 @@
+name: Verify
+
+# Two jobs on purpose.
+#
+# `checks` is the fast one every change must pass: format, lint, types, unit and integration tests,
+# build, and the browser journeys. It needs nothing but Node.
+#
+# `engines` is the slow one that earns the product's strongest claim. It starts real PostgreSQL,
+# MySQL and SQL Server servers and drives the production connectors against them through the same
+# drivers a customer's deployment uses. Nothing else may produce ENGINE VERIFIED, and the matrix
+# test in `checks` fails if a row claims it without the evidence this job writes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Format, lint, types, tests, build, journeys
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Keep the traces from a failed journey
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  engines:
+    name: Conformance against real database engines
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: conformance
+          POSTGRES_DB: conformance
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: conformance
+          MYSQL_DATABASE: conformance
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h127.0.0.1 -uroot -pconformance"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: Conformance!2026
+          MSSQL_PID: Developer
+        ports: ['1433:1433']
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Conformance!2026' -C -Q 'SELECT 1'"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      # SQL Server starts with only the system databases, and the suite will not create one for
+      # itself: provisioning its own schema inside a database somebody else made is as far as it
+      # goes. Done with the driver the product already depends on rather than a tools image —
+      # mcr.microsoft.com/mssql-tools18 publishes no `latest` tag and the first hosted run died
+      # pulling it. The driver also proves it can reach the server before the suite starts.
+      - name: Create the SQL Server test database
+        run: node scripts/ensure-sqlserver-db.mjs "$TEST_MSSQL_URL"
+        env:
+          TEST_MSSQL_URL: sqlserver://sa:Conformance%212026@localhost:1433/conformance
+
+      - name: Conformance
+        env:
+          TEST_POSTGRES_URL: postgresql://postgres:conformance@localhost:5432/conformance
+          TEST_MYSQL_URL: mysql://root:conformance@localhost:3306/conformance
+          TEST_MSSQL_URL: sqlserver://sa:Conformance%212026@localhost:1433/conformance
+        run: npm run test:engines
+
+      # The run's own record of what it proved, against which server version. Kept because a claim
+      # whose evidence lives only in an expiring log is not much of a claim.
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-verification-evidence
+          path: |
+            evidence/engine-verification.json
+            evidence/crash-verification.json
+          retention-days: 90
+
+      # The committed evidence is what the capability matrix is checked against, so it has to keep
+      # describing reality. Compared by claim rather than by bytes: a fresh timestamp and a newer
+      # container patch version are not drift, and a check that failed on those would be ignored
+      # within a week.
+      - name: Refuse evidence that no longer matches the engines
+        run: |
+          git show HEAD:evidence/engine-verification.json > /tmp/committed-evidence.json 2>/dev/null || echo '{"schema":1,"runs":{}}' > /tmp/committed-evidence.json
+          node scripts/check-evidence-drift.mjs /tmp/committed-evidence.json evidence/engine-verification.json

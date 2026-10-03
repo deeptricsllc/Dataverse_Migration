@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { AutomationInfo, PrincipalDto } from '../../../../shared/domain';
 import {
@@ -21,8 +21,9 @@ import type {
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
-import { SQL_CAPABILITIES } from '../types';
+import { SQL_CAPABILITIES, newerThanWatermark } from '../types';
 import { DEMO_SQL_ENVIRONMENT, DEMO_SQL_URL, demoSqlTables } from './demo-fixtures';
 
 /**
@@ -60,8 +61,22 @@ export class DemoSqlConnection implements MigrationConnector {
     private readonly db: AppDb,
     private readonly logger: Logger,
     private readonly latencyMs: number,
+    /** The organization whose copy of the simulated database this connection reads and writes. */
+    private readonly organizationId: string,
   ) {
     this.tables = new Map(demoSqlTables().map((t) => [t.logicalName, t]));
+  }
+
+  /**
+   * Every read and write of the simulated data, narrowed to the organization that owns this
+   * environment. Used in place of a bare environment-key filter so a missed call site cannot
+   * quietly read another evaluator's copy.
+   */
+  private scope(): SQL {
+    return and(
+      eq(demoRecords.organizationId, this.organizationId),
+      eq(demoRecords.environmentKey, this.envKey),
+    )!;
   }
 
   private async simulate(factor = 1) {
@@ -129,7 +144,7 @@ export class DemoSqlConnection implements MigrationConnector {
     const [row] = await this.db
       .select({ n: count() })
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.envKey), eq(demoRecords.logicalName, t.logicalName)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)));
     return { count: Number(row?.n ?? 0), approximate: false };
   }
 
@@ -154,12 +169,11 @@ export class DemoSqlConnection implements MigrationConnector {
     return { id: String(data[t.primaryIdAttribute]), values };
   }
 
-  async *queryRecords(
-    t: TableMetadata,
-    columns: string[],
-    opts: { pageSize: number },
-  ): AsyncGenerator<DvRecord[]> {
+  async *queryRecords(t: TableMetadata, columns: string[], opts: ReadOptions): AsyncGenerator<DvRecord[]> {
     this.table(t.logicalName);
+    if (opts.since && !t.attributes.some((a) => a.logicalName === opts.since!.field)) {
+      throw new Error(`Cannot read incrementally: ${t.logicalName} has no column ${opts.since.field}`);
+    }
     // Keyset-style paging over the stored rows: a page at a time, never the whole table.
     let offset = 0;
     for (;;) {
@@ -167,12 +181,17 @@ export class DemoSqlConnection implements MigrationConnector {
       const rows = await this.db
         .select()
         .from(demoRecords)
-        .where(and(eq(demoRecords.environmentKey, this.envKey), eq(demoRecords.logicalName, t.logicalName)))
+        .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName)))
         .orderBy(asc(demoRecords.recordId))
         .limit(opts.pageSize)
         .offset(offset);
       if (rows.length === 0) return;
-      yield rows.map((r) => this.project(t, r.data, columns));
+      const page = opts.since
+        ? rows.filter((r) =>
+            newerThanWatermark((r.data as Record<string, unknown>)[opts.since!.field], opts.since!.value),
+          )
+        : rows;
+      if (page.length) yield page.map((r) => this.project(t, r.data, columns));
       if (rows.length < opts.pageSize) return;
       offset += rows.length;
     }
@@ -187,7 +206,7 @@ export class DemoSqlConnection implements MigrationConnector {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.envKey),
+          this.scope(),
           eq(demoRecords.logicalName, t.logicalName),
           inArray(
             demoRecords.recordId,
@@ -230,13 +249,7 @@ export class DemoSqlConnection implements MigrationConnector {
     const rows = await this.db
       .select()
       .from(demoRecords)
-      .where(
-        and(
-          eq(demoRecords.environmentKey, this.envKey),
-          eq(demoRecords.logicalName, t.logicalName),
-          ...(conditions as never[]),
-        ),
-      )
+      .where(and(this.scope(), eq(demoRecords.logicalName, t.logicalName), ...(conditions as never[])))
       .limit(Math.max(1, Math.min(limit, 50)));
     return rows.map((r) => this.project(t, r.data, columns));
   }
@@ -296,7 +309,7 @@ export class DemoSqlConnection implements MigrationConnector {
           .from(demoRecords)
           .where(
             and(
-              eq(demoRecords.environmentKey, this.envKey),
+              this.scope(),
               eq(demoRecords.logicalName, referenced),
               eq(demoRecords.recordId, scalar.toLowerCase()),
             ),
@@ -320,7 +333,7 @@ export class DemoSqlConnection implements MigrationConnector {
     const rows = await this.db
       .select({ id: demoRecords.recordId })
       .from(demoRecords)
-      .where(and(eq(demoRecords.environmentKey, this.envKey), eq(demoRecords.logicalName, logicalName)));
+      .where(and(this.scope(), eq(demoRecords.logicalName, logicalName)));
     const highest = rows.reduce((max, r) => {
       const n = Number(r.id);
       return Number.isFinite(n) && n > max ? n : max;
@@ -329,7 +342,9 @@ export class DemoSqlConnection implements MigrationConnector {
   }
 
   createRecord(t: TableMetadata, record: WriteRecord, options: WriteOptions): Promise<string> {
-    return withTableLock(`${this.envKey}:${t.logicalName}`, () => this.insert(t, record, options));
+    return withTableLock(`${this.organizationId}:${this.envKey}:${t.logicalName}`, () =>
+      this.insert(t, record, options),
+    );
   }
 
   private async insert(t: TableMetadata, record: WriteRecord, _options: WriteOptions): Promise<string> {
@@ -360,7 +375,7 @@ export class DemoSqlConnection implements MigrationConnector {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.envKey),
+          this.scope(),
           eq(demoRecords.logicalName, table.logicalName),
           eq(demoRecords.recordId, id.toLowerCase()),
         ),
@@ -374,6 +389,7 @@ export class DemoSqlConnection implements MigrationConnector {
     await this.assertUniqueKeys(table, values, null);
     try {
       await this.db.insert(demoRecords).values({
+        organizationId: this.organizationId,
         environmentKey: this.envKey,
         logicalName: table.logicalName,
         recordId: id.toLowerCase(),
@@ -401,7 +417,7 @@ export class DemoSqlConnection implements MigrationConnector {
       .from(demoRecords)
       .where(
         and(
-          eq(demoRecords.environmentKey, this.envKey),
+          this.scope(),
           eq(demoRecords.logicalName, table.logicalName),
           eq(demoRecords.recordId, id.toLowerCase()),
         ),
@@ -422,7 +438,7 @@ export class DemoSqlConnection implements MigrationConnector {
       .set({ data: { ...existing.data, ...values } as Record<string, never> })
       .where(
         and(
-          eq(demoRecords.environmentKey, this.envKey),
+          this.scope(),
           eq(demoRecords.logicalName, table.logicalName),
           eq(demoRecords.recordId, id.toLowerCase()),
         ),

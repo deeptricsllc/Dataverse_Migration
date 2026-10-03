@@ -1,0 +1,1 @@
+ALTER TABLE "migration_schedules" ADD COLUMN "acknowledged_warnings" jsonb DEFAULT '[]'::jsonb NOT NULL;

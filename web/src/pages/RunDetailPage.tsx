@@ -6,11 +6,11 @@ import type {
   ValidationRunDto,
 } from '@shared/domain';
 import { TERMINAL_RUN_STATUSES } from '@shared/domain';
+import { METRIC_DEFINITIONS, writtenByRun } from '@shared/run-metrics';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Ban, Pause, Play, RotateCw, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
   Callout,
@@ -71,19 +71,13 @@ export function RunDetailPage() {
   const terminal = TERMINAL_RUN_STATUSES.has(r.status);
   const active = r.status === 'RUNNING' || r.status === 'QUEUED';
   const overall = r.status === 'COMPLETED' ? 100 : pct(r.processed, r.total);
+  const written = writtenByRun(r);
   const entitiesDone = r.entities.filter((e) =>
     ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'].includes(e.status),
   ).length;
 
   return (
     <>
-      <WizardSteps
-        current={terminal ? 8 : 7}
-        links={{
-          6: `/migration/plans/${r.planId}?step=review`,
-          ...(r.latestValidationRunId ? { 9: `/validation/${r.latestValidationRunId}` } : {}),
-        }}
-      />
       <PageHeader
         title={`Migration run`}
         description={
@@ -134,8 +128,13 @@ export function RunDetailPage() {
                 icon={<RotateCw className="h-4 w-4" />}
                 loading={control.isPending && control.variables === 'retry'}
                 onClick={() => control.mutate('retry')}
+                // The old label said "Retry failed records", which overstated it: only the failed
+                // records are written, but the source is read again from the start. On a large table
+                // that is the difference between a moment and an hour, and somebody planning a
+                // maintenance window needs to know which.
+                title="Reads the source again and re-processes only the records that failed or were never reached. Records already migrated are skipped, never duplicated."
               >
-                {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Retry failed records'}
+                {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Re-run, writing only what failed'}
               </Button>
             )}
             {terminal && (
@@ -147,6 +146,18 @@ export function RunDetailPage() {
               >
                 Validate
               </Button>
+            )}
+            {/*
+              The retainable record of this run. Offered here rather than buried among the CSVs,
+              because it is the thing somebody attaches to a change record and reads six months
+              later, when the environments have moved on and nothing can be re-run.
+            */}
+            {terminal && (
+              <ExportButton
+                href={`/api/runs/${r.id}/evidence.zip`}
+                label="Evidence package"
+                title="Configuration, record outcomes, validation coverage and connector verification, with a digest for each file."
+              />
             )}
           </>
         }
@@ -223,18 +234,38 @@ export function RunDetailPage() {
             {overall}%
           </span>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <Stat label="Tables" value={`${entitiesDone}/${r.entities.length}`} />
-          <Stat label="Processed" value={fmtNumber(r.processed)} hint={`of ${fmtNumber(r.total)}`} />
-          <Stat label="Created" tone="green" value={fmtNumber(r.created)} />
-          <Stat label="Updated" tone="blue" value={fmtNumber(r.updated)} />
           <Stat
-            label="Unchanged"
+            label={METRIC_DEFINITIONS.processed.label}
+            value={fmtNumber(r.processed)}
+            hint={`of ${fmtNumber(r.total)}`}
+          />
+          {/*
+            The figure the validation report leads with, led with here too. The two screens used to
+            describe the same run with different arithmetic, so the number that answers "did
+            anything actually move" now comes from one place and appears on both.
+          */}
+          <Stat
+            label={METRIC_DEFINITIONS.written.label}
+            tone={written ? 'green' : 'slate'}
+            value={fmtNumber(written)}
+            hint={written ? 'created + updated' : 'nothing was written to the target'}
+          />
+          <Stat label={METRIC_DEFINITIONS.created.label} tone="green" value={fmtNumber(r.created)} />
+          <Stat label={METRIC_DEFINITIONS.updated.label} tone="blue" value={fmtNumber(r.updated)} />
+          <Stat
+            label={METRIC_DEFINITIONS.unchanged.label}
             tone="slate"
             value={fmtNumber(r.unchanged)}
-            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : undefined}
+            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : 'already matched'}
           />
-          <Stat label="Skipped" tone="slate" value={fmtNumber(r.skipped)} />
+          <Stat
+            label={METRIC_DEFINITIONS.skipped.label}
+            tone="slate"
+            value={fmtNumber(r.skipped)}
+            hint={r.skipped ? 'already in the target, left alone' : undefined}
+          />
           <Stat
             label="Failed"
             tone={r.failed ? 'red' : 'default'}
@@ -364,6 +395,11 @@ export function RunDetailPage() {
           </Table>
         </Card>
       )}
+      {/*
+        Only when there was more than one attempt. On a run that finished first time the breakdown is the
+        run's own numbers restated, and a panel that says nothing new teaches people to skip panels.
+      */}
+      {r.attempt > 1 && <AttemptsPanel run={r} />}
       {tab === 'errors' && <ErrorsPanel run={r} />}
       {tab === 'records' && <RecordsPanel run={r} />}
       {tab === 'rollback' && <RollbackPanel runId={r.id} />}
@@ -388,6 +424,113 @@ export function RunDetailPage() {
         </p>
       </Modal>
     </>
+  );
+}
+
+/**
+ * What each attempt is answerable for.
+ *
+ * Shown apart from the run's counters, and labelled, because they are different kinds of number: the
+ * run's totals are what somebody signs for, and these are execution history. Conflating them is how a
+ * reader ends up with a figure larger than the data.
+ */
+function AttemptsPanel({ run }: { run: MigrationRunDto }) {
+  const q = useQuery({
+    queryKey: ['run-attempts', run.id, run.attempt, run.processed, run.status],
+    queryFn: () =>
+      get<{
+        attempt: number;
+        run: Record<string, number>;
+        attempts: {
+          attempt: number | null;
+          created: number;
+          updated: number;
+          unchanged: number;
+          skipped: number;
+          failed: number;
+          unresolved: number;
+          firstRecordAt: string;
+          lastRecordAt: string;
+        }[];
+        someRecordsPredateAttemptTracking: boolean;
+        means: string;
+      }>(`/api/runs/${run.id}/attempts`),
+  });
+  if (q.isLoading) return null;
+  if (q.error || !q.data) return null;
+  const { attempts, means, someRecordsPredateAttemptTracking } = q.data;
+
+  return (
+    <Card className="mt-4" data-testid="attempts-panel">
+      <div className="px-6 pt-5">
+        <h2 className="text-sm font-semibold text-slate-900">What each attempt did</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">{means}</p>
+      </div>
+      <Table className="mt-3">
+        <thead>
+          <tr>
+            <Th>Attempt</Th>
+            <Th className="text-right">Created</Th>
+            <Th className="text-right">Updated</Th>
+            <Th className="text-right">Unchanged</Th>
+            <Th className="text-right">Skipped</Th>
+            <Th className="text-right">Failed</Th>
+            <Th className="text-right">Unresolved</Th>
+            <Th>Touched records</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {attempts.map((a) => (
+            <tr key={String(a.attempt)}>
+              <Td>
+                {a.attempt === null ? (
+                  <span
+                    className="text-slate-500"
+                    title="These records predate the platform recording which attempt touched them."
+                  >
+                    not recorded
+                  </span>
+                ) : (
+                  <strong>#{a.attempt}</strong>
+                )}
+              </Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.created)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.updated)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.unchanged)}</Td>
+              <Td className="text-right tabular-nums">{fmtNumber(a.skipped)}</Td>
+              <Td className={`text-right tabular-nums ${a.failed ? 'text-red-700' : ''}`}>
+                {fmtNumber(a.failed)}
+              </Td>
+              <Td className={`text-right tabular-nums ${a.unresolved ? 'text-amber-700' : ''}`}>
+                {fmtNumber(a.unresolved)}
+              </Td>
+              <Td className="text-xs text-slate-500">
+                {fmtDate(a.firstRecordAt)} → {fmtDate(a.lastRecordAt)}
+              </Td>
+            </tr>
+          ))}
+          {/* The totals, so the two kinds of number can be reconciled without leaving the screen. */}
+          <tr className="border-t-2 border-slate-200 bg-slate-50/60">
+            <Td>
+              <strong>Run total</strong>
+            </Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.created)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.updated)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.unchanged)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.skipped)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.failed)}</Td>
+            <Td className="text-right tabular-nums font-semibold">{fmtNumber(run.unresolved)}</Td>
+            <Td className="text-xs text-slate-500">every record, counted once</Td>
+          </tr>
+        </tbody>
+      </Table>
+      {someRecordsPredateAttemptTracking && (
+        <p className="px-6 pb-4 text-xs text-slate-500">
+          Some records were migrated before this platform recorded which attempt touched them, so they are
+          listed as not recorded rather than assigned to the first attempt.
+        </p>
+      )}
+    </Card>
   );
 }
 

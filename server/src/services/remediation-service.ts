@@ -144,6 +144,31 @@ export class RemediationService {
     // --- Preflight results ---------------------------------------------------
     const latest = await this.preflight.latestForPlan(ctx, planId);
     if (latest?.status === 'COMPLETED') {
+      /**
+       * This package is the artefact a migration team works from, so where it is a subset it has to
+       * say so in the package itself. The preflight stores a bounded number of records per action per
+       * table: the counts are complete, the rows are not, and a team working from a file that stops at
+       * two thousand while the summary said forty-seven thousand would fix a fraction and believe
+       * they were done.
+       */
+      for (const entity of latest.entities.filter((e) => e.recordsTruncated || e.sampled)) {
+        rows.push({
+          severity: 'WARNING',
+          category: 'PREFLIGHT_COVERAGE',
+          table: entity.logicalName,
+          sourceRecordId: null,
+          recordName: null,
+          field: null,
+          sourceValue: null,
+          targetValue: null,
+          issue: entity.sampled
+            ? `Only part of ${entity.displayName} was analysed, so the records listed here are a subset (${entity.recordsStored.toLocaleString()} rows).`
+            : `The counts for ${entity.displayName} are complete, but this package lists ${entity.recordsStored.toLocaleString()} of its records: the per-action storage limit was reached.`,
+          resolution:
+            'Fix what is listed, then re-run the preflight — the next pass reports what is still outstanding. For a complete per-record list, narrow the plan to fewer tables.',
+          suggestedAction: 'Re-run the preflight after each pass of fixes',
+        });
+      }
       const records = await this.preflight.issueRecords(ctx, latest.id);
       for (const r of records) {
         const category =

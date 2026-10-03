@@ -8,6 +8,7 @@
  * Reads are paged by primary key (keyset pagination) so a large table is never loaded into memory,
  * and every connection uses a pool rather than a connection per record.
  */
+import type { AggregateKind } from '../../../../shared/aggregates';
 import sql from 'mssql';
 import type { Logger } from 'pino';
 import type { AutomationInfo, PrincipalDto, SqlConnectionConfig } from '../../../../shared/domain';
@@ -25,11 +26,14 @@ import { unsupportedOperation } from '../errors';
 import type {
   ConnectionCheck,
   ConnectionTestResult,
+  DuplicateGroup,
+  DuplicateScanOptions,
   MigrationConnector,
   RecordCount,
   WhoAmI,
   WriteOptions,
   WriteRecord,
+  ReadOptions,
 } from '../types';
 import { SQL_CAPABILITIES } from '../types';
 import {
@@ -175,7 +179,9 @@ export class SqlConnector implements MigrationConnector {
     const e = err as { number?: number; code?: string; message?: string };
     const number = e.number;
     const retryable = number !== undefined && TRANSIENT_SQL_ERRORS.has(number);
-    const message = (e.message ?? String(err)).replace(/password=[^;]*/gi, 'password=***');
+    const message = e.message ?? String(err);
+    // No local redaction: DataverseError scrubs every message it carries, so doing it here as well
+    // only produced a second marker for the same secret.
     if (number === 18456 || e.code === 'ELOGIN') {
       return new DataverseError(
         'AUTH_REQUIRED',
@@ -446,22 +452,30 @@ export class SqlConnector implements MigrationConnector {
   async *queryRecords(
     table: TableMetadata,
     columns: string[],
-    opts: { pageSize: number },
+    opts: ReadOptions,
   ): AsyncGenerator<DvRecord[]> {
     const { list, attrs } = this.selectList(table, columns);
     const pk = quoteIdent(table.primaryIdAttribute);
     const pageSize = Math.max(1, Math.min(opts.pageSize, 5000));
+    // An incremental read adds one predicate on the watermark column. The column name is resolved
+    // against the table's real metadata and then quoted; the value is a bound parameter, never
+    // concatenated — the same rule every other read here follows.
+    const since = opts.since ? this.watermarkColumn(table, opts.since.field) : null;
+    const sinceClause = since ? `${quoteIdent(since)} > @since` : '';
     let last: FieldValue = null;
     for (;;) {
       // Keyset pagination: ORDER BY the primary key and continue after the last one seen, so the
       // cost does not grow with the offset and a large table is never materialized.
-      const text =
-        last === null
-          ? `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)} ORDER BY ${pk}`
-          : `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)} WHERE ${pk} > @afterKey ORDER BY ${pk}`;
+      const where = [sinceClause, last === null ? '' : `${pk} > @afterKey`].filter(Boolean);
+      const text = `SELECT TOP (${pageSize}) ${list} FROM ${quoteTable(table.logicalName)}${
+        where.length ? ` WHERE ${where.join(' AND ')}` : ''
+      } ORDER BY ${pk}`;
       const rows = await this.query<Record<string, unknown>>(
         text,
-        last === null ? {} : { afterKey: last },
+        {
+          ...(last === null ? {} : { afterKey: last }),
+          ...(since ? { since: opts.since!.value } : {}),
+        },
         `read ${table.logicalName}`,
       );
       if (rows.length === 0) return;
@@ -470,6 +484,15 @@ export class SqlConnector implements MigrationConnector {
       if (rows.length < pageSize) return;
       last = rows[rows.length - 1][table.primaryIdAttribute] as FieldValue;
     }
+  }
+
+  /** The watermark column, confirmed to exist on this table before it reaches a query. */
+  private watermarkColumn(table: TableMetadata, field: string): string {
+    const attr = table.attributes.find((a) => a.logicalName.toLowerCase() === field.toLowerCase());
+    if (!attr) {
+      throw new Error(`Cannot read incrementally: ${table.logicalName} has no column ${field}`);
+    }
+    return attr.logicalName;
   }
 
   async retrieveByIds(table: TableMetadata, ids: string[], columns: string[]): Promise<DvRecord[]> {
@@ -503,6 +526,88 @@ export class SqlConnector implements MigrationConnector {
     const criteria = Object.fromEntries(key.attributes.map((a) => [a, values[a] ?? null]));
     const found = await this.findByFields(table, criteria, columns, 2);
     return found[0] ?? null;
+  }
+
+  /**
+   * One total, computed by the database.
+   *
+   * Returned as a string: a money column routed through a JavaScript number is how a
+   * reconciliation quietly starts rounding, and the comparison that follows is exact only if the
+   * value arriving here still is. COUNT is the one kind with no column.
+   */
+  async aggregate(table: TableMetadata, column: string | null, kind: AggregateKind): Promise<string | null> {
+    const expression = kind === 'COUNT' ? 'COUNT(*)' : `${kind}(${quoteIdent(column!)})`;
+    const rows = await this.query<Record<string, unknown>>(
+      `SELECT CAST(${expression} AS nvarchar(100)) AS agg FROM ${quoteTable(table.logicalName)}`,
+      {},
+      `aggregate ${kind} over ${table.logicalName}`,
+    );
+    const value = rows[0]?.['agg'];
+    return value === null || value === undefined ? null : String(value);
+  }
+
+  /**
+   * Repeated key values, counted by the database.
+   *
+   * `GROUP BY ... HAVING COUNT(*) > 1` is the whole idea, and it runs where the rows are: the
+   * alternative is reading the table into this process to count it, which stops working at exactly
+   * the size where somebody needs the answer.
+   *
+   * Every identifier goes through `quoteIdent`, which refuses anything it does not fully
+   * understand, and no value is ever concatenated — the sample ids come back as data in a second
+   * parameterized read rather than being interpolated into the grouping query.
+   *
+   * NULL is not a duplicate. A column with a thousand empty values has a thousand unknown values,
+   * not one value a thousand times, and uniqueness constraints in these engines agree.
+   */
+  async findDuplicateKeys(
+    table: TableMetadata,
+    columns: string[],
+    opts: DuplicateScanOptions,
+  ): Promise<DuplicateGroup[]> {
+    if (columns.length === 0) return [];
+    const quoted = columns.map(quoteIdent);
+    const keyList = quoted.join(', ');
+    const notNull = quoted.map((c) => `${c} IS NOT NULL`).join(' AND ');
+    const top = Math.max(1, Math.min(opts.maxGroups, 1000));
+    const groups = await this.query<Record<string, unknown>>(
+      `SELECT TOP (${top}) ${keyList}, COUNT_BIG(1) AS dup_count
+         FROM ${quoteTable(table.logicalName)}
+        WHERE ${notNull}
+        GROUP BY ${keyList}
+       HAVING COUNT_BIG(1) > 1
+        ORDER BY COUNT_BIG(1) DESC, ${keyList}`,
+      {},
+      `find duplicate ${columns.join('+')} in ${table.logicalName}`,
+    );
+    if (groups.length === 0) return [];
+
+    const pk = quoteIdent(table.primaryIdAttribute);
+    const out: DuplicateGroup[] = [];
+    for (const row of groups) {
+      const values: Record<string, FieldValue> = {};
+      const params: Record<string, FieldValue> = {};
+      const where = columns.map((field, n) => {
+        const v = (row[field] ?? null) as FieldValue;
+        values[field] = v;
+        params[`k${n}`] = this.bind(v) as FieldValue;
+        return `${quoteIdent(field)} = @k${n}`;
+      });
+      const ids = await this.query<Record<string, unknown>>(
+        `SELECT TOP (${Math.max(1, Math.min(opts.idsPerGroup, 20))}) ${pk} AS id
+           FROM ${quoteTable(table.logicalName)}
+          WHERE ${where.join(' AND ')}
+          ORDER BY ${pk}`,
+        params,
+        `sample duplicate records in ${table.logicalName}`,
+      );
+      out.push({
+        values,
+        count: Number(row['dup_count'] ?? 0),
+        sampleIds: ids.map((r) => String(r['id'])),
+      });
+    }
+    return out;
   }
 
   async findByFields(

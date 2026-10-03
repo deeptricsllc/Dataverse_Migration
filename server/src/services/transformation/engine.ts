@@ -15,7 +15,6 @@
  * result — no clock, no randomness, no I/O.
  */
 import {
-  isLossyRule,
   type AppliedTransformationDto,
   type ChoiceMappingDto,
   type FieldTransformDto,
@@ -24,6 +23,7 @@ import {
   type TransformationRule,
 } from '../../../../shared/domain';
 import {
+  crossFamily,
   isLookupValue,
   type AttributeMeta,
   type DvRecord,
@@ -65,6 +65,16 @@ export interface TransformFieldResult {
   error: { code: string; message: string } | null;
 }
 
+/**
+ * The steps that actually discarded information.
+ *
+ * One predicate, used everywhere loss is counted — the preflight, the sampled scan and the
+ * acknowledgement — so "38 records will be truncated" can never mean three different things.
+ * A step is only lossy when its rule said so, which it does only when something was really lost.
+ */
+export const lostSteps = (applied: AppliedTransformationDto[]): AppliedTransformationDto[] =>
+  applied.filter((a) => a.lossy);
+
 const BLANK = (v: FieldValue) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
 const NIL = (v: FieldValue) => v === null || v === undefined;
 
@@ -81,13 +91,14 @@ export function display(value: FieldValue): string | null {
 // ---------------------------------------------------------------------------
 
 export type RuleOutcome =
-  | { ok: true; value: FieldValue; warning?: TransformationIssueDto }
+  | { ok: true; value: FieldValue; warning?: TransformationIssueDto; lossReason?: string }
   | { ok: false; code: string; message: string };
 
-const ok = (value: FieldValue, warning?: TransformationIssueDto): RuleOutcome => ({
+const ok = (value: FieldValue, warning?: TransformationIssueDto, lossReason?: string): RuleOutcome => ({
   ok: true,
   value,
   warning,
+  lossReason,
 });
 const fail = (code: string, message: string): RuleOutcome => ({ ok: false, code, message });
 
@@ -195,7 +206,9 @@ function applyRule(value: FieldValue, rule: TransformationRule, ctx: TransformCo
       const start = Math.max(0, rule.start ?? 0);
       const end = rule.length == null ? undefined : start + Math.max(0, rule.length);
       const cut = text.slice(start, end);
-      return ok(cut, cut.length < text.length ? lossWarning(text, cut) : undefined);
+      return cut.length < text.length
+        ? lost(cut, text, cut, `${text.length - cut.length} character(s) removed`)
+        : ok(cut);
     }
     case 'TRUNCATE': {
       const text = asText();
@@ -203,7 +216,7 @@ function applyRule(value: FieldValue, rule: TransformationRule, ctx: TransformCo
       const max = rule.length ?? 0;
       if (max <= 0 || text.length <= max) return ok(text);
       const cut = text.slice(0, max);
-      return ok(cut, lossWarning(text, cut));
+      return lost(cut, text, cut, `${text.length} characters truncated to ${max}`);
     }
 
     // --- null / blank ---
@@ -230,10 +243,9 @@ function applyRule(value: FieldValue, rule: TransformationRule, ctx: TransformCo
       const n = typeof value === 'number' ? value : Number(String(value).trim());
       if (!Number.isFinite(n)) return fail('INVALID_NUMBER', `"${display(value)}" is not a number`);
       const rounded = Math.trunc(n);
-      return ok(
-        rounded,
-        rounded !== n ? lossWarning(String(n), String(rounded), 'decimal digits dropped') : undefined,
-      );
+      return rounded === n
+        ? ok(rounded)
+        : lost(rounded, String(n), String(rounded), 'decimal digits dropped');
     }
     case 'TO_DECIMAL': {
       if (NIL(value)) return ok(null);
@@ -242,12 +254,9 @@ function applyRule(value: FieldValue, rule: TransformationRule, ctx: TransformCo
       if (rule.scale == null) return ok(n);
       const factor = 10 ** rule.scale;
       const rounded = Math.round(n * factor) / factor;
-      return ok(
-        rounded,
-        rounded !== n
-          ? lossWarning(String(n), String(rounded), 'rounded to the configured scale')
-          : undefined,
-      );
+      return rounded === n
+        ? ok(rounded)
+        : lost(rounded, String(n), String(rounded), `rounded to ${rule.scale} decimal place(s)`);
     }
     case 'TO_BOOLEAN': {
       if (NIL(value)) return ok(null);
@@ -270,7 +279,7 @@ function applyRule(value: FieldValue, rule: TransformationRule, ctx: TransformCo
       if (!parsed.ok || parsed.value === null) return parsed;
       const dateOnly = String(parsed.value).slice(0, 10);
       const hadTime = !String(parsed.value).endsWith('T00:00:00.000Z');
-      return ok(dateOnly, hadTime ? lossWarning(display(value), dateOnly, 'time of day dropped') : undefined);
+      return hadTime ? lost(dateOnly, display(value), dateOnly, 'time of day dropped') : ok(dateOnly);
     }
     case 'TO_DATETIME': {
       const parsed = toDateParts(value, rule);
@@ -354,6 +363,13 @@ function lossWarning(
     message: `${why}: "${before}" → "${after}"`,
   };
 }
+
+/**
+ * Pairs the warning a rule emits with a short reason. The reason never embeds the value, so it
+ * can be shown in a drill-down or an export for a column whose values must stay masked.
+ */
+const lost = (value: FieldValue, before: string | null, after: string | null, why?: string): RuleOutcome =>
+  ok(value, lossWarning(before, after, why), why ?? 'value shortened');
 
 /** Evaluates one declarative condition. Operators are a closed list; there is no expression parser. */
 export function evaluate(
@@ -485,15 +501,27 @@ export function transformField(input: TransformFieldInput): TransformFieldResult
     }
     current = result.value;
     const after = display(current);
-    const ruleLossy = isLossyRule(rule) && before !== after;
+    // A rule that CAN lose information has not necessarily lost any: TRUNCATE on a value that
+    // already fits, or TO_DATE on a midnight timestamp, changes the representation without
+    // discarding anything. Each rule signals real loss by emitting a LOSSY_TRANSFORMATION
+    // warning, so that is the signal — counting "the value changed" would overstate the impact.
+    const ruleLossy = result.warning?.code === 'LOSSY_TRANSFORMATION';
     if (ruleLossy) lossy = true;
     if (result.warning) issues.push({ ...result.warning, field: input.source.logicalName });
-    if (before !== after) applied.push({ kind: rule.kind, before, after, lossy: ruleLossy });
+    if (before !== after) {
+      applied.push({
+        kind: rule.kind,
+        before,
+        after,
+        lossy: ruleLossy,
+        loss: ruleLossy ? (result.lossReason ?? 'information discarded') : null,
+      });
+    }
   }
 
-  // Type conversion into the target column.
-  const crossProvider = Boolean(input.source.sql) !== Boolean(input.target.sql);
-  const converted = crossProvider
+  // Type conversion into the target column. Between two different kinds of system the types do not
+  // mean the same thing, so the cross-provider converter runs instead of the same-provider one.
+  const converted = crossFamily(input.source, input.target)
     ? convertValue(current, input.source, input.target)
     : transformValue(input.source, input.target, current);
   if (!converted.ok) {

@@ -91,6 +91,10 @@ describe('Microsoft sign-in endpoints', () => {
     expect(config.json()).toEqual({
       microsoftEnabled: true,
       demoEnabled: true,
+      // Microsoft is configured and nothing says this deployment is open, so an unknown tenant is
+      // refused at the callback. The landing page must not invite people into that.
+      signUpEnabled: false,
+      contactEmail: null,
       realTenantReadOnly: false,
     });
     const res = await t.app.inject({ method: 'GET', url: '/api/auth/login?returnTo=/compare' });
@@ -116,7 +120,9 @@ describe('Microsoft sign-in endpoints', () => {
     expect(bad.headers.location).toMatch(/^\/login\?error=/);
     expect(bad.headers['set-cookie']).toBeUndefined();
     const denied = await t.app.inject({ method: 'GET', url: '/api/auth/callback?error=access_denied' });
-    expect(decodeURIComponent(denied.headers.location as string)).toContain('Consent was declined');
+    // A code, not a sentence: the page owns the wording, so a link cannot choose it. The wording
+    // itself, and that it names nothing internal, is `tests/integration/sign-in-paths.test.ts`.
+    expect(denied.headers.location).toBe('/login?error=ACCESS_DENIED');
   });
 
   it('blocks open redirects in returnTo', async () => {

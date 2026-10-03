@@ -2,10 +2,12 @@ import { and, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type {
   ConnectionTestResultDto,
-  ConnectionType,
   EnvironmentDto,
+  EnvironmentProvider,
   SqlConnectionConfig,
+  SqlConnectionType,
 } from '../../../shared/domain';
+import type { AppConfig } from '../config';
 import type { AppDb } from '../db/client';
 import {
   connectionSecrets,
@@ -17,13 +19,19 @@ import {
 import type { ConnectionFactory } from '../dataverse/factory';
 import { toDataverseError } from '../dataverse/errors';
 import { AppError, badRequest, notFound } from '../lib/errors';
+import { checkOutboundHost } from '../lib/network-policy';
+import { requireAdmin } from './authorization';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { toEnvironmentDto, type EnvironmentRow } from './environment-service';
 
 export interface SqlConnectionInput {
   displayName: string;
-  connectionType: Exclude<ConnectionType, 'DATAVERSE'>;
+  /**
+   * Explicitly the hand-configured kinds, not "anything but Dataverse": a future connection type
+   * that is not a SQL server would otherwise be admitted here and then asked for a host and port.
+   */
+  connectionType: SqlConnectionType;
   host: string;
   port: number;
   database: string;
@@ -45,8 +53,23 @@ export interface SqlConnectionInput {
  * are never returned by the API, never written to a log, and never copied into a migration run
  * snapshot — a snapshot records which connection was used, not how to authenticate to it.
  */
+/** The URL scheme and provider each hand-configured connection kind records. */
+const SCHEMES: Record<SqlConnectionType, string> = {
+  SQL_SERVER: 'sqlserver',
+  AZURE_SQL: 'azuresql',
+  POSTGRES: 'postgresql',
+  MYSQL: 'mysql',
+};
+const PROVIDERS: Record<SqlConnectionType, EnvironmentProvider> = {
+  SQL_SERVER: 'sqlserver',
+  AZURE_SQL: 'azuresql',
+  POSTGRES: 'postgres',
+  MYSQL: 'mysql',
+};
+
 export class ConnectionService {
   constructor(
+    private readonly config: AppConfig,
     private readonly db: AppDb,
     private readonly connections: ConnectionFactory,
     private readonly audit: AuditService,
@@ -55,6 +78,18 @@ export class ConnectionService {
 
   private toConfig(input: SqlConnectionInput): SqlConnectionConfig {
     if (!input.host.trim()) throw badRequest('A server/host is required');
+    /**
+     * Where this deployment is willing to dial. The host comes from a signed-in user and the server
+     * connects to it, so without this a tenant could reach the hosting environment's own loopback
+     * services or its instance metadata endpoint. Private ranges are still allowed: a database on 10.x
+     * behind a tunnel is the normal case rather than an attack.
+     */
+    const verdict = checkOutboundHost(input.host, {
+      allowInternal: this.config.ALLOW_INTERNAL_CONNECTIONS,
+    });
+    if (!verdict.allowed) {
+      throw badRequest(`This environment will not connect to that server: ${verdict.reason}.`);
+    }
     if (!input.database.trim()) throw badRequest('A database name is required');
     if (input.authType === 'SQL_LOGIN' && !input.username?.trim()) {
       throw badRequest('A username is required for SQL authentication');
@@ -73,8 +108,8 @@ export class ConnectionService {
   }
 
   /** A stable, human-readable identifier. Used as the unique key per organization. */
-  private urlFor(type: ConnectionType, c: SqlConnectionConfig): string {
-    const scheme = type === 'AZURE_SQL' ? 'azuresql' : 'sqlserver';
+  private urlFor(type: SqlConnectionType, c: SqlConnectionConfig): string {
+    const scheme = SCHEMES[type];
     return `${scheme}://${c.host}:${c.port}/${c.database}`;
   }
 
@@ -92,7 +127,7 @@ export class ConnectionService {
       .insert(environments)
       .values({
         organizationId: ctx.organizationId,
-        provider: input.connectionType === 'AZURE_SQL' ? 'azuresql' : 'sqlserver',
+        provider: PROVIDERS[input.connectionType],
         connectionType: input.connectionType,
         sqlConfig: config,
         displayName: input.displayName.trim() || `${config.host}/${config.database}`,
@@ -175,7 +210,14 @@ export class ConnectionService {
     return Boolean(row);
   }
 
-  private async loadSql(ctx: RequestContext, connectionId: string): Promise<EnvironmentRow> {
+  /**
+   * A hand-configured connection row, with its kind narrowed. The guard below is what makes the
+   * narrowing true rather than asserted.
+   */
+  private async loadSql(
+    ctx: RequestContext,
+    connectionId: string,
+  ): Promise<EnvironmentRow & { connectionType: SqlConnectionType }> {
     const [row] = await this.db
       .select()
       .from(environments)
@@ -184,7 +226,7 @@ export class ConnectionService {
     if (row.connectionType === 'DATAVERSE') {
       throw badRequest('Dataverse environments are managed through discovery, not connection settings');
     }
-    return row;
+    return row as EnvironmentRow & { connectionType: SqlConnectionType };
   }
 
   /**
@@ -247,7 +289,8 @@ export class ConnectionService {
         checks: [{ key: 'network', label: 'Server reachable', status: 'FAIL', message: e.message }],
       };
     } finally {
-      await connector.dispose();
+      // Optional on the contract: a connector without a pool has nothing to release.
+      await connector.dispose?.();
     }
   }
 
@@ -259,6 +302,9 @@ export class ConnectionService {
    * A connection that is still referenced is therefore refused rather than cascading.
    */
   async remove(ctx: RequestContext, connectionId: string): Promise<{ deleted: true }> {
+    // Deleting a connection destroys a stored credential and the configuration other people's plans
+    // depend on, so it outlives the task and needs an administrator.
+    requireAdmin(ctx, 'Deleting a connection');
     const env = await this.loadSql(ctx, connectionId);
     const [usedByRun] = await this.db
       .select({ id: migrationRuns.id })

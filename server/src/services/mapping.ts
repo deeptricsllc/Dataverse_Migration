@@ -1,5 +1,7 @@
 import type { MappingStatus } from '../../../shared/domain';
 import {
+  crossFamily,
+  familyOf,
   LOOKUP_TYPES,
   SYSTEM_MANAGED_COLUMNS,
   type AttributeMeta,
@@ -32,13 +34,49 @@ const NON_DATA_TYPES: ReadonlySet<AttributeType> = new Set([
 ]);
 const STATE_COLUMNS = new Set(['statecode', 'statuscode']);
 
-/** Source columns whose values a data migration can carry. */
+/**
+ * Source columns whose values a data migration can carry.
+ *
+ * The writability flags describe what can be written *into* this column, which is the target's
+ * question rather than the source's. They are still used here, because for a Dataverse or SQL source
+ * a column nothing can write is usually a computed or platform-managed one, and proposing it adds
+ * noise to every mapping list.
+ *
+ * Except when the whole source cannot be written at all. An uploaded CSV, a OneDrive file and a
+ * SharePoint list are read-only by nature, so their inferred columns are marked not-valid-for-create
+ * and not-valid-for-update — truthfully, and about the file rather than about the data. Applying the
+ * rule there excluded *every* column, so a plan from an upload had no field mappings at all and sat
+ * permanently blocked on "required target column has no mapped source column", with nothing to map.
+ *
+ * Found by uploading a 1,200-row CSV against deployed QA and trying to pair it with a target table.
+ */
 export function isMigratableSourceColumn(table: TableMetadata, attr: AttributeMeta): boolean {
   if (attr.attributeOf) return false;
-  if (attr.isPrimaryId || attr.logicalName === table.primaryIdAttribute) return false;
   if (NON_DATA_TYPES.has(attr.type)) return false;
   if (!attr.isValidForRead) return false;
-  return attr.isValidForCreate || attr.isValidForUpdate;
+  const isPrimaryId = attr.isPrimaryId || attr.logicalName === table.primaryIdAttribute;
+  if (isPrimaryId && !isTabularKeyColumn(table, attr)) return false;
+  if (attr.isValidForCreate || attr.isValidForUpdate) return true;
+  // A read-only source: no mappable column claims to be writable, so the flags say nothing about this
+  // one either. The primary identifier is left out of the test because its flags vary by provider.
+  return table.attributes
+    .filter((a) => !a.isPrimaryId && a.logicalName !== table.primaryIdAttribute && !a.attributeOf)
+    .every((a) => !a.isValidForCreate && !a.isValidForUpdate);
+}
+
+/**
+ * A spreadsheet's key column, which is data as well as identity.
+ *
+ * A platform's primary identifier is never mapped: a Dataverse GUID or a SQL identity means nothing in
+ * another system, and the identity map is what records the pairing. A tabular file has no such thing —
+ * the "primary id" is whichever column was found to be unique, and it is almost always a value the
+ * target wants: a product number, a customer reference, an employee id.
+ *
+ * Excluding it meant an uploaded file could never supply a required target column like `productnumber`,
+ * so a plan from an upload stayed blocked with nothing available to map. Found against deployed QA.
+ */
+function isTabularKeyColumn(table: TableMetadata, attr: AttributeMeta): boolean {
+  return familyOf(attr) === 'TABULAR' && !attr.rawType?.startsWith('row');
 }
 
 export function isRequiredLevel(level: string | null | undefined): boolean {
@@ -155,8 +193,7 @@ export function validateManualMapping(
 ): string | null {
   if (!target) return 'Target column does not exist';
   if (!target.isValidForCreate && !target.isValidForUpdate) return 'Target column is read-only';
-  const crossProvider = Boolean(source.sql) !== Boolean(target.sql);
-  if (crossProvider) {
+  if (crossFamily(source, target)) {
     return fieldVerdict(source, target) === 'INCOMPATIBLE' ? fieldVerdictReason(source, target) : null;
   }
   const compat = typeCompatibility(source, target);

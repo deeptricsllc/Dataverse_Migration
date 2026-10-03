@@ -142,14 +142,37 @@ This section is a prepared checklist. It has **not** been executed for this rele
 - The account has create/write/append privileges in `SCRATCH-TARGET` and read in `SCRATCH-SOURCE`.
 - Nobody else is using either environment during the test.
 
-## B1. Configuration change (the only one)
+## B1. Configuration change
+
+**Do not set `REAL_TENANT_READ_ONLY=false`.** That is one boolean for the whole deployment: turning it
+off permits writes to _every_ real environment the signed-in identity has a role in, production
+included. The only remaining check asks for an administrator, and the person running a certification is
+one — so a mis-selected target would be permitted. Certifying one sandbox should not require opening
+every environment, and it no longer does.
+
+Name the scratch target instead, and leave the read-only switch on:
 
 ```bash
-REAL_TENANT_READ_ONLY=false   # writes are now possible. Everything else stays as in part A.
+REAL_TENANT_READ_ONLY=true                  # unchanged. Everything else is still refused.
+CERTIFICATION_WRITE_ENVIRONMENTS=https://scratch-target.crm.dynamics.com
 ```
 
-Confirm the **REAL TENANT — READ ONLY** banner disappears. Treat the deployment as live from this
-moment.
+Comma-separated if you need more than one. Three properties worth knowing before you rely on it:
+
+- **Being listed is necessary, not sufficient.** A listed environment is still refused unless Dataverse
+  reports its type as sandbox, developer, trial, preview, teams or support. Production is refused even
+  when you list it, and so is an environment whose type could not be read — which is the case that
+  matters, because an unclassified environment is the one most likely to be production.
+- **It only ever narrows.** The list is consulted while `REAL_TENANT_READ_ONLY` is on. It cannot grant
+  anything that flag does not already deny.
+- **It is visible.** The sign-in configuration report raises `CERTIFICATION_WRITE_SCOPE_OPEN`, `/api/settings`
+  names the scope, and every permitted run records a `CERTIFICATION_WRITE_PERMITTED` audit event with the
+  environment. A deployment can therefore never claim it was read-only across a window in which it wrote.
+
+The **REAL TENANT — READ ONLY** banner stays up, because the deployment is still read-only everywhere
+you did not name. Treat the named environment as live from this moment.
+
+Clear `CERTIFICATION_WRITE_ENVIRONMENTS` when the certification is finished.
 
 ## B2. Checklist
 

@@ -1,7 +1,7 @@
 import type { MigrationPlanDto, TableCandidateDto } from '@shared/domain';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TableSelector } from '../components/TableSelector';
 import { WizardSteps } from '../components/WizardSteps';
 import { Button, Callout, Card, EmptyState, ErrorState, PageHeader, Spinner } from '../components/ui';
@@ -10,6 +10,10 @@ import { useWorkspace } from '../lib/session';
 
 export function NewMigrationPage() {
   const navigate = useNavigate();
+  // A plan reached from a migration project belongs to it, so its mapping workbook can draw on the
+  // analysis that project was built from.
+  const [params] = useSearchParams();
+  const projectId = params.get('projectId');
   const { source, target, ready } = useWorkspace();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [name, setName] = useState('');
@@ -29,6 +33,7 @@ export function NewMigrationPage() {
         sourceEnvironmentId: source!.id,
         targetEnvironmentId: target!.id,
         tables: [...selected],
+        projectId,
       }),
     onSuccess: (plan) => navigate(`/migration/plans/${plan.id}?step=dependencies`),
   });

@@ -1,10 +1,12 @@
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
   auditFlags,
   type IdentityImpactDto,
+  type LossyImpactDto,
+  type LossyRecordDetail,
   type PlanOptions,
   type PreflightAction,
   type PreflightRecordDto,
@@ -12,7 +14,14 @@ import {
   type PreflightTotals,
   type PrincipalTable,
 } from '../../../shared/domain';
-import { LOOKUP_TYPES, isLookupValue, type DvRecord, type TableMetadata } from '../../../shared/metadata';
+import {
+  LOOKUP_TYPES,
+  isLookupValue,
+  type AttributeMeta,
+  type DvRecord,
+  type FieldValue,
+  type TableMetadata,
+} from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
 import {
   environments,
@@ -23,6 +32,7 @@ import {
   preflightRuns,
   principalDirectory,
   users,
+  migrationRecordMaps,
 } from '../db/schema';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { JobQueue } from '../jobs/queue';
@@ -34,8 +44,9 @@ import type { MetadataService } from './metadata-service';
 import type { MigrationRunService } from './migration-run-service';
 import type { PrincipalService } from './principal-service';
 import { RecordMatcher, describeMatchStrategy } from './record-matcher';
-import { classify, decideAction, prepareRecord } from './record-planner';
+import { classify, decideAction, prepareRecord, type PreparedRecord } from './record-planner';
 import type { RunPlanSnapshot } from './run-snapshot';
+import { lostSteps } from './transformation/engine';
 import { envRef } from './env-ref';
 
 /** Upper bound per table so a dry run cannot become unbounded on very large tables. */
@@ -166,6 +177,7 @@ export class PreflightService {
         string,
         { logicalName: PrincipalTable; records: Set<string>; fields: Set<string> }
       >();
+      const lossy = new Map<string, LossyImpactDto>();
       const plannedTables = new Set(snapshot.entities.map((e) => e.logicalName));
       for (const entity of [...snapshot.entities].sort((a, b) => a.orderIndex - b.orderIndex)) {
         await progress(`Analyzing ${entity.logicalName}`);
@@ -183,6 +195,7 @@ export class PreflightService {
           principalMap,
           plannedTables,
           identity,
+          lossy,
           heartbeat,
         });
         for (const key of Object.keys(totals) as (keyof PreflightTotals)[]) totals[key] += entityTotals[key];
@@ -196,6 +209,7 @@ export class PreflightService {
           status: 'COMPLETED',
           totals,
           identityImpact: impact,
+          lossyImpact: [...lossy.values()].sort((a, b) => a.key.localeCompare(b.key)),
           completedAt: new Date(),
           progressMessage: 'Completed',
         })
@@ -208,7 +222,7 @@ export class PreflightService {
         sourceEnvironmentId: pf.sourceEnvironmentId,
         targetEnvironmentId: pf.targetEnvironmentId,
         runId: preflightRunId,
-        details: { ...totals },
+        details: { ...totals, lossyAffected: [...lossy.values()].reduce((n, l) => n + l.affected, 0) },
       });
       log.info({ totals }, 'Preflight completed');
     } catch (err) {
@@ -234,11 +248,14 @@ export class PreflightService {
     targetTableFor: ReadonlyMap<string, string>;
     sameProvider: boolean;
     plannedTables: ReadonlySet<string>;
+    /** Accumulates, per lossy rule, how many records it actually changes. */
+    lossy: Map<string, LossyImpactDto>;
     identity: Map<string, { logicalName: PrincipalTable; records: Set<string>; fields: Set<string> }>;
     heartbeat: () => Promise<void>;
   }): Promise<PreflightTotals> {
     const { pf, entity, options, source, target } = p;
     const totals = emptyTotals();
+    const sourceAttrs = new Map((source?.attributes ?? []).map((a) => [a.logicalName, a]));
     const matchDescription = describeMatchStrategy(entity);
 
     if (!source || !target) {
@@ -309,6 +326,13 @@ export class PreflightService {
         for (const issue of prepared.issues.filter((i) => i.code.startsWith('PRINCIPAL'))) {
           this.trackIdentity(p.identity, record, entity, issue.field ?? null, source);
         }
+        // Loss is measured here because the preflight already reads every record: the count is
+        // exact, and it counts records whose value actually changed rather than every record the
+        // rule ran on.
+        const lossy = collectLoss(entity.logicalName, prepared, sourceAttrs);
+        for (const detail of lossy) {
+          trackLoss(p.lossy, entity.logicalName, detail, record.values[detail.field]);
+        }
         const match = await matcher.match(entity, target, record, prepared, prefetched, compareColumns);
         const decision = decideAction(entity, options, target, prepared, match);
         const action = classify(decision);
@@ -336,6 +360,7 @@ export class PreflightService {
               decision.action === 'CONFLICT' || decision.action === 'BLOCKED' ? decision.code : null,
             reason: decision.action === 'CONFLICT' || decision.action === 'BLOCKED' ? decision.reason : null,
             changes: decision.action === 'UPDATE' ? decision.changes : [],
+            lossy,
           });
         }
       }
@@ -347,8 +372,24 @@ export class PreflightService {
       await p.heartbeat();
     }
 
+    // The rules that discarded something did so across this many records; the acknowledgement
+    // shows "38 of 145,283", so both halves have to come from the same pass.
+    for (const entry of p.lossy.values()) {
+      if (entry.table === entity.logicalName) entry.examined = totals.analyzed;
+    }
+
+    const recordsStored = Object.values(persisted).reduce((n, v) => n + v, 0);
+    // A cap that nobody is told about is the kind of number that gets acted on.
+    const recordsTruncated = Object.entries(persisted).some(
+      ([action, stored]) =>
+        stored >= MAX_PERSISTED_RECORDS_PER_ACTION &&
+        (totals[action.toLowerCase() as 'create'] ?? 0) > stored,
+    );
+
     await this.db.insert(preflightEntityResults).values({
       preflightRunId: pf.id,
+      recordsStored,
+      recordsTruncated,
       logicalName: entity.logicalName,
       displayName: entity.displayName,
       matchDescription,
@@ -389,12 +430,29 @@ export class PreflightService {
     }
     for (const [logicalName, ids] of wanted) {
       const idList = [...ids];
-      const rows = await this.db
-        .select({ sourceId: sql<string>`source_id`, targetId: sql<string>`target_id` })
-        .from(sql`migration_record_maps`)
-        .where(
-          sql`organization_id = ${p.pf.organizationId} and source_environment_id = ${p.pf.sourceEnvironmentId} and target_environment_id = ${p.pf.targetEnvironmentId} and logical_name = ${logicalName} and outcome <> 'FAILED' and target_id is not null and source_id in ${sql.raw(`(${idList.map((i) => `'${i.replace(/'/g, "''")}'`).join(',') || `''`})`)}`,
-        );
+      // The ids come from the source system — for an imported file, straight out of its key column —
+      // so they are input. This was the one place in the codebase that hand-escaped quotes into raw
+      // SQL: correct under PostgreSQL's default settings, wrong the moment those change, and exactly
+      // what a reviewer flags. Bound as an array instead, so nothing is escaped at all.
+      const rows = idList.length
+        ? await this.db
+            .select({
+              sourceId: migrationRecordMaps.sourceId,
+              targetId: migrationRecordMaps.targetId,
+            })
+            .from(migrationRecordMaps)
+            .where(
+              and(
+                eq(migrationRecordMaps.organizationId, p.pf.organizationId),
+                eq(migrationRecordMaps.sourceEnvironmentId, p.pf.sourceEnvironmentId),
+                eq(migrationRecordMaps.targetEnvironmentId, p.pf.targetEnvironmentId),
+                eq(migrationRecordMaps.logicalName, logicalName),
+                ne(migrationRecordMaps.outcome, 'FAILED'),
+                isNotNull(migrationRecordMaps.targetId),
+                inArray(migrationRecordMaps.sourceId, idList),
+              ),
+            )
+        : [];
       for (const r of rows) resolved.set(`${logicalName}:${r.sourceId}`, r.targetId);
       const table = p.targetMeta.get(p.targetTableFor.get(logicalName) ?? logicalName);
       const unresolved = idList.filter((id) => !resolved.get(`${logicalName}:${id}`));
@@ -509,8 +567,11 @@ export class PreflightService {
         displayName: e.displayName,
         matchDescription: e.matchDescription,
         sampled: e.sampled,
+        recordsStored: e.recordsStored,
+        recordsTruncated: e.recordsTruncated,
         ...e.totals,
       })),
+      lossyImpact: row.pf.lossyImpact ?? [],
       identityImpact: row.pf.identityImpact ?? {
         policy: (row.pf.options as PlanOptions).userResolutionPolicy,
         fallbackPrincipal: (row.pf.options as PlanOptions).fallbackPrincipal,
@@ -530,6 +591,13 @@ export class PreflightService {
     ctx: Pick<RequestContext, 'organizationId'>,
     planId: string,
   ): Promise<PreflightRunDto | null> {
+    // Null is the documented answer for "no preflight has run yet", so it must not double as the
+    // answer for "that plan is not yours". The plan is confirmed first.
+    const [plan] = await this.db
+      .select({ id: migrationPlans.id })
+      .from(migrationPlans)
+      .where(and(eq(migrationPlans.id, planId), eq(migrationPlans.organizationId, ctx.organizationId)));
+    if (!plan) throw notFound('Migration plan');
     const [row] = await this.db
       .select({ id: preflightRuns.id })
       .from(preflightRuns)
@@ -603,5 +671,62 @@ export class PreflightService {
       .orderBy(asc(preflightRecords.action), asc(preflightRecords.logicalName));
   }
 }
+
+/**
+ * The fields of one prepared record where a transformation actually discarded information.
+ *
+ * The engine already decided what was lost; this only reshapes it, so the number the
+ * acknowledgement shows and the value the migration writes can never come from different logic.
+ * Values from a secured column are masked here, before anything is stored.
+ */
+export function collectLoss(
+  table: string,
+  prepared: PreparedRecord,
+  sourceAttrs: ReadonlyMap<string, AttributeMeta>,
+): LossyRecordDetail[] {
+  void table;
+  const out: LossyRecordDetail[] = [];
+  for (const applied of prepared.appliedTransformations) {
+    const secured = sourceAttrs.get(applied.field)?.isSecured ?? false;
+    for (const step of lostSteps(applied.applied)) {
+      out.push({
+        field: applied.field,
+        targetField: applied.targetField,
+        kind: step.kind,
+        before: secured ? MASKED : step.before,
+        after: secured ? MASKED : step.after,
+        loss: step.loss ?? 'information discarded',
+      });
+    }
+  }
+  return out;
+}
+
+/** Folds one record's loss into the per-rule totals. */
+export function trackLoss(
+  into: Map<string, LossyImpactDto>,
+  table: string,
+  detail: LossyRecordDetail,
+  sourceValue: FieldValue | undefined,
+) {
+  const key = `${table}.${detail.field}:${detail.kind}`;
+  const entry = into.get(key) ?? {
+    key,
+    table,
+    field: detail.field,
+    targetField: detail.targetField,
+    kind: detail.kind,
+    affected: 0,
+    examined: 0,
+    maxSourceLength: null,
+  };
+  entry.affected++;
+  const length = typeof sourceValue === 'string' ? sourceValue.length : null;
+  if (length !== null) entry.maxSourceLength = Math.max(entry.maxSourceLength ?? 0, length);
+  into.set(key, entry);
+}
+
+/** How a secured column's value appears anywhere it is shown or stored. */
+export const MASKED = '•••• (secured column)';
 
 void LOOKUP_TYPES;

@@ -1,8 +1,15 @@
+import type { WorkspaceRole } from '../../../shared/authorization';
+
 export interface RequestContext {
   userId: string;
   organizationId: string;
-  role: 'ADMIN' | 'MEMBER';
+  role: WorkspaceRole;
   isDemoOrg: boolean;
   displayName: string;
   requestId: string;
+  /**
+   * Operates the deployment itself (ADMIN_EMAILS), as opposed to administering one organization
+   * inside it. Separate from `role` on purpose: a customer administrator is not an operator.
+   */
+  platformOperator: boolean;
 }
