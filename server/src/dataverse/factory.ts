@@ -9,6 +9,7 @@ import type { SqlConnectionConfig, SqlConnectionType } from '../../../shared/dom
 import type { AppDb } from '../db/client';
 import { demoRecords, type environments } from '../db/schema';
 import { AppError } from '../lib/errors';
+import { decideWriteScope } from '../write-scope';
 import { DemoConnection } from './demo/demo-connection';
 import { DEMO_DATA_VERSION, DEMO_ENVIRONMENTS, datasetFor, type DemoEnvKey } from './demo/fixtures';
 
@@ -185,13 +186,30 @@ export class ConnectionFactory {
         env.organizationId,
       );
     }
+    /**
+     * Per environment, not per deployment.
+     *
+     * This used to be `this.config.REAL_TENANT_READ_ONLY` alone, which meant the only way to write to one
+     * sandbox was to permit writes to every environment the signed-in user can reach. The decision now
+     * also consults the certification scope, and refuses production and unclassified environments even
+     * when they are named in it — see `write-scope.ts` for why being listed is necessary and not enough.
+     */
+    const scope = decideWriteScope(this.config, env);
+    if (scope.reason === 'CERTIFICATION_SCOPE') {
+      // Loud on purpose. A deployment that can write to a real environment while calling itself
+      // read-only should say which one, every time it builds the connection that can do it.
+      logger.warn(
+        { environmentUrl: env.url, environmentType: env.environmentType },
+        'Writes permitted to this environment by the certification scope',
+      );
+    }
     return new WebApiConnection({
       // The Global Discovery Service returns both Url (application) and ApiUrl (web API).
       // https://learn.microsoft.com/power-apps/developer/data-platform/discovery-service
       url: env.apiUrl || env.url,
       apiVersion: this.config.DATAVERSE_API_VERSION,
       logger,
-      readOnly: this.config.REAL_TENANT_READ_ONLY,
+      readOnly: !scope.allowed,
       // `maxRetries` on a plan was settable and read nowhere: a customer could raise it against a
       // throttling tenant and nothing changed. This is where it belongs — the transient-failure
       // retry that already honours Retry-After.

@@ -320,6 +320,27 @@ export function describeAuthConfiguration(config: AppConfig): AuthConfigurationR
     });
   }
 
+  /**
+   * A read-only deployment that can nonetheless write somewhere must say so here.
+   *
+   * This is the report an operator reads to answer "what is this deployment allowed to do". A
+   * certification scope that is open and unmentioned would make the answer wrong in the one direction
+   * that matters.
+   */
+  if (config.REAL_TENANT_READ_ONLY && config.certificationWriteEnvironments.length > 0) {
+    add({
+      code: 'CERTIFICATION_WRITE_SCOPE_OPEN',
+      severity: 'INFO',
+      message:
+        `This deployment is read-only except for ${config.certificationWriteEnvironments.length} ` +
+        'environment(s) approved for controlled certification writes. Production and unclassified ' +
+        'environments are still refused, even when approved.',
+      remedy:
+        'Clear CERTIFICATION_WRITE_ENVIRONMENTS once the certification run is finished, so the ' +
+        'deployment is read-only everywhere again.',
+    });
+  }
+
   const microsoftUsable = microsoft && !findings.some((f) => f.severity === 'BLOCKS_SIGN_IN');
 
   return {

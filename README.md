@@ -160,25 +160,26 @@ and register `http://localhost:5173/api/auth/callback`.
 
 All options are documented in [.env.example](.env.example). The important ones:
 
-| Variable                                  | Default                                                  | Purpose                                                   |
-| ----------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------- |
-| `DATABASE_URL`                            | _(unset → PGlite)_                                       | PostgreSQL connection string (UTF-8 database)             |
-| `PGLITE_DATA_DIR`                         | `./.data/pglite`                                         | Embedded database location                                |
-| `SESSION_SECRET`                          | dev: generated into `.data/`; **required in production** | Session + token-cache encryption key material (≥32 chars) |
-| `APP_BASE_URL`                            | `http://localhost:3000`                                  | Public URL, redirect URI base, origin checks              |
-| `DEMO_MODE`                               | `true` (non-production)                                  | Enable simulated environments + demo sign-in              |
-| `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` | –                                                        | Enable Microsoft sign-in                                  |
-| `ENTRA_TENANT_ID`                         | `organizations`                                          | Multi-tenant or a specific tenant                         |
-| `ALLOWED_TENANT_IDS`                      | –                                                        | Tenant allow-list. Setting it turns off self sign-up      |
-| `ADMIN_EMAILS`                            | –                                                        | Platform operators: admin bootstrap + inbound requests    |
-| `CONTACT_EMAIL`                           | –                                                        | Shown on the landing page as the way to reach a human     |
-| `ALERT_WEBHOOK_URL`                       | –                                                        | Announces paused schedules, bad runs and access requests  |
-| `DATAVERSE_DISCOVERY_URL`                 | `https://globaldisco.crm.dynamics.com`                   | Global Discovery endpoint (sovereign clouds differ)       |
-| `POWER_PLATFORM_ENRICHMENT`               | `false`                                                  | Environment SKU/region from the Power Platform admin API  |
-| `ALLOW_BUSINESS_LOGIC_BYPASS`             | `false`                                                  | Allow audited plug-in bypass for ADMINs                   |
-| `REAL_TENANT_READ_ONLY`                   | `false`                                                  | Allow all reads, block every Dataverse write server-side  |
-| `RUN_WORKER`                              | `true`                                                   | Run background jobs in the web process                    |
-| `COOKIE_SECURE`                           | `true` in production                                     | Secure cookies (HTTPS)                                    |
+| Variable                                  | Default                                                  | Purpose                                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                            | _(unset → PGlite)_                                       | PostgreSQL connection string (UTF-8 database)                                                                  |
+| `PGLITE_DATA_DIR`                         | `./.data/pglite`                                         | Embedded database location                                                                                     |
+| `SESSION_SECRET`                          | dev: generated into `.data/`; **required in production** | Session + token-cache encryption key material (≥32 chars)                                                      |
+| `APP_BASE_URL`                            | `http://localhost:3000`                                  | Public URL, redirect URI base, origin checks                                                                   |
+| `DEMO_MODE`                               | `true` (non-production)                                  | Enable simulated environments + demo sign-in                                                                   |
+| `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` | –                                                        | Enable Microsoft sign-in                                                                                       |
+| `ENTRA_TENANT_ID`                         | `organizations`                                          | Multi-tenant or a specific tenant                                                                              |
+| `ALLOWED_TENANT_IDS`                      | –                                                        | Tenant allow-list. Setting it turns off self sign-up                                                           |
+| `ADMIN_EMAILS`                            | –                                                        | Platform operators: admin bootstrap + inbound requests                                                         |
+| `CONTACT_EMAIL`                           | –                                                        | Shown on the landing page as the way to reach a human                                                          |
+| `ALERT_WEBHOOK_URL`                       | –                                                        | Announces paused schedules, bad runs and access requests                                                       |
+| `DATAVERSE_DISCOVERY_URL`                 | `https://globaldisco.crm.dynamics.com`                   | Global Discovery endpoint (sovereign clouds differ)                                                            |
+| `POWER_PLATFORM_ENRICHMENT`               | `false`                                                  | Environment SKU/region from the Power Platform admin API                                                       |
+| `ALLOW_BUSINESS_LOGIC_BYPASS`             | `false`                                                  | Allow audited plug-in bypass for ADMINs                                                                        |
+| `REAL_TENANT_READ_ONLY`                   | `false`                                                  | Allow all reads, block every Dataverse write server-side                                                       |
+| `CERTIFICATION_WRITE_ENVIRONMENTS`        | _(unset)_                                                | Environment URLs that may be written while read-only. Production and unclassified are refused even when listed |
+| `RUN_WORKER`                              | `true`                                                   | Run background jobs in the web process                                                                         |
+| `COOKIE_SECURE`                           | `true` in production                                     | Secure cookies (HTTPS)                                                                                         |
 
 ## Microsoft Entra configuration (summary)
 

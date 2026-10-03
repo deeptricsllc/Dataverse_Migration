@@ -115,6 +115,15 @@ const schema = z.object({
    * Enforced server-side in the Dataverse client, not just in the UI.
    */
   REAL_TENANT_READ_ONLY: bool(false),
+  /**
+   * The environments that may receive writes while `REAL_TENANT_READ_ONLY` is on. Comma-separated URLs.
+   *
+   * This exists so that proving a migration works does not require turning writes on everywhere. Unset —
+   * the default — means exactly what it meant before this setting existed: every write to a real
+   * environment is refused. Being listed is necessary and not sufficient; production and anything whose
+   * type we cannot classify are refused even when named. See `server/src/write-scope.ts`.
+   */
+  CERTIFICATION_WRITE_ENVIRONMENTS: z.string().optional(),
 
   /**
    * Whether this deployment may open a connection to a loopback or link-local address.
@@ -141,6 +150,8 @@ export type AppConfig = z.infer<typeof schema> & {
   redirectUri: string;
   allowedTenantIds: string[];
   adminEmails: string[];
+  /** Normalized `CERTIFICATION_WRITE_ENVIRONMENTS`. Empty means every real write is refused. */
+  certificationWriteEnvironments: string[];
 };
 
 function resolveSessionSecret(raw: z.infer<typeof schema>): string {
@@ -175,6 +186,11 @@ export function loadConfig(overrides: Record<string, string | undefined> = {}): 
     redirectUri: raw.ENTRA_REDIRECT_URI ?? `${raw.APP_BASE_URL.replace(/\/$/, '')}/api/auth/callback`,
     allowedTenantIds: list(raw.ALLOWED_TENANT_IDS),
     adminEmails: list(raw.ADMIN_EMAILS),
+    // Trailing slashes stripped as well as case folded, because a URL copied from a browser usually has
+    // one and an environment that fails to match its own allow-list entry is a confusing way to be safe.
+    certificationWriteEnvironments: list(raw.CERTIFICATION_WRITE_ENVIRONMENTS).map((v) =>
+      v.replace(/\/+$/, ''),
+    ),
   };
   if (!cfg.microsoftEnabled && !cfg.DEMO_MODE) {
     throw new Error(

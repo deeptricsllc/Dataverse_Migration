@@ -14,6 +14,7 @@ import {
   type RunTrigger,
 } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
+import { decideWriteScope } from '../write-scope';
 import {
   environments,
   fieldMappings,
@@ -71,10 +72,39 @@ export class MigrationRunService {
     );
     if (!this.config.REAL_TENANT_READ_ONLY) return;
     const target = await this.environmentsSvc.getInOrganization(ctx.organizationId, targetEnvironmentId);
-    // Every real target, not only Dataverse. A SQL target used to be accepted and queued, with the
-    // refusal arriving later per statement inside the connector — so the data was safe but the run
-    // history and the audit trail both said the attempt was allowed.
-    if (target.provider === 'demo' || target.provider === 'demosql') return;
+    /**
+     * Every real target, not only Dataverse. A SQL target used to be accepted and queued, with the
+     * refusal arriving later per statement inside the connector — so the data was safe but the run
+     * history and the audit trail both said the attempt was allowed.
+     *
+     * The same decision the Dataverse client will make, made here first so the person is told before a
+     * run exists rather than after it fails. The two must agree; that is why there is one function.
+     */
+    const scope = decideWriteScope(this.config, target);
+    if (scope.allowed) {
+      if (scope.reason === 'CERTIFICATION_SCOPE') {
+        /**
+         * A permitted write under a read-only deployment is the single most important thing in this
+         * audit trail. It is recorded as its own action, with the environment, so "we were read-only"
+         * can never be claimed for a window in which something was written.
+         */
+        await this.audit.record({
+          organizationId: ctx.organizationId,
+          userId: ctx.userId,
+          action: 'CERTIFICATION_WRITE_PERMITTED',
+          outcome: 'SUCCESS',
+          targetEnvironmentId,
+          requestId: ctx.requestId,
+          details: {
+            action,
+            environmentType: target.environmentType,
+            displayName: target.displayName,
+            reason: scope.reason,
+          },
+        });
+      }
+      return;
+    }
     await this.audit.record({
       organizationId: ctx.organizationId,
       userId: ctx.userId,
@@ -82,13 +112,9 @@ export class MigrationRunService {
       outcome: 'FAILURE',
       targetEnvironmentId,
       requestId: ctx.requestId,
-      details: { action },
+      details: { action, reason: scope.reason, environmentType: target.environmentType },
     });
-    throw new AppError(
-      403,
-      'REAL_TENANT_READ_ONLY',
-      'REAL_TENANT_READ_ONLY is enabled. Dataverse write operations are disabled for this deployment.',
-    );
+    throw new AppError(403, 'REAL_TENANT_READ_ONLY', scope.message);
   }
 
   /**

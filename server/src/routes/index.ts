@@ -8,6 +8,7 @@ import { buildIdentity, publicBuildIdentity } from '../build-info';
 import { attemptMetrics } from '../services/attempt-metrics';
 import { evidenceChain } from '../services/evidence-chain';
 import { describeAuthConfiguration } from '../auth/auth-configuration';
+import { describeWriteScope } from '../write-scope';
 import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { Readable } from 'node:stream';
@@ -1535,6 +1536,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       businessLogicBypassAllowed: config.ALLOW_BUSINESS_LOGIC_BYPASS,
       canBypass: s.planning.bypassAllowed(req.ctx),
       realTenantReadOnly: config.REAL_TENANT_READ_ONLY,
+      // Which environments may be written while the deployment calls itself read-only. A scope nobody
+      // can see is the thing the scope exists to avoid being.
+      writeScope: describeWriteScope(config),
     },
     database: s.db ? (config.DATABASE_URL ? 'postgres' : 'pglite') : 'unknown',
   }));
