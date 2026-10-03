@@ -44,6 +44,12 @@ What this phase did produce:
 Nothing here supports calling the product a release candidate. The sentence it currently earns is
 unchanged from before this phase: _authentication is verified against a real tenant; Dataverse is not._
 
+> **Second pass, same day — see [section 15](#15-second-pass-what-changed-after-the-first-recording).**
+> A later run established that controlled write certification could not have been performed safely at all,
+> because permitting writes to one sandbox meant permitting them everywhere. That is fixed. Two further
+> findings are recorded there: rollback execution does not exist, and anonymous sign-in is reachable on QA.
+> The verdict above is unchanged.
+
 ---
 
 ## 2. Environment
@@ -547,3 +553,106 @@ Two things worth doing in the meantime, both independent of the session:
 One closing caution, because this document has used the word "prepared" a great deal. A prepared run is
 not a passed one. The driver has been proven to work; it has proven nothing about Dataverse. The only
 sentence this build has earned is the one in section 1.
+
+---
+
+## 15. Second pass: what changed after the first recording
+
+A later run the same day attempted the full path again, from authentication through controlled writes to
+rollback. It stopped at the same place for the same reason — no session, therefore no Dataverse call — and
+found three things on the way that do not depend on having one.
+
+**Deployed build is now `8abc4d1ed2a2`**, deployment `502b0325`, verified SUCCESS with the previous build
+REMOVED. The authentication verification in [section 3](#3-authentication-evidence) was recorded against
+`9ce2862f9e2e`; `git diff` across `server/src/auth/` between the two is empty, so the chain's code is
+unchanged and the verification carries. It will be re-established in any case, because the certification
+run reads the deployed commit from `/api/settings` as its first step and cannot start without a sign-in.
+
+### A1 — Controlled write certification was not safely possible at all (fixed)
+
+**Not a defect in a feature. A gap in the safety model**, and the one that would have been discovered by
+following this repository's own instructions.
+
+`REAL_TENANT_READ_ONLY` was a single boolean for the whole deployment, and
+[REAL_TENANT_CERTIFICATION.md](REAL_TENANT_CERTIFICATION.md) part B said to set it `false` — calling that
+"the only" configuration change. Doing so permits writes to **every real environment the signed-in identity
+has a role in**, production included. The only remaining check, `requireAdminForProductionTarget`, requires
+an administrator, and the person running a certification is an administrator of their own workspace. So it
+passes. One mis-selected target in a plan and a certification run writes to production.
+
+Nothing had gone wrong yet. Nothing could have, because no write has ever been attempted. But the next
+step of this mission is the first one, and it would have been taken through that door.
+
+**Fixed** by `CERTIFICATION_WRITE_ENVIRONMENTS` — [`server/src/write-scope.ts`](../server/src/write-scope.ts).
+It names the environments that may be written while the deployment is otherwise read-only, and every rule
+fails closed:
+
+| Property                                    | Why it is the property                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unset behaves exactly as before             | No deployment loosens by upgrading, and the refusal keeps the message it always had                                                                                                                                                                                                                             |
+| Listed is necessary, **not sufficient**     | A listed environment is still refused unless Dataverse reports a non-production type. **Naming production does not open production**, and neither does naming an environment whose type could not be read — the case that matters, because an unclassified environment is the one most likely to be production  |
+| It only narrows                             | Consulted while `REAL_TENANT_READ_ONLY` is on, so it cannot grant what that flag does not already deny. It is not a second switch                                                                                                                                                                               |
+| It is not a bypass, because it is not quiet | The reason travels into the audit trail; a permitted run records `CERTIFICATION_WRITE_PERMITTED` with the environment and its type; the connector logs a warning each time it builds a connection that can write; the operator report raises `CERTIFICATION_WRITE_SCOPE_OPEN`; `/api/settings` states the scope |
+
+Both guards — the one that refuses to queue a run and the one in the Dataverse client that refuses the
+request — consult the same function, because spelling the rule out twice is how two guards stop agreeing.
+Scoped to Dataverse; SQL connectors keep the old behaviour unchanged.
+
+**25 tests.** The decision is pinned by 16 unit cases, including the one the mechanism exists for, and that
+case is mutation-checked: neutering the classification check fails three cases and only those three. Nine
+integration cases cover the queue-time wiring, which changed shape — a guard that could only refuse can now
+permit, and an unexercised permit path in a safety guard is the worst kind of untested line. They assert
+the permit is audited, that opening one sandbox opens nothing else, that resume and retry are guarded, and
+that the refusal a prospect reads names no configuration variable.
+
+This removes a stop condition permanently. Controlled write certification is now a configuration step
+rather than a safety argument.
+
+### A2 — Rollback execution does not exist, and the word was doing work it should not
+
+`rollbackPreview` builds an inventory from the identity map of every record a run created or updated. There
+is **no rollback execution**, and the connector contract has no delete operation of any kind — deliberately,
+since "never issue DELETE as part of synchronisation" is a standing rule. The preview itself states what a
+rollback could not restore: records that were **updated** cannot be reverted, because before-images are not
+captured.
+
+Nothing was mis-implemented. The finding is about what may be said: §21 of the mission asks to distinguish
+rollback from a compensating migration and not to call something rollback if it cannot restore the prior
+state. This product does neither. It produces an inventory. That is recorded in
+[PARTNER_DEMO_QA.md](PARTNER_DEMO_QA.md) in the words to use in a room, and **Dataverse rollback stays
+NOT EXECUTED — now for the stronger reason that it is not executable.**
+
+### A3 — Anonymous sign-in is reachable on QA (determined, deliberately not changed)
+
+Established by a non-mutating probe: `POST /api/auth/demo-login` with an over-long name returns
+`400 VALIDATION_FAILED`, not `401`. The route is registered, requires no authentication, and is rejected
+only by field validation — and the `DEMO_MODE` check sits after that point, with `/api/auth/config`
+reporting `demoEnabled: true`. So anyone with the QA URL can create a workspace without Microsoft.
+The product's own configuration report already raises this as `DEMO_SIGN_IN_ALSO_AVAILABLE`.
+
+A real demo-login was deliberately not completed: it would seed a workspace and run two background
+migrations in QA, and the probe above settles the question without that.
+
+**Not changed, and this is a judgement rather than an omission.** `DEMO_MODE=false` is right for a partner
+demo that authenticates with Microsoft and reads real Dataverse — §23's own criterion. But that demo is not
+yet possible, and turning the flag off today would remove the simulated scenarios, leaving QA with nothing
+demonstrable at all. **Recommendation: set `DEMO_MODE=false` at the moment the real-tenant path works, not
+before.** It is one variable.
+
+### What section 12's matrix should now read differently
+
+Two rows only. Nothing was executed against Dataverse, so nothing else moves.
+
+| Capability                         | Previous state                  | Current state                                                                     | Evidence                                     |
+| ---------------------------------- | ------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------- |
+| Scoped controlled writes (new row) | Did not exist; global flag only | **IMPLEMENTED**, not executed                                                     | `write-scope.ts`, 25 tests, mutation-checked |
+| Rollback                           | NOT EXECUTED                    | **NOT EXECUTED** — and not executable: no rollback execution and no delete exists | `rollbackPreview` is an inventory            |
+
+`shared/connector-verification.ts` remains untouched. Every Dataverse capability still reads `SIMULATED`,
+because §32 permits a change only once evidence exists and there is none.
+
+### Gate
+
+939 passed, 4 skipped, 96 files, on `8abc4d1ed2a2`. Format, lint, typecheck, unit + integration + golden
+journeys, build and end-to-end all exit 0. Integration and golden repeated twice more at 341 passed each,
+no flakes. Evidence drift skipped as designed.
