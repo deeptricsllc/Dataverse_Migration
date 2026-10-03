@@ -130,7 +130,20 @@ export class MicrosoftIdentityService {
     });
   }
 
-  async redeemCode(code: string, codeVerifier: string): Promise<SignInResult> {
+  /**
+   * Redeems the authorization code.
+   *
+   * `nonce` is not optional, and leaving it out is what broke the first real sign-in this product ever
+   * attempted. `getAuthCodeUrl` sends a nonce, so Microsoft echoes it in the id_token — and MSAL, finding
+   * a nonce in the token with nothing to compare it against, refuses the whole response:
+   *
+   *   Authorization code response contains an ID Token nonce, but no expected nonce was supplied.
+   *
+   * Which is MSAL doing exactly the right thing. A nonce nobody checks is a replay protection that is not
+   * protecting anything, so refusing is better than accepting. The caller holds the nonce it issued, in
+   * the single-use `auth_requests` row, and passes it back in here.
+   */
+  async redeemCode(code: string, codeVerifier: string, nonce: string): Promise<SignInResult> {
     let serializedCache = '';
     const capture: ICachePlugin = {
       beforeCacheAccess: async () => {},
@@ -143,6 +156,9 @@ export class MicrosoftIdentityService {
       result = await this.client(capture).acquireTokenByCode({
         code,
         codeVerifier,
+        // The nonce this sign-in was started with. MSAL compares it against the id_token's own claim and
+        // rejects the response if they differ — which is the check the nonce exists for.
+        nonce,
         redirectUri: this.config.redirectUri,
         scopes: [discoveryScope(this.config.DATAVERSE_DISCOVERY_URL)],
       });

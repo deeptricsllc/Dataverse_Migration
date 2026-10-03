@@ -299,7 +299,13 @@ export class AuthService {
         'The sign-in request expired or is invalid. Please try again.',
       );
     }
-    const result = await this.identity.redeemCode(params.code, this.box.decrypt(pending.encryptedVerifier));
+    const result = await this.identity.redeemCode(
+      params.code,
+      this.box.decrypt(pending.encryptedVerifier),
+      // The nonce this sign-in was started with. MSAL compares it against the id_token itself; the check
+      // below is the second half of the same question, for the case where no nonce comes back at all.
+      pending.nonce,
+    );
     // The nonce claim is echoed in the id_token when we send one. Microsoft documents it as
     // required for the hybrid flow; validate whenever it is present.
     // https://learn.microsoft.com/entra/identity-platform/id-tokens
