@@ -62,6 +62,35 @@ describe('REAL_TENANT_READ_ONLY write block', () => {
     expect(String(err)).toContain('REAL_TENANT_READ_ONLY');
     expect(String(err)).toContain('POST');
   });
+
+  /**
+   * The refusal happens before a Dataverse token is even asked for.
+   *
+   * The cases above prove no HTTP request is made, because `fetchImpl` throws if called. They cannot see
+   * one step earlier: the guard sits above `getAccessToken` in `request()`, so a read-only deployment does
+   * not mint a delegated access token for a write it is going to refuse. That ordering is what makes
+   * "refused before the request leaves the process" literally true rather than nearly true, and it is the
+   * claim the real-tenant certification report makes — so it is asserted rather than assumed.
+   */
+  it('refuses before acquiring a token, so no credential is obtained for a refused write', async () => {
+    let tokenRequests = 0;
+    const conn = new WebApiConnection({
+      url: 'https://org.crm.dynamics.com',
+      apiVersion: 'v9.2',
+      getAccessToken: async () => {
+        tokenRequests++;
+        return 't';
+      },
+      logger,
+      readOnly: true,
+      fetchImpl: unreachableFetch,
+    });
+
+    await expect(
+      conn.createRecord(account, { id: 'a', values: { name: 'X' } }, writeOptions),
+    ).rejects.toMatchObject({ code: 'READ_ONLY_MODE' });
+    expect(tokenRequests, 'a refused write must not acquire a Dataverse token').toBe(0);
+  });
 });
 
 describe('environment safety classification', () => {

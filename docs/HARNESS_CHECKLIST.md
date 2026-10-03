@@ -15,6 +15,23 @@ costs. **No secret value appears here or belongs here.**
 
 `tests/tenant/dataverse.tenant.test.ts` — 26 cases. Run with `npm run test:engines`.
 
+> **This harness cannot currently reach a real environment, whatever you configure.** Its setup cannot get
+> there from here, for three independent reasons: `tests/helpers.ts` `createTestApp` hard-codes
+> `DEMO_MODE: 'true'` and empty `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET`, so no delegated token can be
+> acquired; the database is created `memory://`, fresh and empty every run; and `harnessContext` calls
+> `api.demoLogin()`, so it looks for your environment inside a brand-new demo organization and asserts it
+> is there. Signing in to a deployment does not put a row in that database — the two steps never share one.
+>
+> Running this file against `TENANT_TEST_URL` therefore fails in `beforeAll`, at
+> `expect(wanted).toBeTruthy()`. Recorded as D1 in
+> [DATAVERSE_REAL_TENANT_READ_ONLY_CERTIFICATION.md](DATAVERSE_REAL_TENANT_READ_ONLY_CERTIFICATION.md),
+> along with what would have to change.
+>
+> **For read-only certification, use `scripts/certify-dataverse-readonly.mjs` instead.** It drives a
+> deployed build's own HTTP API with a real session, substitutes nothing, and is the route section 13 of
+> that report describes. This harness's remaining value is the **write** half below, which that script
+> deliberately does not do.
+
 ### The environment
 
 | Provide                                                                                          | What it is                                                                           | Risk                                                                                                    |
@@ -121,8 +138,16 @@ repository claims a capability the evidence does not show, or if one that used t
 
 1. **Azure SQL first.** It needs only a database and a login, it cleans up after itself, and it converts
    four matrix rows from `IMPLEMENTED` to `ENGINE_VERIFIED` in one run.
-2. **Dataverse read-only next** — `TENANT_TEST_URL` alone. Authentication, discovery, metadata, paging,
-   users and teams, with nothing written anywhere.
+2. **Dataverse read-only next** — and **not through this harness**, which cannot reach a real environment
+   (see the warning above). Through `scripts/certify-dataverse-readonly.mjs`, against a deployed build,
+   with a real Microsoft session. Authentication, discovery, metadata, paging, users and teams, with
+   nothing written anywhere.
+
+   It needs **two** non-production environments, not one. Planning, preflight, principal mapping and
+   schema comparison each refuse a source that is also the target — five separate services say so — so
+   "users and teams" cannot be exercised with a single environment. `REAL_TENANT_CERTIFICATION.md` A0 has
+   always asked for two; this line used to imply one was enough.
+
 3. **Dataverse writes** once the read half has passed, with the dedicated table.
 4. **The privileged cases** last, and only if created-on preservation matters to the pilot.
 

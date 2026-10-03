@@ -8,3 +8,6 @@ playwright-report/
 test-results/
 coverage/
 *.log
+
+# A self-test of the certification driver, against the simulator. Never certification evidence.
+evidence/dataverse-driver-selftest.json
