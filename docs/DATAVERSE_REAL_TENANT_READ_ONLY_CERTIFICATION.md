@@ -1,7 +1,8 @@
 # Dataverse real-tenant read-only certification
 
-**Recorded:** 2026-10-03 · **Deployed build certified against:** `9ce2862f9e2e` (QA) · **Mode:**
-`REAL_TENANT_READ_ONLY=true`
+**Recorded:** 2026-10-03 · **Deployed build:** `8abc4d1ed2a2` (QA) · **Authentication verified against:**
+`9ce2862f9e2e`, whose sign-in code is byte-identical to the deployed build · **Mode:**
+`REAL_TENANT_READ_ONLY=true`, with no certification write scope open
 
 ---
 
@@ -564,8 +565,11 @@ found three things on the way that do not depend on having one.
 
 **Deployed build is now `8abc4d1ed2a2`**, deployment `502b0325`, verified SUCCESS with the previous build
 REMOVED. The authentication verification in [section 3](#3-authentication-evidence) was recorded against
-`9ce2862f9e2e`; `git diff` across `server/src/auth/` between the two is empty, so the chain's code is
-unchanged and the verification carries. It will be re-established in any case, because the certification
+`9ce2862f9e2e`. The two files that perform a sign-in — `microsoft-identity.ts` and `auth-service.ts` —
+are byte-identical between the two builds, so the verification carries. (An earlier draft of this
+paragraph said the whole of `server/src/auth/` was unchanged. That was wrong: `auth-configuration.ts`
+gained the `CERTIFICATION_WRITE_SCOPE_OPEN` finding in the same range. It is imported only by the startup
+log and the `/api/platform/auth-configuration` endpoint, so it is not on the sign-in path.) It will be re-established in any case, because the certification
 run reads the deployed commit from `/api/settings` as its first step and cannot start without a sign-in.
 
 ### A1 — Controlled write certification was not safely possible at all (fixed)
