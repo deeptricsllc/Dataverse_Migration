@@ -119,6 +119,46 @@ The fix is one entry under **Authentication → Add a platform → Web**:
 troubleshooting table in [MICROSOFT_SETUP.md](MICROSOFT_SETUP.md), kept apart, because the fix differs: one
 is "correct the entry", the other is "the platform was never added".
 
+**Then the next attempt found a bug in this product, which is the part worth keeping.** Microsoft
+authenticated correctly — the callback's `client_info` decoded to `utid 0eca5595-…` — and the token
+redemption threw the answer away:
+
+```
+MSAL: Authorization code response contains an ID Token nonce, but no expected nonce was supplied.
+      Rejecting the response.
+ClientAuthError: nonce_mismatch
+```
+
+`getAuthCodeUrl` sends a nonce, so Microsoft echoes it in the id_token, and `acquireTokenByCode` was never
+told what to compare it against. MSAL refused the whole response, correctly: a nonce nobody checks is a
+replay protection that is not protecting anything. The caller already held the nonce in the single-use
+`auth_requests` row and compared it _after_ redemption — one step too late to be the check that mattered.
+
+**Nothing in 910 tests could have caught it.** The ten-case authentication matrix replaces `redeemCode`
+wholesale, because redeeming a real code needs Microsoft and a real secret, and that file says so in its
+own header: _"these cases prove our boundary behaves correctly **given** a verified identity. They do not
+prove that Microsoft verified it."_ The documented gap is exactly the one that bit. The simulation was
+honest about what it could not see, and what it could not see was broken.
+
+`tests/unit/microsoft-identity.test.ts` now sits at the MSAL boundary instead — MSAL replaced rather than
+`redeemCode` replaced — asserting the shape of the request that leaves this platform, and that the
+authorize URL carries the nonce that has to come back, because the two halves have to agree or MSAL rejects
+every response for the opposite reason. Mutation-checked.
+
+**Signed in, on the deployed environment**, at 00:46 on 3 October, commit `9ce2862f9e2e`:
+
+```
+/api/auth/login        clicked
+/api/auth/callback     returned from Microsoft
+AUTH_SIGN_IN SUCCESS   redemption worked, admission passed, workspace created
+/api/auth/session ×3   session resolved
+/api/dashboard    ×2   the dashboard loaded
+```
+
+No refusal, no 4xx, no 5xx. **Microsoft authentication is verified end to end against a real directory.**
+That also settles the admission gate against a real `tid` claim, which until now had only ever been
+exercised against a simulated one.
+
 ## 3. Product changes
 
 | Problem                                                                           | Root cause                                                                                                                              | Fix                                                                          | Verification                 |
@@ -311,10 +351,9 @@ Also done earlier, against the **built server** (`dist/`, `NODE_ENV=production`)
 **P0**
 
 1. **Dataverse is unverified.** Needs an environment. Not an engineering task.
-2. ~~Sign-in is broken on the deployed environment.~~ **Resolved.** QA was configured with the wrong
-   application; the keys file had the right one. Verified on the deployed environment — see sections 2
-   and 13. One unknown remains, and only a real sign-in will settle it: whether the QA callback URL is on
-   the application's redirect list.
+2. ~~Sign-in is broken on the deployed environment.~~ **Resolved and verified by a real sign-in.** Three
+   separate faults, in order: the wrong application id, a registration with no reply address, and a bug
+   in this product that dropped the nonce on redemption. All fixed; dashboard reached on deployed QA.
 
 **P1**
 
@@ -346,10 +385,10 @@ a real auditor.
 
 ## 16. The next ten
 
-1. **Add the reply address.** **Authentication → Add a platform → Web** on application `ecf355ec-…`,
-   value `https://dataverse-migration-app-qa.up.railway.app/api/auth/callback`. It is the only thing
-   between the consent screen and a working sign-in. Grant admin consent on behalf of the organization at
-   the same time, so no other user is prompted for a scope many tenants block individuals from accepting.
+1. **Connect a real Dataverse environment.** Sign-in now works, which means the product can reach your
+   tenant's environments through the path a customer uses — and that is the gate on the one thing keeping
+   this from being a release candidate. Start read-only: `REAL_TENANT_READ_ONLY` is already `true` on QA,
+   so every write is refused server-side while you look.
 2. Azure SQL verification — cheapest conversion of unverified to verified.
 3. Dataverse read-only verification. Even stopping there replaces "we have never talked to Dataverse" with
    "authentication, discovery and reading are verified".
