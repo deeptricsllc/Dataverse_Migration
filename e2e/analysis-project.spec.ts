@@ -106,10 +106,15 @@ test('analysis project: understand a source, then migrate from what it found', a
   await page.getByLabel('Based on analysis').selectOption({ label: 'Understand the legacy database' });
   await page.getByTestId('create-project').click();
 
+  /*
+   * A migration opens in its own workspace rather than on a page listing its plans. It says what it is
+   * based on, and that it has nothing to move yet — which is a state, not a failed step.
+   */
+  await page.waitForURL(/\/migration\/[0-9a-f-]{36}/);
   await expect(page.getByRole('heading', { name: 'Legacy customers into QA' })).toBeVisible();
-  // The project shows what the analysis it was built on measured.
-  await expect(page.getByText('Based on', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('project-plans')).toContainText('No plans in this project');
+  await expect(page.getByTestId('migration-based-on')).toContainText('Understand the legacy database');
+  await expect(page.getByTestId('migration-status')).toHaveText('Draft');
+  await expect(page.getByTestId('migration-empty')).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
 });

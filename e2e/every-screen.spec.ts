@@ -111,9 +111,11 @@ test('every screen renders without a console error or an error card', async ({ p
   await page.getByLabel('Target').selectOption({ label: 'DeepTrics QA' });
   await page.getByLabel('Based on analysis').selectOption({ label: 'Launch review' });
   await page.getByTestId('create-project').click();
+  // A migration opens in its own workspace, so the project id comes from that route.
+  await page.waitForURL(/\/migration\/[0-9a-f-]{36}/);
   await expect(page.getByRole('heading', { name: 'Launch migration' })).toBeVisible();
   await assertNoStuckState(page, 'migration project', problems);
-  const migrationProjectId = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
+  const migrationProjectId = page.url().split('/migration/')[1]!.split(/[?#]/)[0]!;
 
   // Every step of the plan editor, since each is a separate screen in practice.
   current = 'create a plan';

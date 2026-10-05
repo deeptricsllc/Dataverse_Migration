@@ -34,14 +34,15 @@ What the product does now. Correct these first when behaviour changes; everythin
 How it is built, and the decisions behind it. Design documents describe an intent; where one describes
 something not yet built, it says so in its own first paragraph.
 
-| Document                                                             |                                                                                                       |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                                   | The shape of the system: processes, data flow, where state lives                                      |
-| [PRODUCT_MODEL.md](PRODUCT_MODEL.md)                                 | The corrected domain model — analyse, migrate, compare — and an honest table of how much of it exists |
-| [IA_RECOMMENDATION.md](IA_RECOMMENDATION.md)                         | The information architecture recommendation, and what was deliberately deferred                       |
-| [INCREMENTAL_SYNC_ARCHITECTURE.md](INCREMENTAL_SYNC_ARCHITECTURE.md) | Change detection, watermarks and drift. **Design** — read its own caveats                             |
-| [ON_PREM_AGENT_ARCHITECTURE.md](ON_PREM_AGENT_ARCHITECTURE.md)       | Reaching a database that is not on the internet. **Design, not built**                                |
-| [NAMING_BRIEF.md](NAMING_BRIEF.md)                                   | The product name question. A brief, not a decision                                                    |
+| Document                                                                       |                                                                                                       |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                                             | The shape of the system: processes, data flow, where state lives                                      |
+| [MIGRATION_WORKSPACE_PRODUCT_DESIGN.md](MIGRATION_WORKSPACE_PRODUCT_DESIGN.md) | Why the nine-step migration wizard is being replaced by a workspace, and what survives it             |
+| [PRODUCT_MODEL.md](PRODUCT_MODEL.md)                                           | The corrected domain model — analyse, migrate, compare — and an honest table of how much of it exists |
+| [IA_RECOMMENDATION.md](IA_RECOMMENDATION.md)                                   | The information architecture recommendation, and what was deliberately deferred                       |
+| [INCREMENTAL_SYNC_ARCHITECTURE.md](INCREMENTAL_SYNC_ARCHITECTURE.md)           | Change detection, watermarks and drift. **Design** — read its own caveats                             |
+| [ON_PREM_AGENT_ARCHITECTURE.md](ON_PREM_AGENT_ARCHITECTURE.md)                 | Reaching a database that is not on the internet. **Design, not built**                                |
+| [NAMING_BRIEF.md](NAMING_BRIEF.md)                                             | The product name question. A brief, not a decision                                                    |
 
 ## 3. Verification evidence
 

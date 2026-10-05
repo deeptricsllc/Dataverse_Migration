@@ -307,13 +307,25 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
     },
     ...connected.map((e) => ({ value: e.id, label: e.displayName })),
   ];
+  /*
+   * A migration needs only a name here.
+   *
+   * Its two ends are properties of the migration and are chosen inside it, in context, where the
+   * consequences of changing one can be explained. Demanding them on the creation form is what sent
+   * people to the Connections page before they had made anything — and a half-filled form they abandoned
+   * to go and create a connection was the most common way to lose the name they had just typed.
+   */
   const ready =
-    name.trim() &&
-    sourceId &&
-    (kind === 'ANALYSIS' || targetId) &&
-    // A comparison may point both sides at one connection: comparing two tables inside a single
-    // database is an ordinary thing to want, and nothing it does writes.
-    (kind === 'COMPARISON' || sourceId !== targetId);
+    kind === 'MIGRATION'
+      ? Boolean(name.trim())
+      : Boolean(
+          name.trim() &&
+          sourceId &&
+          (kind === 'ANALYSIS' || targetId) &&
+          // A comparison may point both sides at one connection: comparing two tables inside a single
+          // database is an ordinary thing to want, and nothing it does writes.
+          (kind === 'COMPARISON' || sourceId !== targetId),
+        );
 
   return (
     <Modal

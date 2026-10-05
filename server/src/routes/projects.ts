@@ -180,6 +180,23 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
   );
 
   // ---------------------------------------------------------------------------
+  // The migration workspace: one project, answered in one object
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/projects/:id/migration', async (req) =>
+    s.migrationWorkspace.forProject(req.ctx, idParams.parse(req.params).id),
+  );
+
+  app.get('/api/projects/:id/migration/runs', async (req) =>
+    s.migrationWorkspace.runs(req.ctx, idParams.parse(req.params).id),
+  );
+
+  /** The project's current configuration, for the sections that work on it. */
+  app.get('/api/projects/:id/migration/plan', async (req) =>
+    s.migrationWorkspace.currentPlan(req.ctx, idParams.parse(req.params).id),
+  );
+
+  // ---------------------------------------------------------------------------
   // Source analysis
   // ---------------------------------------------------------------------------
 

@@ -6,9 +6,9 @@ import {
 } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TableSummary } from '@shared/metadata';
-import { Archive, ArrowRight, FileSpreadsheet, Microscope, Play, Plus, Truck } from 'lucide-react';
+import { Archive, ArrowRight, Microscope, Play } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ComparisonProject } from '../components/ComparisonProject';
 import { get, post } from '../lib/api';
 import { fmtDate, fmtNumber, fmtRelative } from '../lib/format';
@@ -25,7 +25,6 @@ import {
   Pill,
   SearchInput,
   Spinner,
-  Stat,
   StatusBadge,
   Table,
   Td,
@@ -53,6 +52,15 @@ export function ProjectPage() {
   if (project.error) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
   if (!project.data) return null;
   const p = project.data;
+
+  /*
+   * A migration lives in its own workspace.
+   *
+   * This page listed the project's plans, which made the migration a container of configurations rather
+   * than a body of work — and put the thing somebody came to do one click further away than the thing
+   * they came to do it with.
+   */
+  if (p.kind === 'MIGRATION') return <Navigate to={`/migration/${p.id}`} replace />;
 
   return (
     <div className="space-y-6">
@@ -83,7 +91,6 @@ export function ProjectPage() {
       )}
 
       {p.kind === 'ANALYSIS' && <AnalysisProject project={p} />}
-      {p.kind === 'MIGRATION' && <MigrationProject project={p} />}
       {p.kind === 'COMPARISON' && <ComparisonProject project={p} />}
 
       <ArchiveCard project={p} />
@@ -368,171 +375,6 @@ function NewAnalysisModal({
 // ---------------------------------------------------------------------------
 // Migration projects
 // ---------------------------------------------------------------------------
-
-function MigrationProject({ project }: { project: ProjectDto }) {
-  const plans = useQuery({
-    queryKey: ['project-plans', project.id],
-    queryFn: () =>
-      get<
-        {
-          id: string;
-          name: string;
-          status: string;
-          tableCount: number;
-          blockerCount: number;
-          updatedAt: string;
-        }[]
-      >(`/api/projects/${project.id}/plans`),
-  });
-  const analysis = useQuery({
-    queryKey: ['project-analysis', project.analysisProject?.id],
-    queryFn: () => get<AnalysisRunListItemDto[]>(`/api/projects/${project.analysisProject!.id}/analyses`),
-    enabled: Boolean(project.analysisProject),
-  });
-  const latestAnalysis = (analysis.data ?? []).find((a) => a.status === 'COMPLETED');
-
-  return (
-    <div className="space-y-5">
-      {project.analysisProject && (
-        <Card
-          title="Based on"
-          subtitle="The analysis this migration starts from. Its measurements fill the mapping workbook."
-          actions={
-            <Link
-              to={`/projects/${project.analysisProject.id}`}
-              className="text-sm text-brand-700 hover:underline"
-            >
-              Open analysis project
-            </Link>
-          }
-        >
-          {analysis.isLoading && <Spinner label="Loading the analysis…" />}
-          {!latestAnalysis && !analysis.isLoading && (
-            <Callout tone="info" title="No completed analysis yet">
-              Run an analysis in{' '}
-              <Link to={`/projects/${project.analysisProject.id}`} className="underline">
-                {project.analysisProject.name}
-              </Link>{' '}
-              and its findings will appear here and in the mapping workbook.
-            </Callout>
-          )}
-          {latestAnalysis && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Tables" value={fmtNumber(latestAnalysis.totals.tables)} />
-              <Stat label="Records" value={fmtNumber(latestAnalysis.totals.records)} />
-              <Stat
-                label="Blockers"
-                value={fmtNumber(latestAnalysis.totals.blockers)}
-                tone={latestAnalysis.totals.blockers > 0 ? 'red' : 'green'}
-              />
-              <Stat
-                label="Warnings"
-                value={fmtNumber(latestAnalysis.totals.warnings)}
-                tone={latestAnalysis.totals.warnings > 0 ? 'amber' : 'green'}
-              />
-              <div className="col-span-2 sm:col-span-4">
-                <Link
-                  to={`/analyses/${latestAnalysis.id}`}
-                  className="text-sm text-brand-700 hover:underline"
-                >
-                  {latestAnalysis.name} →
-                </Link>
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card
-        title="Migration plans"
-        subtitle="Each plan maps a set of tables and runs them. Preflight, execute and validate live inside a plan."
-        data-testid="project-plans"
-        actions={
-          <Link
-            to={`/migration/new?projectId=${project.id}`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-brand-700"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New plan
-          </Link>
-        }
-      >
-        {plans.isLoading && <Spinner label="Loading plans…" />}
-        {plans.error && <ErrorState error={plans.error} />}
-        {plans.data?.length === 0 && (
-          <EmptyState
-            icon={<Truck className="h-6 w-6" />}
-            title="No plans in this project"
-            description={
-              latestAnalysis
-                ? 'Create a plan and its mapping workbook will already carry what the analysis measured.'
-                : 'Create a plan to choose tables, map fields and run the migration.'
-            }
-            action={
-              <Link
-                to={`/migration/new?projectId=${project.id}`}
-                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
-              >
-                New plan
-              </Link>
-            }
-          />
-        )}
-        {(plans.data?.length ?? 0) > 0 && (
-          <Table>
-            <thead>
-              <tr>
-                <Th>Plan</Th>
-                <Th>Status</Th>
-                <Th className="text-right">Tables</Th>
-                <Th className="text-right">Blockers</Th>
-                <Th>Updated</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {plans.data!.map((p) => (
-                <tr key={p.id} className="hover:bg-slate-50">
-                  <Td>
-                    <Link
-                      to={`/migration/plans/${p.id}`}
-                      className="font-medium text-brand-700 hover:underline"
-                    >
-                      {p.name}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <StatusBadge status={p.status} />
-                  </Td>
-                  <Td className="text-right tabular-nums">{fmtNumber(p.tableCount)}</Td>
-                  <Td className="text-right tabular-nums">
-                    {p.blockerCount > 0 ? <Pill tone="red">{p.blockerCount}</Pill> : '—'}
-                  </Td>
-                  <Td className="text-xs text-slate-500">{fmtRelative(p.updatedAt)}</Td>
-                  <Td>
-                    <div className="flex items-center gap-3">
-                      <a
-                        href={`/api/plans/${p.id}/mapping.xlsx`}
-                        download
-                        title="Mapping workbook"
-                        className="text-slate-400 hover:text-slate-700"
-                      >
-                        <FileSpreadsheet className="h-4 w-4" />
-                      </a>
-                      <Link to={`/migration/plans/${p.id}`} aria-label={`Open ${p.name}`}>
-                        <ArrowRight className="h-4 w-4 text-slate-400" />
-                      </Link>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
-    </div>
-  );
-}
 
 function ArchiveCard({ project }: { project: ProjectDto }) {
   const qc = useQueryClient();

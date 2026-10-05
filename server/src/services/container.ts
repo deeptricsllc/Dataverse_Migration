@@ -23,6 +23,7 @@ import { MetadataService } from './metadata-service';
 import { MigrationEngine } from './migration-engine';
 import { MigrationRunService } from './migration-run-service';
 import { PlanningService } from './planning-service';
+import { MigrationWorkspaceService } from './migration-workspace-service';
 import { ProjectService } from './project-service';
 import { ConnectionService } from './connection-service';
 import { OperationsService } from './operations-service';
@@ -119,6 +120,13 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
   );
   const connectionAdmin = new ConnectionService(config, db, connections, audit, logger);
+  const migrationWorkspace = new MigrationWorkspaceService(
+    config,
+    db,
+    planning,
+    readiness,
+    logger.child({ component: 'migration-workspace' }),
+  );
   const operations = new OperationsService(config, db, logger.child({ component: 'operations' }));
   const team = new TeamService(db, audit, logger.child({ component: 'team' }));
   const profiling = new ProfilingService(db, environments, metadata, connections, logger);
@@ -238,6 +246,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     logger,
     audit,
     identity,
+    migrationWorkspace,
     operations,
     team,
     auth,

@@ -12,6 +12,7 @@ import { EnvironmentsPage } from './pages/EnvironmentsPage';
 import { LandingPage } from './pages/LandingPage';
 import { PrivacyPage, TermsPage } from './pages/LegalPage';
 import { LoginPage } from './pages/LoginPage';
+import { MigrationWorkspacePage } from './pages/MigrationWorkspacePage';
 import { MigrationPage } from './pages/MigrationPage';
 import { NewMigrationPage } from './pages/NewMigrationPage';
 import { PlanPage } from './pages/PlanPage';
@@ -76,6 +77,8 @@ export function App() {
         <Route path="compare/:comparisonId" element={<ComparePage />} />
         <Route path="users" element={<UserMappingPage />} />
         <Route path="migration" element={<MigrationPage />} />
+        {/* One migration project, one workspace. The nine-step wizard is no longer the way in. */}
+        <Route path="migration/:projectId" element={<MigrationWorkspacePage />} />
         <Route path="migration/new" element={<NewMigrationPage />} />
         <Route path="migration/plans/:planId" element={<PlanPage />} />
         <Route path="migration/plans/:planId/preflight" element={<PreflightPage />} />

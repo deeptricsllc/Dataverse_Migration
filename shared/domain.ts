@@ -6,7 +6,7 @@ import type { RecordAccounting } from './run-metrics';
 import type { WorkspaceRole } from './authorization';
 import type { ValidationCoverage, ValidationDepth } from './validation-coverage';
 import type { AggregateCheck } from './aggregates';
-import type { ReadinessOverride } from './readiness';
+import type { ReadinessFinding, ReadinessOverride, ReadinessVerdict } from './readiness';
 import type { UniquenessCheck } from './uniqueness';
 import type { SemanticReading } from './semantic-types';
 import type { Finding, FindingDisposition } from './findings';
@@ -1911,6 +1911,109 @@ export interface ProjectDto {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * What a migration project is, in one answer.
+ *
+ * The screen this feeds has thirty seconds to say what is being moved, from where, to where, how much of
+ * it, whether it is safe to run, what is stopping it, what happened last time, and what to do next. That
+ * is eight questions, and the shape leads with the answers rather than with a list of pages.
+ *
+ * Assembled on read from evidence that already exists — the project's two ends, its plan, the readiness
+ * assessment, the latest run. Nothing here is stored, so nothing can drift out of step with the thing it
+ * describes.
+ */
+export interface MigrationWorkspaceDto {
+  projectId: string;
+  projectName: string;
+  description: string | null;
+  status: MigrationProjectStatus;
+  source: EnvRef | null;
+  target: EnvRef | null;
+  /**
+   * What the destination can actually do, decided by the same function that refuses the write.
+   *
+   * §9: a read-only or simulated target must never appear executable. The engine refuses it either way;
+   * this is so nobody plans a weekend cutover around finding that out at the end.
+   */
+  targetCapability: {
+    /** Whether this deployment would permit a write to it at all. */
+    writable: boolean;
+    /** Why, in the words the write guard itself uses. */
+    reason: string;
+    /** A simulator rather than a real system: a run proves the configuration, not the destination. */
+    simulated: boolean;
+  } | null;
+  /** The project's current configuration. Null until source data has been added. */
+  plan: {
+    id: string;
+    datasets: number;
+    /** Source records across the scope, where they have been counted. Null where they have not. */
+    records: number | null;
+    blockers: number;
+    warnings: number;
+    updatedAt: string;
+  } | null;
+  /**
+   * Whether this can safely execute, from the readiness service rather than a second opinion.
+   * Null when there is no configuration to assess yet.
+   */
+  readiness: {
+    verdict: ReadinessVerdict;
+    summary: string;
+    blockers: number;
+    warnings: number;
+    /** The few worth putting on the overview, worst first. */
+    top: ReadinessFinding[];
+  } | null;
+  lastRun: {
+    id: string;
+    status: MigrationRunStatus;
+    attempt: number;
+    startedAt: string | null;
+    finishedAt: string | null;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+    total: number;
+  } | null;
+  /** How many runs this project has had, so "what happened last time" has a history behind it. */
+  runCount: number;
+  /** The one thing to do next, named as an action rather than as a stage. */
+  nextAction: {
+    kind:
+      | 'ADD_SOURCE_DATA'
+      | 'CHOOSE_DESTINATION'
+      | 'RESOLVE_BLOCKERS'
+      | 'REVIEW_WARNINGS'
+      | 'PREPARE'
+      | 'EXECUTE'
+      | 'REVIEW_FAILURES'
+      | 'VALIDATE'
+      | 'WATCH_RUN';
+    label: string;
+    detail: string;
+  };
+}
+
+/**
+ * What state a migration project is actually in.
+ *
+ * Derived, never stored, and never a step number. "Step 6 of 9" describes the product; these describe
+ * the work, which is the only thing a person planning a weekend cutover is asking about.
+ */
+export type MigrationProjectStatus =
+  'DRAFT' | 'PREPARING' | 'BLOCKED' | 'READY' | 'RUNNING' | 'COMPLETED_WITH_ISSUES' | 'COMPLETED';
+
+export const MIGRATION_PROJECT_STATUS_LABELS: Record<MigrationProjectStatus, string> = {
+  DRAFT: 'Draft',
+  PREPARING: 'Preparing',
+  BLOCKED: 'Blocked',
+  READY: 'Ready',
+  RUNNING: 'Running',
+  COMPLETED_WITH_ISSUES: 'Completed with issues',
+  COMPLETED: 'Completed',
+};
 
 // ---------------------------------------------------------------------------
 // Data comparison: two datasets, reconciled record by record
