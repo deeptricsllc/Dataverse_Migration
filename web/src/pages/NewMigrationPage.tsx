@@ -1,4 +1,4 @@
-import type { MigrationPlanDto, TableCandidateDto } from '@shared/domain';
+import type { MigrationPlanDto, ProjectDto, TableCandidateDto } from '@shared/domain';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -6,15 +6,27 @@ import { TableSelector } from '../components/TableSelector';
 import { WizardSteps } from '../components/WizardSteps';
 import { Button, Callout, Card, EmptyState, ErrorState, PageHeader, Spinner } from '../components/ui';
 import { get, post, qs } from '../lib/api';
-import { useWorkspace } from '../lib/session';
 
 export function NewMigrationPage() {
   const navigate = useNavigate();
-  // A plan reached from a migration project belongs to it, so its mapping workbook can draw on the
-  // analysis that project was built from.
+  /**
+   * The plan's two ends come from the migration project that owns them.
+   *
+   * They used to come from a global, per-user "current source and target" — which is why Connections had
+   * "Set as source" buttons, why a source → target strip hung over every page, and why starting a
+   * migration meant going to Connections first. A migration's two ends belong to that migration, so they
+   * are read from the project here and nowhere else.
+   */
   const [params] = useSearchParams();
   const projectId = params.get('projectId');
-  const { source, target, ready } = useWorkspace();
+  const project = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => get<ProjectDto>(`/api/projects/${projectId}`),
+    enabled: Boolean(projectId),
+  });
+  const source = project.data?.sourceEnvironment ?? null;
+  const target = project.data?.targetEnvironment ?? null;
+  const ready = Boolean(source && target);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [name, setName] = useState('');
   const key = ['candidates', source?.id, target?.id];
@@ -38,26 +50,38 @@ export function NewMigrationPage() {
     onSuccess: (plan) => navigate(`/migration/plans/${plan.id}?step=dependencies`),
   });
 
+  if (!projectId) {
+    return (
+      <EmptyState
+        title="Start from a migration project"
+        description="A migration moves data between two systems, and those two ends belong to the migration itself. Create a migration project and choose them there."
+        action={
+          <Button variant="primary" onClick={() => navigate('/projects')}>
+            Go to Projects
+          </Button>
+        }
+      />
+    );
+  }
+  if (project.isLoading) return <Spinner label="Loading the migration…" />;
   if (!ready) {
     return (
-      <>
-        <WizardSteps current={3} links={{ 1: '/environments' }} />
-        <EmptyState
-          title="Select a source and target first"
-          action={
-            <Button variant="primary" onClick={() => navigate('/environments')}>
-              Select environments
-            </Button>
-          }
-        />
-      </>
+      <EmptyState
+        title="This migration needs a source and a target"
+        description="Choose the system the data comes from and the system it goes to, on the migration project."
+        action={
+          <Button variant="primary" onClick={() => navigate(`/projects/${projectId}`)}>
+            Open the migration project
+          </Button>
+        }
+      />
     );
   }
   const analyzed = candidates.data?.some((c) => c.schemaStatus && c.sourceCount !== null);
 
   return (
     <>
-      <WizardSteps current={3} links={{ 1: '/environments', 2: '/compare' }} />
+      <WizardSteps current={3} links={{ 1: `/projects/${projectId}`, 2: '/compare' }} />
       <PageHeader
         title="Select tables to migrate"
         description="Choose the tables whose data should be copied from the source to the target. Record counts are as of the last analysis; the plan refreshes them. Dependencies are shown but never selected automatically."

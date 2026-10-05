@@ -28,7 +28,7 @@ import {
 } from '../components/ui';
 import { get, post, put, qs } from '../lib/api';
 import { fmtRelative } from '../lib/format';
-import { useWorkspace } from '../lib/session';
+import { useMigrationContext } from '../lib/migration-context';
 
 const TYPE_LABEL: Record<string, string> = {
   systemuser: 'User',
@@ -39,7 +39,7 @@ const TYPE_LABEL: Record<string, string> = {
 export function UserMappingPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { source, target, ready } = useWorkspace();
+  const { projectId, source, target, ready } = useMigrationContext();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'ALL' | 'UNMATCHED' | 'AMBIGUOUS' | 'MATCHED'>('ALL');
   const key = ['principal-mappings', source?.id, target?.id];
@@ -87,10 +87,14 @@ export function UserMappingPage() {
         <PageHeader title="User mapping" />
         <EmptyState
           icon={<Users className="h-8 w-8" />}
-          title="Select a source and target first"
+          title="Open this from a migration"
+          description="Matching people between two systems needs to know which two. A migration's two ends belong to the migration itself, so this page is reached from the migration project that has them."
           action={
-            <Button variant="primary" onClick={() => navigate('/environments')}>
-              Select environments
+            <Button
+              variant="primary"
+              onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')}
+            >
+              Open the migration project
             </Button>
           }
         />

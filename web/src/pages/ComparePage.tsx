@@ -25,7 +25,7 @@ import {
 } from '../components/ui';
 import { get, post, qs } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
-import { useWorkspace } from '../lib/session';
+import { useMigrationContext } from '../lib/migration-context';
 
 type Filter = 'ALL' | DiffStatus;
 
@@ -33,7 +33,7 @@ export function ComparePage() {
   const { comparisonId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { source, target, ready } = useWorkspace();
+  const { projectId, source, target, ready } = useMigrationContext();
 
   const latest = useQuery({
     queryKey: ['comparisons', source?.id, target?.id],
@@ -69,7 +69,9 @@ export function ComparePage() {
     onSuccess: (data) => {
       qc.setQueryData(['comparison', data.id], data);
       void qc.invalidateQueries({ queryKey: ['comparisons'] });
-      navigate(`/compare/${data.id}`);
+      // The project travels with the step. Without it the comparison detail page, and every step after
+      // it, would have to ask which migration this belongs to.
+      navigate(`/compare/${data.id}${projectId ? `?projectId=${projectId}` : ''}`);
     },
   });
 
@@ -95,17 +97,28 @@ export function ComparePage() {
     target &&
     (run.data.sourceEnvironment.id !== source.id || run.data.targetEnvironment.id !== target.id);
 
-  if (!ready) {
+  /**
+   * Viewing a comparison that already exists needs no project.
+   *
+   * The run records the two environments it compared, so it is self-describing. Requiring a `projectId`
+   * here broke the moment somebody ran one: starting a comparison navigates to its own URL, which carries
+   * no query string, and the page then claimed it did not know which two systems to compare — about a
+   * comparison it was in the middle of displaying.
+   */
+  if (!ready && !comparisonId) {
     return (
       <>
-        <WizardSteps current={2} links={{ 1: '/environments' }} />
+        <WizardSteps current={2} links={{ 1: projectId ? `/projects/${projectId}` : '/projects' }} />
         <EmptyState
           icon={<GitCompareArrows className="h-8 w-8" />}
-          title="Select a source and target first"
-          description="Choose both environments to analyze their differences."
+          title="Open this from a migration"
+          description="Comparing two schemas needs to know which two. A migration's two ends belong to the migration itself, so this page is reached from the migration project that has them."
           action={
-            <Button variant="primary" onClick={() => navigate('/environments')}>
-              Select environments
+            <Button
+              variant="primary"
+              onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')}
+            >
+              Open the migration project
             </Button>
           }
         />
@@ -149,7 +162,15 @@ export function ComparePage() {
               />
             )}
             {completed && !pairMismatch && (
-              <Button variant="primary" onClick={() => navigate('/migration/new')}>
+              <Button
+                variant="primary"
+                /*
+                 * The project travels with the step. Every screen in a migration needs to know which
+                 * migration it is part of, and the moment one link drops it the next page asks the user
+                 * to start again — which is what a global "current source and target" used to paper over.
+                 */
+                onClick={() => navigate(`/migration/new${projectId ? `?projectId=${projectId}` : ''}`)}
+              >
                 Continue: Select tables
               </Button>
             )}

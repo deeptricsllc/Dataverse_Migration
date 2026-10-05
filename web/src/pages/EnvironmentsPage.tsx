@@ -8,7 +8,6 @@ import type {
 import { CONNECTION_TYPE_LABELS, isSqlConnection, isStagedConnection } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRight,
   Check,
   CheckCircle2,
   Cloud,
@@ -28,7 +27,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import { StagedSourceCard } from '../components/StagedSourceCard';
 import {
@@ -232,7 +231,6 @@ function DeleteConnectionModal({
 
 export function EnvironmentsPage() {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const { user } = useSession();
   const workspace = useWorkspace();
   const [search, setSearch] = useState('');
@@ -349,9 +347,6 @@ export function EnvironmentsPage() {
     await workspace.setWorkspace(next);
   };
 
-  const bothConnected =
-    workspace.source?.connectionStatus === 'CONNECTED' && workspace.target?.connectionStatus === 'CONNECTED';
-
   return (
     <>
       {/*
@@ -419,41 +414,6 @@ export function EnvironmentsPage() {
         </div>
       )}
 
-      {workspace.ready && (
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
-          <div className="text-sm text-brand-900">
-            <span className="font-semibold">{workspace.source!.displayName}</span>{' '}
-            <ArrowRight className="inline h-3.5 w-3.5" />{' '}
-            <span className="font-semibold">{workspace.target!.displayName}</span>
-            {!bothConnected && (
-              <span className="ml-2 text-brand-800">— test both connections before analyzing.</span>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {!bothConnected && (
-              <Button
-                size="sm"
-                loading={test.isPending}
-                onClick={async () => {
-                  await test.mutateAsync(workspace.source!);
-                  await test.mutateAsync(workspace.target!);
-                }}
-              >
-                Verify both connections
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={!bothConnected}
-              onClick={() => navigate('/compare')}
-            >
-              Continue to Analyze
-            </Button>
-          </div>
-        </div>
-      )}
-
       {(envs.isLoading || (discover.isPending && list.length === 0)) && (
         <Spinner label="Discovering environments…" />
       )}
@@ -470,8 +430,6 @@ export function EnvironmentsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((env) => {
-          const isSource = workspace.source?.id === env.id;
-          const isTarget = workspace.target?.id === env.id;
           // Dataverse without the Dataverse API is unusable; a SQL connection always is.
           const usable = env.connectionType !== 'DATAVERSE' || env.dataverseAvailable;
           const staged = isStagedConnection(env.connectionType);
@@ -485,14 +443,7 @@ export function EnvironmentsPage() {
             <article
               key={env.id}
               data-testid={`connection-card-${env.displayName}`}
-              className={cx(
-                'flex flex-col rounded-lg border bg-white p-4 shadow-sm',
-                isSource
-                  ? 'border-[var(--color-source)] ring-1 ring-[var(--color-source)]'
-                  : isTarget
-                    ? 'border-[var(--color-target)] ring-1 ring-[var(--color-target)]'
-                    : 'border-slate-200',
-              )}
+              className="flex flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
             >
               {/* Inner wrapper keeps the original env-card test hook while the card gains its own. */}
               <div data-testid={`env-card-${env.displayName}`} className="flex flex-1 flex-col">
@@ -502,16 +453,6 @@ export function EnvironmentsPage() {
                     <p className="truncate font-mono text-xs text-slate-500">{env.url}</p>
                   </div>
                   <div className="flex flex-none flex-col items-end gap-1">
-                    {isSource && (
-                      <span className="rounded bg-[var(--color-source-soft)] px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-[var(--color-source)]">
-                        SOURCE
-                      </span>
-                    )}
-                    {isTarget && (
-                      <span className="rounded bg-[var(--color-target-soft)] px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-[var(--color-target)]">
-                        TARGET
-                      </span>
-                    )}
                     {(env.provider === 'demo' || env.provider === 'demosql') && (
                       <Pill tone="amber">DEMO</Pill>
                     )}
@@ -562,25 +503,6 @@ export function EnvironmentsPage() {
                       Test connection
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant={isSource ? 'primary' : 'secondary'}
-                    disabled={isSource || workspace.saving || !usable}
-                    onClick={() => select('source', env)}
-                  >
-                    {isSource ? 'Source' : 'Set as source'}
-                  </Button>
-                  {/* A file can never be written to, so it is never offered as a target. */}
-                  {!staged && (
-                    <Button
-                      size="sm"
-                      variant={isTarget ? 'primary' : 'secondary'}
-                      disabled={isTarget || workspace.saving || !usable}
-                      onClick={() => select('target', env)}
-                    >
-                      {isTarget ? 'Target' : 'Set as target'}
-                    </Button>
-                  )}
                   {editable && (
                     <>
                       <Button
@@ -613,14 +535,6 @@ export function EnvironmentsPage() {
       {test.error && (
         <div className="mt-4">
           <ErrorState error={test.error} />
-        </div>
-      )}
-      {list.length > 0 && !workspace.ready && (
-        <div className="mt-6">
-          <Callout tone="info" title="Choose a source and a target">
-            A source and a target can be any two connections — Dataverse or SQL. The same connection cannot be
-            both. Your selection is remembered for your next visit.
-          </Callout>
         </div>
       )}
       {list.some((e) => isSqlConnection(e.connectionType)) && (

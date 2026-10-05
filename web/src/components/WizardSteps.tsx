@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { cx } from './ui';
 
 export const WIZARD_STEPS = [
-  'Select environments',
+  // The migration's two ends are chosen on the migration itself, not by picking environments
+  // application-wide. The old label described the old model.
+  'Source and target',
   'Analyze',
   'Select tables',
   'Review dependencies',
@@ -26,8 +28,8 @@ export function WizardSteps({
   links?: Partial<Record<number, string>>;
 }) {
   return (
-    <nav aria-label="Migration workflow" className="mb-6 overflow-x-auto">
-      <ol className="flex min-w-max items-center gap-1">
+    <nav aria-label="Migration workflow" className="mb-6">
+      <ol className="flex flex-wrap items-center gap-1">
         {WIZARD_STEPS.map((label, i) => {
           const step = i + 1;
           const done = step < current;

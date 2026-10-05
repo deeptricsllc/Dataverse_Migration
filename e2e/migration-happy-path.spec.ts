@@ -1,10 +1,32 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 /**
  * Owner acceptance journey in DEMO MODE:
  * login → environments → source/target → verify → analyze → schema diff → select tables →
  * dependencies → mapping → plan review → execute → monitor → validate → report → reopen history.
  */
+/**
+ * A migration's two ends belong to the migration.
+ *
+ * This used to begin on Connections, marking one connection "the source" and another "the target" for the
+ * whole application, and every later step read that global state. That is the old product model, and a
+ * test that drives it keeps it alive: it would have gone on passing while the product said something the
+ * architecture no longer meant.
+ *
+ * The project is created with its own two ends, and the plan is built inside it.
+ */
+const createMigrationProject = async (page: Page, name: string, source: string, target: string) => {
+  await page.goto('/projects');
+  await page.getByTestId('new-project').click();
+  await page.getByTestId('project-kind').selectOption('MIGRATION');
+  await page.getByTestId('project-name').fill(name);
+  await page.getByLabel('Source').selectOption({ label: source });
+  await page.getByLabel('Target').selectOption({ label: target });
+  await page.getByTestId('create-project').click();
+  await page.waitForURL(/\/projects\/[0-9a-f-]{36}/);
+  return page.url().split('/projects/')[1].split(/[?#]/)[0];
+};
+
 test('demo happy path: plan, migrate and validate', async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on('console', (msg) => {
@@ -28,32 +50,52 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(qaCard).toBeVisible();
   await expect(page.getByTestId('env-card-DeepTrics UAT')).toBeVisible();
 
-  // Tolerate an environment where the workspace was already selected by an earlier run.
-  const select = async (card: Locator, action: string, selected: string) => {
-    const button = card.getByRole('button', { name: action });
-    if (await button.count()) await button.click();
-    await expect(card.getByRole('button', { name: selected, exact: true })).toBeVisible();
-  };
-  await select(devCard, 'Set as source', 'Source');
-  await select(qaCard, 'Set as target', 'Target');
-  await expect(page.getByTestId('workspace-source')).toContainText('DeepTrics Development');
-  await expect(page.getByTestId('workspace-target')).toContainText('DeepTrics QA');
-
-  // Failing environment shows a clear error.
+  // A connection that cannot be reached still says so plainly, on the connection itself.
   const prodCard = page.getByTestId('env-card-DeepTrics Production');
   await prodCard.getByRole('button', { name: 'Test connection' }).click();
   await expect(prodCard.getByText(/not a member of the organization/)).toBeVisible();
 
-  const verify = page.getByRole('button', { name: 'Verify both connections' });
-  if (await verify.count()) await verify.click();
-  await expect(devCard.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(qaCard.getByText('Connected', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Continue to Analyze' }).click();
+  // Connections carry no role: there is nothing here that makes one "the source".
+  await expect(page.getByRole('button', { name: 'Set as source' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Set as target' })).toHaveCount(0);
+
+  // Testing a connection is a thing you do to a connection, which is why it stayed on this page.
+  for (const card of [devCard, qaCard]) {
+    const test = card.getByRole('button', { name: 'Test connection' });
+    if (await test.count()) await test.click();
+    await expect(card.getByText('Connected', { exact: true })).toBeVisible({ timeout: 60_000 });
+  }
+
+  // The migration owns its two ends.
+  const projectId = await createMigrationProject(
+    page,
+    `Happy path ${Date.now()}`,
+    'DeepTrics Development',
+    'DeepTrics QA',
+  );
+  // The project owns its two ends. Asserted before going on, because a comparison with no sides shows an
+  // empty state and the failure then points at the comparison rather than at the setup.
+  const ends = await page.evaluate(async (id) => {
+    const p = (await (await fetch(`/api/projects/${id}`)).json()) as {
+      sourceEnvironment: { displayName: string } | null;
+      targetEnvironment: { displayName: string } | null;
+    };
+    return {
+      source: p.sourceEnvironment?.displayName ?? null,
+      target: p.targetEnvironment?.displayName ?? null,
+    };
+  }, projectId);
+  expect(ends).toEqual({ source: 'DeepTrics Development', target: 'DeepTrics QA' });
+
+  await page.goto(`/compare?projectId=${projectId}`);
 
   // 3. Analyze & schema diff
   await expect(page).toHaveURL(/\/compare/);
   // Fresh environment shows "Analyze now"; one with an earlier comparison shows "Re-analyze".
   await clickEither(page, /^Analyze now$|^Re-analyze \(refresh metadata\)$/);
+  // Starting a comparison navigates to its own URL. The project has to survive that, or every later
+  // step asks the user which migration they meant.
+
   await expect(page.getByRole('button', { name: /Tables compared/ })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('button', { name: /Potentially incompatible/ })).toBeVisible();
   await page.getByTestId('diff-row-account').click();
@@ -88,7 +130,11 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByTestId('mapping-ownerid')).toContainText('Ignored');
 
   // 6b. User mapping and ownership/audit options
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'User mapping' }).click();
+  /*
+   * Reached as a step of this migration, not from global navigation. Matching people between two systems
+   * is only meaningful once you know which two, so it is no longer a destination of its own.
+   */
+  await page.goto(`/users?projectId=${projectId}`);
   await clickEither(page, /^Load and match users$|^Refresh directories$/);
   await expect(page.getByTestId('principal-Priya Patel')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('principal-Priya Patel')).toContainText('entra object id');

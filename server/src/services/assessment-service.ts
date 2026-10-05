@@ -21,7 +21,8 @@ import {
   stagedTables,
   users,
 } from '../db/schema';
-import { notFound } from '../lib/errors';
+import { badRequest, notFound } from '../lib/errors';
+import { unresolvableDatasets } from './dataset-resolution';
 import type { AnalysisService } from './analysis-service';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
@@ -297,8 +298,38 @@ export class AssessmentService {
     opts: { all?: boolean } = {},
   ): Promise<{ started: string[]; skipped: { dataset: string; reason: string }[] }> {
     const assessment = await this.forProject(ctx, projectId);
+
+    /**
+     * Analysis needs a dataset, and a connection is not one.
+     *
+     * Rejected here rather than queued and failed, because a request that cannot succeed should be
+     * refused when it is made. The previous behaviour accepted it, queued a run, and reported the result
+     * as a failed analysis — which reads as "the product is broken" rather than "you have not chosen any
+     * data yet". The second is true and is the thing the person can act on.
+     */
+    if (assessment.datasets.length === 0) {
+      throw badRequest(
+        'This project has no datasets yet, so there is nothing to analyse. Add a file, a table or a list first.',
+      );
+    }
+    const sources = await this.db
+      .select({ environment: environments })
+      .from(projectSources)
+      .innerJoin(environments, eq(environments.id, projectSources.environmentId))
+      .where(eq(projectSources.projectId, projectId));
+    const unusable = await unresolvableDatasets(
+      this.db,
+      sources.map((s) => s.environment),
+    );
+    if (unusable.length === sources.length) {
+      const first = unusable[0]!;
+      throw badRequest(`${first.resolution.message} ${first.resolution.whatToDo}`);
+    }
+
     const started: string[] = [];
     const skipped: { dataset: string; reason: string }[] = [];
+    // A dataset that cannot be read is skipped with its own reason rather than queued to fail.
+    const unusableIds = new Set(unusable.map((u) => u.environment.id));
 
     for (const dataset of assessment.datasets) {
       if (dataset.state === 'QUEUED' || dataset.state === 'RUNNING') {
@@ -307,6 +338,11 @@ export class AssessmentService {
       }
       if (!opts.all && dataset.state === 'ANALYSED') {
         skipped.push({ dataset: dataset.name, reason: 'already analysed and unchanged' });
+        continue;
+      }
+      if (unusableIds.has(dataset.environmentId)) {
+        const why = unusable.find((u) => u.environment.id === dataset.environmentId)!.resolution;
+        skipped.push({ dataset: dataset.name, reason: why.message });
         continue;
       }
       await this.analysis.create(ctx, projectId, { environmentId: dataset.environmentId });

@@ -12,6 +12,7 @@ import {
   users,
 } from '../db/schema';
 import { badRequest, conflict, notFound } from '../lib/errors';
+import { resolveDataset } from './dataset-resolution';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { envRef } from './env-ref';
@@ -322,6 +323,19 @@ export class ProjectService {
     }
     // Accessible rather than merely existing: a source somebody cannot open is not a source they can add.
     const env = await this.environmentsSvc.getAccessible(ctx, environmentId);
+
+    /**
+     * A connection is not a dataset.
+     *
+     * Authenticating to SharePoint is not choosing a list, and creating a file source is not uploading a
+     * file. Before this check, a connection with nothing in it could be added here and analysed — the
+     * request was accepted and failed later, so the user met it as a defect rather than as a choice they
+     * had not made yet.
+     */
+    const resolution = await resolveDataset(this.db, env);
+    if (!resolution.resolves) {
+      throw badRequest(`${resolution.message} ${resolution.whatToDo}`);
+    }
 
     const existing = await this.sourceRows(projectId);
     if (existing.some((r) => r.environmentId === env.id)) {

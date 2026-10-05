@@ -14,8 +14,9 @@ const TOP_LEVEL: { path: string; proof: RegExp }[] = [
   { path: '/', proof: /Welcome, Demo/ },
   { path: '/projects', proof: /^Projects$/ },
   { path: '/environments', proof: /Connections/ },
-  { path: '/compare', proof: /Schema comparison/ },
-  { path: '/users', proof: /User mapping/ },
+  // Reached as a step of a migration now, so the bare route correctly asks which migration.
+  { path: '/compare', proof: /Schema comparison|Open this from a migration/ },
+  { path: '/users', proof: /User mapping|Open this from a migration/ },
   { path: '/migration', proof: /Migration plans/ },
   { path: '/validation', proof: /Validation/ },
   { path: '/runs', proof: /Runs/ },
@@ -112,12 +113,15 @@ test('every screen renders without a console error or an error card', async ({ p
   await page.getByTestId('create-project').click();
   await expect(page.getByRole('heading', { name: 'Launch migration' })).toBeVisible();
   await assertNoStuckState(page, 'migration project', problems);
+  const migrationProjectId = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
 
   // Every step of the plan editor, since each is a separate screen in practice.
   current = 'create a plan';
-  await page.goto('/environments');
-  await setWorkspace(page, 'Legacy SQL Server (Demo)', 'DeepTrics QA');
-  await page.goto('/migration/new');
+  /*
+   * The plan is built inside the migration that owns it. There is no global "current source and target"
+   * to set first — that was the old model — so the route carries the project instead.
+   */
+  await page.goto(`/migration/new?projectId=${migrationProjectId}`);
   await expect(page.getByRole('heading', { name: 'Select tables to migrate' })).toBeVisible({
     timeout: 60_000,
   });
@@ -149,29 +153,4 @@ async function assertNoStuckState(page: Page, where: string, problems: string[])
   if (await spinners.count()) {
     problems.push(`${where}: still loading after the page settled`);
   }
-}
-
-/**
- * The source and target the older screens read from.
- *
- * Waits for each selection to take effect rather than firing and hoping: the buttons only appear once
- * the connection cards have loaded, and the choice is saved through a request.
- */
-async function setWorkspace(page: Page, source: string, target: string): Promise<void> {
-  const sourceCard = page.getByTestId(`env-card-${source}`);
-  const targetCard = page.getByTestId(`env-card-${target}`);
-  await expect(sourceCard).toBeVisible({ timeout: 60_000 });
-  await expect(targetCard).toBeVisible({ timeout: 60_000 });
-
-  const setSource = sourceCard.getByRole('button', { name: 'Set as source' });
-  if (await setSource.count()) await setSource.click();
-  await expect(sourceCard.getByRole('button', { name: 'Source', exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
-
-  const setTarget = targetCard.getByRole('button', { name: 'Set as target' });
-  if (await setTarget.count()) await setTarget.click();
-  await expect(targetCard.getByRole('button', { name: 'Target', exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
 }

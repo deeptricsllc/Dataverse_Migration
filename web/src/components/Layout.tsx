@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Database,
   FolderKanban,
-  GitCompareArrows,
   History,
   ScrollText,
   UserCog,
@@ -14,38 +13,40 @@ import {
   Lock,
   LogOut,
   Settings,
-  ShieldCheck,
   Stethoscope,
-  Truck,
-  Users,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { post, setCsrfToken } from '../lib/api';
 import { useSession, useWorkspace } from '../lib/session';
 import { PRODUCT_NAME, PRODUCT_SHORT_NAME, VENDOR_NAME } from '@shared/product';
 import { cx } from './ui';
 
+/**
+ * Navigation, built from what somebody is trying to do rather than from the parts the product is made of.
+ *
+ * Schema comparison, user mapping, migration and validation used to sit here as top-level destinations.
+ * Each is a *step inside a migration*, and promoting them to the shell is what made the product read as
+ * several technical workflows sharing a sidebar: a person who had not yet chosen anything to migrate was
+ * being offered "User mapping" as somewhere to go.
+ *
+ * Projects is the unit of work. Connections is the infrastructure that supports it. Audit is the record.
+ * Everything else is administration, and is grouped as such.
+ *
+ * The removed routes still resolve, so no link anybody saved is broken; they are reached from the project
+ * they belong to.
+ */
 const NAV = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/', label: 'Home', icon: LayoutDashboard, end: true },
   { to: '/projects', label: 'Projects', icon: FolderKanban },
   { to: '/environments', label: 'Connections', icon: Database },
-  // "Compare" and the "Comparison & validation" project kind were two different features
-  // sharing a word: this one compares schemas, that one reconciles records. Routes are
-  // unchanged so existing links keep working.
-  { to: '/compare', label: 'Schema comparison', icon: GitCompareArrows },
-  { to: '/users', label: 'User mapping', icon: Users },
-  { to: '/migration', label: 'Migration', icon: Truck },
-  { to: '/validation', label: 'Validation', icon: ShieldCheck },
-  { to: '/runs', label: 'Runs', icon: History },
-  // Two destinations the roles and the audit trail never had. Audit lived inside Settings, which is where
-  // a feature goes when nobody has decided what it is, and Team did not exist at all — so four workspace
-  // roles were enforced on every request with no way to assign one.
-  { to: '/team', label: 'Team', icon: UserCog },
   { to: '/audit', label: 'Audit', icon: ScrollText },
-  // Read-only checks of the Microsoft connection specifically, in a product that also
-  // migrates SQL Server, PostgreSQL, MySQL and files. "Diagnostics" promised the whole
-  // platform and delivered one provider.
+];
+
+/** Administration: real, occasionally needed, and not what the product is for. */
+const ADMIN_NAV = [
+  { to: '/runs', label: 'Runs', icon: History },
+  { to: '/team', label: 'Team', icon: UserCog },
   { to: '/diagnostics', label: 'Microsoft checks', icon: Stethoscope },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -189,7 +190,6 @@ export function WorkspaceHeader() {
 
 export function Layout() {
   const { user, realTenantReadOnly } = useSession();
-  const location = useLocation();
   // Project, analysis, comparison, run and report pages state their own source and target, so the
   // global source→target strip would only repeat or contradict them. A run reached from a project
   // is the clear case: the page says "Development → UAT" and the strip above it said "Legacy SQL
@@ -197,22 +197,6 @@ export function Layout() {
   //
   // The validation *list* keeps it, because the "validate environment tables" card on that page
   // acts on the global source and target and needs to say which ones.
-  const path = location.pathname;
-  const showWorkspace =
-    !['/', '/settings', '/runs'].includes(path) &&
-    !path.startsWith('/projects') &&
-    !path.startsWith('/analyses') &&
-    /**
-     * An analysis has datasets, not a source and a target.
-     *
-     * The strip is the migration model made visible, and showing it above an analysis workspace
-     * contradicted the entire point of that workspace: the first thing on a screen about understanding
-     * four spreadsheets was a banner asking which environment they were being migrated into.
-     */
-    !path.startsWith('/analysis/') &&
-    !path.startsWith('/data-comparisons') &&
-    !path.startsWith('/runs/') &&
-    !(path.startsWith('/validation/') && path !== '/validation');
   return (
     <div className="flex h-full">
       <aside className="hidden w-60 flex-none flex-col border-r border-slate-200 bg-slate-900 text-slate-300 md:flex">
@@ -242,6 +226,30 @@ export function Layout() {
               {label}
             </NavLink>
           ))}
+
+          {/*
+            Administration, below a divider. Present because it is occasionally needed, secondary because
+            it is not what somebody opens the product to do.
+          */}
+          <div className="!mt-5 border-t border-slate-800 pt-3">
+            {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) =>
+                  cx(
+                    'flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors',
+                    isActive
+                      ? 'bg-slate-800 text-white'
+                      : 'text-slate-400 hover:bg-slate-800/60 hover:text-white',
+                  )
+                }
+              >
+                <Icon className="h-3.5 w-3.5" aria-hidden />
+                {label}
+              </NavLink>
+            ))}
+          </div>
         </nav>
         <div className="px-5 py-4 text-[11px] leading-relaxed text-slate-500">
           Know what will happen before migration. Migrate safely. Know exactly what happened afterward.
@@ -300,11 +308,6 @@ export function Layout() {
           </nav>
           <UserMenu />
         </header>
-        {showWorkspace && (
-          <div className="border-b border-slate-200 bg-slate-100/70 px-6 py-2">
-            <WorkspaceHeader />
-          </div>
-        )}
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-7xl px-6 py-6">
             <Outlet />

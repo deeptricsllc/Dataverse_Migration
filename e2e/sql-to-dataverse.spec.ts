@@ -25,22 +25,38 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   await expect(sqlCard).toContainText('SQL Server');
   await expect(sqlCard).toContainText('IIC_Legacy');
 
-  await setWorkspace(page, 'Legacy SQL Server (Demo)', 'DeepTrics QA');
-
-  // 3. Verify both connections, then analyze. The SQL test is read-only: it reads the server
-  // version and the catalog, and reports write permission as "not tested".
-  const verify = page.getByRole('button', { name: 'Verify both connections' });
-  if (await verify.count()) await verify.click();
+  // 3. Test the connection, which is a thing you do to a connection. The SQL test is read-only: it
+  // reads the server version and the catalog, and reports write permission as "not tested".
+  const testSql = sqlCard.getByRole('button', { name: 'Test connection' });
+  if (await testSql.count()) await testSql.click();
   await expect(sqlCard.getByText('Connected', { exact: true })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Continue to Analyze' }).click();
-  await expect(page).toHaveURL(/\/compare/);
+
+  /*
+   * The migration owns its two ends. This used to begin by marking one connection "the source" for the
+   * whole application; a migration's ends belong to the migration.
+   */
+  await page.goto('/projects?new=1');
+  await page.getByTestId('project-kind').selectOption('MIGRATION');
+  await page.getByTestId('project-name').fill(`SQL to Dataverse ${Date.now()}`);
+  await page.getByLabel('Source').selectOption({ label: 'Legacy SQL Server (Demo)' });
+  /*
+   * UAT, not QA. The happy-path journey migrates into QA, and the product refuses a second migration
+   * into a target that already has one running — correctly. Two journeys sharing a target made that
+   * guard look like a defect in this test.
+   */
+  await page.getByLabel('Target').selectOption({ label: 'DeepTrics UAT' });
+  await page.getByTestId('create-project').click();
+  await page.waitForURL(/\/projects\/[0-9a-f-]{36}/);
+  const projectId = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
+
+  await page.goto(`/compare?projectId=${projectId}`);
   await clickEither(page, /^Analyze now$|^Re-analyze \(refresh metadata\)$/);
   await expect(page.getByRole('button', { name: /Tables compared/ })).toBeVisible({ timeout: 120_000 });
 
   // 4. Select the SQL tables to migrate. Navigating directly keeps this independent of whether
   // the deployment already holds a comparison or a plan for this pair.
   await expect(page.getByRole('button', { name: 'Continue: Select tables' })).toBeVisible();
-  await page.goto('/migration/new');
+  await page.goto(`/migration/new?projectId=${projectId}`);
   await expect(page.getByRole('heading', { name: 'Select tables to migrate' })).toBeVisible();
   await selectTable(page, 'config.Region');
   await selectTable(page, 'dbo.Customer');
@@ -136,7 +152,7 @@ test('demo journey: legacy SQL Server into Dataverse QA', async ({ page }) => {
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   const ack = dialog.getByTestId('ack-warnings');
   if (await ack.isVisible().catch(() => false)) await ack.check();
-  await dialog.getByRole('button', { name: /Write data to DeepTrics QA/ }).click();
+  await dialog.getByRole('button', { name: /Write data to DeepTrics UAT/ }).click();
 
   await expect(page).toHaveURL(/\/runs\//);
   await expect(page.getByText(/Completed/).first()).toBeVisible({ timeout: 180_000 });
@@ -157,17 +173,6 @@ async function clickEither(page: Page, name: RegExp) {
   const button = page.getByRole('button', { name });
   await expect(button.first()).toBeVisible();
   await button.first().click();
-}
-
-async function setWorkspace(page: Page, source: string, target: string) {
-  const sourceCard = page.getByTestId(`env-card-${source}`);
-  const targetCard = page.getByTestId(`env-card-${target}`);
-  const sourceButton = sourceCard.getByRole('button', { name: /Set as source/ });
-  if (await sourceButton.isVisible().catch(() => false)) await sourceButton.click();
-  const targetButton = targetCard.getByRole('button', { name: /Set as target/ });
-  if (await targetButton.isVisible().catch(() => false)) await targetButton.click();
-  await expect(page.getByTestId('workspace-source')).toContainText(source);
-  await expect(page.getByTestId('workspace-target')).toContainText(target);
 }
 
 async function selectTable(page: Page, logicalName: string) {
