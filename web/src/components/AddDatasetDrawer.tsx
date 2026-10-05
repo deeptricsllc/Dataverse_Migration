@@ -911,7 +911,12 @@ function BrowseConnection({
         />
       </label>
 
-      <div className="max-h-80 space-y-4 overflow-y-auto">
+      {/*
+        One scrollbar. Giving this list its own made the panel scroll inside the panel: you scrolled, the
+        wrong pane moved, and a row sat clipped in half at the top of the inner one. The modal already
+        scrolls and the footer is pinned, so the list can simply be as long as it is.
+      */}
+      <div className="space-y-4">
         {[...groups.entries()].map(([schema, inSchema]) => (
           <section key={schema}>
             <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{schema}</h4>
@@ -978,6 +983,16 @@ function BrowseConnection({
   );
 }
 
+/** One cell, rendered the way a person reads it rather than the way the API returns it. */
+function renderValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object' && value !== null && 'logicalName' in value) {
+    // A lookup is a reference to a record elsewhere; its id is noise in a preview.
+    return String((value as { logicalName: string }).logicalName);
+  }
+  return String(value);
+}
+
 /**
  * Enough of one table to know it is the right one.
  *
@@ -1004,6 +1019,9 @@ function ObjectPreview({
   });
 
   const fields = profile.data ? profile.data.nullStats.slice(0, 12) : [];
+  const sample = profile.data?.sampleRecords.slice(0, 5) ?? [];
+  // Enough columns to recognise the table, few enough that the row does not have to be scrolled to read.
+  const sampleColumns = profile.data ? profile.data.nullStats.slice(0, 6).map((f) => f.field) : [];
 
   return (
     <Modal open onClose={onClose} wide title={table}>
@@ -1038,6 +1056,37 @@ function ObjectPreview({
               </tbody>
             </table>
           </div>
+          {/*
+            The values themselves. Column names and null percentages describe the shape; this is what
+            tells somebody they have picked the customer table and not the customer *audit* table, which
+            is the mistake this preview exists to catch.
+          */}
+          {sample.length > 0 && (
+            <div className="max-h-48 overflow-auto rounded border border-slate-100">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-slate-50 text-left">
+                  <tr>
+                    {sampleColumns.map((name) => (
+                      <th key={name} className="whitespace-nowrap px-2 py-1 font-medium text-slate-500">
+                        {name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sample.map((record, i) => (
+                    <tr key={record.id ?? i} className="border-t border-slate-100">
+                      {sampleColumns.map((name) => (
+                        <td key={name} className="whitespace-nowrap px-2 py-1 text-slate-700">
+                          {renderValue(record.values[name])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <p className="text-xs text-slate-400">
             Measured from a sample of {profile.data.sampleSize.toLocaleString()} records.
           </p>

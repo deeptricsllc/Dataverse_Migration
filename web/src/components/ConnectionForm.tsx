@@ -247,7 +247,13 @@ export function ConnectionModal({
       open
       onClose={onClose}
       wide
-      title={connection ? `Edit ${connection.displayName}` : 'Add connection'}
+      title={
+        connection
+          ? `Edit ${connection.displayName}`
+          : initialType
+            ? `Connect to ${CONNECTION_TYPE_LABELS[initialType]}`
+            : 'Add connection'
+      }
       footer={
         isStaged ? (
           <>
@@ -294,7 +300,11 @@ export function ConnectionModal({
       }
     >
       <div className="space-y-4">
-        {!connection && (
+        {/*
+          Asked once. Opened from "add a dataset → SQL Server", the picker was asking a question the person
+          had answered on the previous screen, and offering seven ways to contradict themselves.
+        */}
+        {!connection && !initialType && (
           <fieldset>
             <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">

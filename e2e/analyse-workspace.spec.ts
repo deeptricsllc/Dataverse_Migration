@@ -289,6 +289,16 @@ test('raw files become an assessment without ever leaving the workspace', async 
    */
   await page.getByTestId('add-dataset').click();
   await page.getByTestId('connector-sqlserver').click();
+
+  /*
+   * Creating a connection happens here, and does not ask again what you are connecting to — you said so on
+   * the previous screen, and offering seven ways to contradict yourself is not a choice.
+   */
+  await page.getByTestId('new-connection').click();
+  await expect(page.getByRole('dialog', { name: 'Connect to SQL Server' })).toBeVisible();
+  await expect(page.getByText('What are you connecting to?')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancel' }).first().click();
+
   await page
     .getByTestId(/^choose-connection-/)
     .first()
@@ -309,6 +319,9 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await page.getByTestId('object-row-dbo.Customer').getByRole('button', { name: 'Preview' }).click();
   await expect(page.getByTestId('object-preview')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('object-preview')).toContainText('rows');
+  // Values, not just column names: this is what tells you it is the customer table and not the audit copy.
+  await expect(page.getByTestId('object-preview')).toContainText('CustomerNumber');
+  await expect(page.getByTestId('object-preview')).toContainText('Identified by');
   await page.getByRole('dialog', { name: 'dbo.Customer' }).getByLabel('Close').click();
 
   await page.getByTestId('object-dbo.Customer').check();
