@@ -24,7 +24,13 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const NEWLINE = String.fromCharCode(10);
-const ROOTS = ['web/src', 'shared'];
+/*
+ * The web application, the strings it shares with the server, and the server text that reaches a screen.
+ *
+ * The server was left out of the first version and kept the one sentence this whole standard quotes as
+ * an example of what not to write: a refusal message is interface text wherever it is produced.
+ */
+const ROOTS = ['web/src', 'shared', 'server/src/services', 'server/src/routes'];
 const EXTENSIONS = ['.ts', '.tsx'];
 /** Not interface text: a test name, a fixture, or a file the user never sees the output of. */
 const SKIP = /\.(test|spec)\.tsx?$|[\\/](tests?|__tests__)[\\/]/;

@@ -284,60 +284,60 @@ function nextAction(
 ): MigrationWorkspaceDto['nextAction'] {
   const { status, source, target, plan, readiness, lastRun } = input;
   if (status === 'RUNNING') {
-    return { kind: 'WATCH_RUN', label: 'Watch this run', detail: 'A migration is running now.' };
+    return { kind: 'WATCH_RUN', label: 'Watch this run', detail: 'A migration is running.' };
   }
   if (!source || !plan || plan.datasets === 0) {
     return {
       kind: 'ADD_SOURCE_DATA',
       label: 'Add source data',
-      detail: 'Choose what you want to move. Nothing can be planned until there is something to plan for.',
+      detail: 'Select the data to move.',
     };
   }
   if (!target) {
     return {
       kind: 'CHOOSE_DESTINATION',
       label: 'Choose destination',
-      detail: 'Select where this data should go, so its tables and fields can be mapped against something.',
+      detail: 'Select the system to write to. Mapping needs a target.',
     };
   }
   if (lastRun && lastRun.failed > 0) {
     return {
       kind: 'REVIEW_FAILURES',
       label: `Review ${lastRun.failed.toLocaleString()} failed records`,
-      detail: 'The last run finished with failures. They are listed with the reason each one gave.',
+      detail: 'The last run finished with failures. Each failure lists its reason.',
     };
   }
   if (lastRun?.status === 'COMPLETED') {
     return {
       kind: 'VALIDATE',
       label: 'Validate this run',
-      detail: 'Reconcile what was written against the source, with the run as the starting point.',
+      detail: 'Reconcile the target against the source for this run.',
     };
   }
   if (!readiness) {
     return {
       kind: 'PREPARE',
       label: 'Prepare migration',
-      detail: 'Readiness has not been assessed yet. Preparing checks the mapping, the target and the order.',
+      detail: 'Readiness is not assessed. Preparation checks the mapping, the target and the load order.',
     };
   }
   if (readiness.blockers > 0) {
     return {
       kind: 'RESOLVE_BLOCKERS',
       label: `Resolve ${readiness.blockers} blocker${readiness.blockers === 1 ? '' : 's'}`,
-      detail: 'Execution is refused while any of these stands — by the server, not only by this screen.',
+      detail: 'The server refuses to run a migration with blockers.',
     };
   }
   if (readiness.warnings > 0) {
     return {
       kind: 'REVIEW_WARNINGS',
       label: `Review ${readiness.warnings} warning${readiness.warnings === 1 ? '' : 's'}`,
-      detail: 'Nothing blocks execution. These are the things worth knowing before it starts.',
+      detail: 'No blockers found. Review the warnings before you start.',
     };
   }
   return {
     kind: 'EXECUTE',
     label: 'Start migration',
-    detail: 'Nothing is blocking. The preflight states what will happen before anything is written.',
+    detail: 'No blockers found. Run the preflight to see what the migration will write.',
   };
 }
