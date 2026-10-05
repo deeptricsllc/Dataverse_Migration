@@ -104,55 +104,42 @@ test('a duplicate project name is refused in words a person can act on', async (
   await expect(dialog).not.toContainText('duplicate key');
 });
 
-test('the analysis workspace leads with what was found, and never mentions a target', async ({ page }) => {
+/**
+ * One walk over a finished assessment, rather than four that each rebuild it.
+ *
+ * Each `buildDemo` is a sign-in, four CSV imports and four analyses, and `/api/auth/demo-login` is rate
+ * limited to fifteen a minute on purpose — each one seeds a workspace and runs real work. Four separate
+ * builds here pushed the whole suite over that ceiling and made *other* specs fail at their sign-in.
+ */
+test('the assessment can be read, taken apart and challenged', async ({ page }) => {
   await signIn(page);
   const projectId = await buildDemo(page);
   await page.goto(`/analysis/${projectId}`);
 
-  // The paragraph a person would read aloud, naming the real problem rather than the score.
+  // --- it leads with what was found ----------------------------------------
   const summary = page.getByTestId('executive-summary');
   await expect(summary).toContainText('1,420 records');
   await expect(summary).toContainText('No reliable record identifier');
-
-  // Readiness, with a band and a score.
   await expect(page.getByTestId('readiness-score')).toHaveText('72');
   await expect(page.getByTestId('readiness-band')).toHaveText('Needs attention');
 
-  /**
-   * The negative claim. `main` rather than the whole page, so the assertion is about this workspace and
-   * not about the word appearing in some unrelated navigation item.
-   */
+  // --- and never in migration terms -----------------------------------------
   const main = page.getByRole('main');
   await expect(main).not.toContainText(/\bSOURCE\b/);
   await expect(main).not.toContainText(/\bTARGET\b/);
   await expect(page.getByRole('link', { name: 'Change Environments' })).toHaveCount(0);
-});
 
-test('readiness can be taken apart: a dimension shows its arithmetic and the findings behind it', async ({
-  page,
-}) => {
-  await signIn(page);
-  const projectId = await buildDemo(page);
-  await page.goto(`/analysis/${projectId}`);
-
-  const identity = page.getByRole('button', { name: /Identity & keys/ });
-  // The workings are on the page before anything is clicked.
+  // --- readiness can be taken apart ------------------------------------------
   await expect(page.getByTestId('readiness')).toContainText('100 − 1 critical × 35');
-  await identity.click();
+  await page.getByRole('button', { name: /Identity & keys/ }).click();
+  const identityFinding = page
+    .getByTestId('finding')
+    .filter({ hasText: 'No reliable record identifier' })
+    .first();
+  await expect(identityFinding).toBeVisible();
 
-  // And opening it produces the finding that did the deducting.
-  const finding = page.getByTestId('finding').filter({ hasText: 'No reliable record identifier' }).first();
-  await expect(finding).toBeVisible();
-  await expect(finding).toContainText('Why it matters');
-  await expect(finding).toContainText('What to do');
-});
-
-test('a finding answers all five questions, and its evidence is one click away', async ({ page }) => {
-  await signIn(page);
-  const projectId = await buildDemo(page);
-  await page.goto(`/analysis/${projectId}`);
+  // --- a finding answers the five questions, and its evidence is one click away
   await page.getByRole('tab', { name: /Findings/ }).click();
-
   const finding = page.getByTestId('finding').first();
   await expect(finding).toHaveAttribute('data-severity', 'CRITICAL');
   await expect(finding).toContainText('No reliable record identifier'); // what
@@ -160,36 +147,20 @@ test('a finding answers all five questions, and its evidence is one click away',
   await expect(finding).toContainText('100% of records'); // how much
   await expect(finding).toContainText('Why it matters'); // why
   await expect(finding).toContainText('What to do'); // what next
-
   await finding.getByRole('button', { name: 'Evidence' }).click();
   await expect(finding).toContainText('If migrated as it is:');
-});
 
-test('findings can be filtered down to the ones worth acting on', async ({ page }) => {
-  await signIn(page);
-  const projectId = await buildDemo(page);
-  await page.goto(`/analysis/${projectId}`);
-  await page.getByRole('tab', { name: /Findings/ }).click();
-
+  // --- and the list can be narrowed to what is worth acting on ---------------
   const all = await page.getByTestId('finding').count();
   expect(all).toBeGreaterThan(10);
-
-  // The severity pill is both the filter and the count: "Critical 1".
   await page.getByRole('button', { name: /Critical\s*\d+/ }).click();
   await expect(page.getByTestId('finding')).toHaveCount(1);
-
-  // Search narrows by column, which is how somebody looks for a specific problem.
   await page.getByRole('button', { name: `All ${all}` }).click();
   await page.getByPlaceholder('Column or table').fill('order_date');
   await expect(page.getByTestId('finding').first()).toContainText('order_date');
-});
 
-test('the datasets tab shows what is in the project without migration language', async ({ page }) => {
-  await signIn(page);
-  const projectId = await buildDemo(page);
-  await page.goto(`/analysis/${projectId}`);
+  // --- the datasets tab describes what is being analysed ---------------------
   await page.getByRole('tab', { name: /Datasets/ }).click();
-
   const dataset = page.getByTestId('dataset-card').first();
   await expect(dataset).toContainText('Legacy CRM extract');
   await expect(dataset).toContainText('Files');

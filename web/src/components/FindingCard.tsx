@@ -1,8 +1,21 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Info, OctagonAlert } from 'lucide-react';
-import type { Finding, FindingSeverity } from '@shared/findings';
-import { FINDING_CATEGORY_LABELS } from '@shared/findings';
-import { Button, cx } from './ui';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ChevronDown, Info, OctagonAlert, UserCheck } from 'lucide-react';
+import type {
+  Finding,
+  FindingDisposition,
+  FindingDispositionStatus,
+  FindingSeverity,
+} from '@shared/findings';
+import {
+  dispositionSilences,
+  FINDING_CATEGORY_LABELS,
+  FINDING_DISPOSITIONS,
+  FINDING_DISPOSITION_DESCRIPTIONS,
+  FINDING_DISPOSITION_LABELS,
+} from '@shared/findings';
+import { api } from '../lib/api';
+import { Button, Select, cx } from './ui';
 
 /**
  * One finding, answering the five questions it is required to answer.
@@ -53,9 +66,21 @@ export function SeverityChip({ severity }: { severity: FindingSeverity }) {
   );
 }
 
-export function FindingCard({ finding, defaultOpen = false }: { finding: Finding; defaultOpen?: boolean }) {
+export function FindingCard({
+  finding,
+  defaultOpen = false,
+  projectId,
+  disposition = null,
+}: {
+  finding: Finding;
+  defaultOpen?: boolean;
+  /** Only given where a decision can be recorded. The overview shows findings without the control. */
+  projectId?: string;
+  disposition?: FindingDisposition | null;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const tone = TONE[finding.severity];
+  const settled = dispositionSilences(disposition?.status);
 
   /** "1,420 records (40%)" — the scale of the problem, which decides whether it is worth fixing first. */
   const scale =
@@ -69,7 +94,16 @@ export function FindingCard({ finding, defaultOpen = false }: { finding: Finding
     <article
       data-testid="finding"
       data-severity={finding.severity}
-      className="relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
+      data-disposition={disposition?.status ?? 'OPEN'}
+      className={cx(
+        'relative overflow-hidden rounded-lg border bg-white shadow-sm transition-opacity',
+        /*
+         * A finding somebody has settled is still here, with its evidence intact — the observation did
+         * not stop being true. It is quieter, because a list where the decided and the undecided look
+         * identical is a list nobody can work through.
+         */
+        settled ? 'border-slate-200 opacity-60' : 'border-slate-200',
+      )}
     >
       {/* Severity as a quiet edge rather than a coloured panel: obvious at a glance, calm in a list. */}
       <div className={cx('absolute inset-y-0 left-0 w-1', tone.bar)} aria-hidden />
@@ -85,7 +119,12 @@ export function FindingCard({ finding, defaultOpen = false }: { finding: Finding
             <h3 className="mt-1.5 text-sm font-semibold text-slate-900">{finding.title}</h3>
             {/* Where: dataset, table, column. A finding with no location cannot be acted on. */}
             <p className="mt-0.5 text-xs text-slate-500">
-              {finding.dataset} · {finding.table}
+              {/*
+                A one-file dataset is usually named after the file, so the dataset and the table end up
+                with the same name and the line reads "Customers · Customers · legacy_notes". Saying it
+                once is not losing information; it is not repeating it.
+              */}
+              {finding.dataset === finding.table ? finding.table : `${finding.dataset} · ${finding.table}`}
               {finding.columns.length > 0 && (
                 <>
                   {' · '}
@@ -158,7 +197,107 @@ export function FindingCard({ finding, defaultOpen = false }: { finding: Finding
             </p>
           </div>
         )}
+
+        {projectId && (
+          <DispositionControl projectId={projectId} finding={finding} disposition={disposition} />
+        )}
       </div>
     </article>
+  );
+}
+
+/**
+ * What a person decided, kept visibly apart from what the engine observed.
+ *
+ * Everything above this line is evidence and does not change when a decision is recorded — the finding is
+ * recomputed from the stored profile every time, so an accepted risk still shows the same counts it always
+ * did. This strip is the only part a human writes, and it says who and when, because a decision nobody can
+ * attribute is barely a decision.
+ */
+function DispositionControl({
+  projectId,
+  finding,
+  disposition,
+}: {
+  projectId: string;
+  finding: Finding;
+  disposition: FindingDisposition | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState(disposition?.note ?? '');
+  const queryClient = useQueryClient();
+  const status = disposition?.status ?? 'OPEN';
+
+  const save = useMutation({
+    mutationFn: (next: FindingDispositionStatus) =>
+      api('PUT', `/api/projects/${projectId}/findings/${encodeURIComponent(finding.id)}/disposition`, {
+        status: next,
+        note: note.trim() || null,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assessment', projectId] });
+      setEditing(false);
+    },
+  });
+
+  return (
+    <div data-testid="disposition" className="mt-3 border-t border-slate-100 pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <UserCheck className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Your decision</span>
+        {status !== 'OPEN' && (
+          <span
+            data-testid="disposition-status"
+            className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700"
+          >
+            {FINDING_DISPOSITION_LABELS[status]}
+          </span>
+        )}
+        {disposition && (
+          <span className="text-[11px] text-slate-400">
+            {disposition.decidedBy ? `${disposition.decidedBy} · ` : ''}
+            {new Date(disposition.decidedAt).toLocaleDateString()}
+          </span>
+        )}
+        <Button size="sm" variant="ghost" onClick={() => setEditing(!editing)}>
+          {status === 'OPEN' ? 'Record a decision' : 'Change'}
+        </Button>
+      </div>
+
+      {disposition?.note && !editing && (
+        <p className="mt-1.5 text-xs italic leading-relaxed text-slate-600">“{disposition.note}”</p>
+      )}
+
+      {editing && (
+        <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-3">
+          <Select
+            label="Decision"
+            value={status}
+            onChange={(v) => save.mutate(v as FindingDispositionStatus)}
+            options={FINDING_DISPOSITIONS.map((d) => ({
+              value: d,
+              label: FINDING_DISPOSITION_LABELS[d],
+            }))}
+          />
+          <p className="text-[11px] text-slate-500">{FINDING_DISPOSITION_DESCRIPTIONS[status]}</p>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            placeholder="Why, and who agreed. Optional, and the thing you will want in six months."
+            aria-label="Decision note"
+            className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" variant="primary" loading={save.isPending} onClick={() => save.mutate(status)}>
+              Save decision
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

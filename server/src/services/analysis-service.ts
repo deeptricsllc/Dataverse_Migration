@@ -17,7 +17,15 @@ import {
 } from '../../../shared/domain';
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
-import { analysisFindings, analysisRuns, analysisTables, environments, projects, users } from '../db/schema';
+import {
+  analysisFindings,
+  analysisRuns,
+  analysisTables,
+  environments,
+  projectSources,
+  projects,
+  users,
+} from '../db/schema';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { JobQueue } from '../jobs/queue';
 import { badRequest, errorMessage, notFound } from '../lib/errors';
@@ -64,13 +72,39 @@ export class AnalysisService {
   async create(
     ctx: RequestContext,
     projectId: string,
-    input: { name?: string; tables?: string[]; sampleSize?: number; full?: boolean } = {},
+    input: {
+      name?: string;
+      tables?: string[];
+      sampleSize?: number;
+      full?: boolean;
+      /**
+       * Which dataset to analyse.
+       *
+       * An analysis project has several, and each run covers one — so "analyse this project" is several
+       * runs rather than one, and a dataset added later can be analysed without redoing the others.
+       * Omitted means the primary source, which is what every existing caller means.
+       */
+      environmentId?: string;
+    } = {},
   ): Promise<AnalysisRunDto> {
     const project = await this.projectsSvc.ofKind(ctx, projectId, 'ANALYSIS');
-    if (!project.sourceEnvironmentId) {
-      throw badRequest('Choose the source this project analyses before running an analysis');
+    const wanted = input.environmentId ?? project.sourceEnvironmentId;
+    if (!wanted) {
+      throw badRequest('Add a dataset to this project before running an analysis');
     }
-    const env = await this.environmentsSvc.getAccessible(ctx, project.sourceEnvironmentId);
+    if (input.environmentId) {
+      // A run may only cover a dataset this project actually lists. Otherwise an analysis could be
+      // attributed to a project that has nothing to do with the data in it.
+      const listed = await this.db
+        .select({ id: projectSources.id })
+        .from(projectSources)
+        .where(
+          and(eq(projectSources.projectId, projectId), eq(projectSources.environmentId, input.environmentId)),
+        )
+        .limit(1);
+      if (listed.length === 0) throw badRequest('That dataset is not part of this project');
+    }
+    const env = await this.environmentsSvc.getAccessible(ctx, wanted);
     const tables = [...new Set((input.tables ?? []).map((t) => t.trim()).filter(Boolean))];
     if (tables.length > MAX_TABLES_PER_ANALYSIS) {
       throw badRequest(`An analysis covers at most ${MAX_TABLES_PER_ANALYSIS} tables at a time`);

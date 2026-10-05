@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { FindingDispositionStatus } from '../../../shared/findings';
 import type {
   AnalysisOptions,
   AnalysisStatus,
@@ -1110,6 +1111,37 @@ export const analysisRuns = pgTable(
  * One analysed table. The full column profile is stored because profiling costs a full read of the
  * source: an analysis nobody can come back to next week is not an analysis.
  */
+/**
+ * What a person decided about something the engine observed.
+ *
+ * Separate from the finding on purpose. A finding is evidence — what was measured, when, from what. A
+ * disposition is a judgement about that evidence. Writing the judgement back onto the finding would
+ * destroy the record of what was actually seen, so findings stay derived and never edited, and this is
+ * the only thing a user writes.
+ *
+ * Addressed by the finding's deterministic id rather than a foreign key, because findings are computed
+ * from the stored profiles and a decision has to survive the next analysis run.
+ */
+export const findingDispositions = pgTable(
+  'finding_dispositions',
+  {
+    id: id(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    findingId: text('finding_id').notNull(),
+    status: text('status').$type<FindingDispositionStatus>().notNull(),
+    note: text('note'),
+    decidedByUserId: uuid('decided_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('finding_dispositions_project_finding_uq').on(t.projectId, t.findingId)],
+);
+
 export const analysisTables = pgTable(
   'analysis_tables',
   {

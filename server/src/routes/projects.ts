@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { FINDING_DISPOSITIONS } from '../../../shared/findings';
 import { PROJECT_KINDS, SCHEDULE_MODES, STAGED_SOURCE_KINDS } from '../../../shared/domain';
 import { csvFileName, toCsv } from '../lib/csv';
 import type { Services } from '../services/container';
@@ -133,6 +134,28 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
    * pretending to be one. It is also why this is a POST that takes a while.
    */
   app.post('/api/demo/analysis-project', VERY_EXPENSIVE, async (req) => s.demoAnalysis.build(req.ctx));
+
+  /**
+   * Analyse every dataset in this project that needs it.
+   *
+   * One run per dataset, because each covers one. `all` re-analyses the ones already done as well, which
+   * is what the re-analyse action means after data has changed.
+   */
+  app.post('/api/projects/:id/analyse', VERY_EXPENSIVE, async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { all } = z.object({ all: z.boolean().optional() }).parse(req.body ?? {});
+    return s.assessments.analyseProject(req.ctx, id, { all: all === true });
+  });
+
+  /** What somebody decided about a finding. The engine's evidence is never touched by this. */
+  app.put('/api/projects/:id/findings/:findingId/disposition', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { findingId } = z.object({ findingId: z.string().min(1).max(600) }).parse(req.params);
+    const body = z
+      .object({ status: z.enum(FINDING_DISPOSITIONS), note: z.string().max(2000).nullish() })
+      .parse(req.body);
+    return s.assessments.setDisposition(req.ctx, id, decodeURIComponent(findingId), body);
+  });
 
   app.post('/api/projects/:id/sources', async (req) => {
     const { id } = idParams.parse(req.params);
@@ -500,6 +523,22 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
    * Imports a CSV or workbook. The file arrives base64-encoded in JSON, which keeps the upload on
    * the same CSRF-protected path as every other write and needs no multipart parser.
    */
+  /**
+   * What is in this file, without storing it.
+   *
+   * Sits before the import so somebody can see the sheets, the row counts, the inferred types and a few
+   * rows before deciding to add the dataset. Nothing is written by this call.
+   */
+  app.post('/api/staged-sources/preview', { bodyLimit: UPLOAD_BODY_LIMIT, ...EXPENSIVE }, async (req) => {
+    const body = z
+      .object({ filename: z.string().min(1).max(300), contentBase64: z.string().min(1) })
+      .parse(req.body);
+    return s.stagedSources.previewFile(req.ctx, {
+      filename: body.filename,
+      content: Buffer.from(body.contentBase64, 'base64'),
+    });
+  });
+
   app.post('/api/staged-sources/:id/import', { bodyLimit: UPLOAD_BODY_LIMIT, ...EXPENSIVE }, async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z

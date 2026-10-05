@@ -5,6 +5,8 @@ import {
   type EnvironmentDto,
   type StagedImportResultDto,
   type StagedSourceKind,
+  type StagedPreviewDto,
+  type StagedPreviewTableDto,
   type StagedTableDto,
 } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
@@ -284,6 +286,67 @@ export class StagedSourceService {
    * the values are the better evidence — and the reasoning is then reported the same way it is for a
    * spreadsheet.
    */
+
+  /**
+   * What is in this file, without committing to it.
+   *
+   * Uploading a file and discovering afterwards that the header row was wrong, or that the dates came
+   * through as five-digit numbers, is how somebody ends up with a dataset they have to delete and
+   * re-add. This runs the same reader and the same inference the import does, and returns what they
+   * produced — **and stores nothing**. Nothing in the database changes until the user says to add it.
+   *
+   * The same code path as the import on purpose: a preview produced by a different parser would be a
+   * preview of a different file.
+   */
+  async previewFile(
+    ctx: RequestContext,
+    file: { filename: string; content: Buffer },
+  ): Promise<StagedPreviewDto> {
+    if (file.content.length === 0) throw badRequest('That file is empty');
+    if (file.content.length > MAX_FILE_BYTES) {
+      throw badRequest(
+        `That file is ${Math.round(file.content.length / 1024 / 1024)} MB; the limit is ${MAX_FILE_BYTES / 1024 / 1024} MB. Load an extract this size from a database connection instead.`,
+      );
+    }
+    void ctx;
+    const sheets = readSheets(file.content, file.filename);
+    const tables: StagedPreviewTableDto[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+
+    for (const sheet of sheets) {
+      const prepared = prepareSheet(sheet);
+      if (!prepared) {
+        skipped.push({ name: sheet.name, reason: 'no header row with values beneath it' });
+        continue;
+      }
+      const logicalName = tableNameFor(sheet.name, file.filename);
+      const inferred = inferTable(logicalName, sheet.name || file.filename, prepared.headers, prepared.rows);
+      tables.push({
+        sheetName: sheets.length > 1 ? sheet.name : null,
+        displayName: inferred.displayName,
+        logicalName: inferred.logicalName,
+        rowCount: inferred.rowCount,
+        columnCount: inferred.columns.length,
+        keyColumn: inferred.keyIsSynthetic ? null : inferred.keyColumn,
+        columns: inferred.columns.map((c) => ({
+          name: c.name,
+          type: c.type,
+          blanks: c.blanks,
+          distinct: c.distinct,
+          unique: c.unique,
+          reason: c.reason,
+          semantic: c.semantic,
+        })),
+        // Enough rows to recognise the data, few enough that nothing large reaches a browser.
+        // Rendered the way the importer renders a cell, so the preview shows the value that will land.
+        sampleRows: prepared.rows
+          .slice(0, 10)
+          .map((row) => row.map((cell) => (cell === null || cell === undefined ? '' : String(cell)))),
+      });
+    }
+    return { filename: file.filename, bytes: file.content.length, tables, skipped };
+  }
+
   async importFromSharePointList(
     ctx: RequestContext,
     environmentId: string,

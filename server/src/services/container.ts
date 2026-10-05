@@ -76,7 +76,6 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   // One answer to "should we press the button", assembled from findings that already exist. Built
   // before the run service because the run service asks it before starting anything.
   const readiness = new ReadinessService(db, planning, audit, logger.child({ component: 'readiness' }));
-  const assessments = new AssessmentService(db, logger);
   const runs = new MigrationRunService(
     db,
     config,
@@ -155,6 +154,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     audit,
     logger,
   );
+  const assessments = new AssessmentService(db, analysis, audit, logger);
   const schedules = new ScheduleService(db, runs, audit, logger, alerts);
   const stagedSources = new StagedSourceService(
     db,

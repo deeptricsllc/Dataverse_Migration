@@ -9,7 +9,7 @@ import type { AggregateCheck } from './aggregates';
 import type { ReadinessOverride } from './readiness';
 import type { UniquenessCheck } from './uniqueness';
 import type { SemanticReading } from './semantic-types';
-import type { Finding } from './findings';
+import type { Finding, FindingDisposition } from './findings';
 import type { AnalysisReadiness } from './analysis-readiness';
 import type { ReconciliationEvidence, WriteState } from './write-state';
 
@@ -2180,6 +2180,53 @@ export interface AnalysisTableDetailDto extends AnalysisTableDto {
   findings: AnalysisFindingDto[];
 }
 
+/**
+ * How far an analysis of one dataset has got.
+ *
+ * `STALE` is the one worth naming: the dataset was analysed, and then it changed. Showing the old findings
+ * without saying so is how somebody acts on an assessment of data that no longer exists.
+ */
+export type DatasetAnalysisState = 'NOT_ANALYSED' | 'QUEUED' | 'RUNNING' | 'ANALYSED' | 'STALE' | 'FAILED';
+
+/**
+ * What a file turned out to contain, before anything is stored.
+ *
+ * Produced by the same reader and the same type inference the import uses, so what is shown is what will
+ * be added. Nothing in the database changes to produce one.
+ */
+export interface StagedPreviewDto {
+  filename: string;
+  bytes: number;
+  tables: StagedPreviewTableDto[];
+  /** Sheets that held nothing usable, named with the reason rather than silently dropped. */
+  skipped: { name: string; reason: string }[];
+}
+
+export interface StagedPreviewTableDto {
+  /** Set only for a workbook with more than one sheet, where it is the thing that tells them apart. */
+  sheetName: string | null;
+  displayName: string;
+  logicalName: string;
+  rowCount: number;
+  columnCount: number;
+  /** The column that identifies a row, or null when the file offers none and a row number was used. */
+  keyColumn: string | null;
+  columns: StagedPreviewColumnDto[];
+  sampleRows: string[][];
+}
+
+export interface StagedPreviewColumnDto {
+  name: string;
+  type: AttributeType;
+  blanks: number;
+  distinct: number | null;
+  unique: boolean;
+  /** Why this type was chosen, in one line. */
+  reason: string;
+  /** What the values appear to mean, when that differs from how they are stored. */
+  semantic: SemanticReading | null;
+}
+
 /** One dataset inside an analysis project, with what was found in it. */
 export interface AssessedDatasetDto {
   environmentId: string;
@@ -2187,6 +2234,9 @@ export interface AssessedDatasetDto {
   connectionType: string | null;
   provider: string | null;
   analysed: boolean;
+  state: DatasetAnalysisState;
+  /** Set when the last run failed, so the screen can say what went wrong rather than "not analysed". */
+  failureMessage: string | null;
   analysisRunId: string | null;
   analysedAt: string | null;
   tables: number;
@@ -2211,8 +2261,29 @@ export interface AnalysisAssessmentDto {
   records: number;
   readiness: AnalysisReadiness;
   findings: Finding[];
+  /**
+   * What people have decided about these findings, keyed by finding id.
+   *
+   * Carried beside the findings rather than merged into them, which is the same separation the storage
+   * keeps: the engine's observation and the human's judgement are different kinds of claim and must stay
+   * distinguishable on the screen as well as in the database.
+   */
+  dispositions: FindingDisposition[];
   /** A paragraph assembled from the findings, for somebody who will read it aloud. */
   summary: string;
+  /** Every analysis run in this project, newest first, so a reader can see what changed and when. */
+  runs: AnalysisRunSummaryDto[];
+}
+
+/** One run, for the lineage a reader needs to answer "what changed between analyses". */
+export interface AnalysisRunSummaryDto {
+  id: string;
+  datasetName: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  tables: number;
+  records: number;
 }
 
 export interface AnalysisFindingDto {

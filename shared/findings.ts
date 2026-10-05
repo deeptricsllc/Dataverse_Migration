@@ -783,3 +783,61 @@ function fromSemantic(
   // EMPTY is already covered by the completeness rule, with better evidence. URL needs no decision.
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// What a person decided about a finding
+// ---------------------------------------------------------------------------
+
+/**
+ * The engine observes; a person decides. These are the decisions.
+ *
+ * Deliberately few, and none of them is "dismissed". A finding that somebody waves away without saying
+ * why is indistinguishable from one nobody read, and six months later the difference is the whole
+ * question. Every status other than OPEN is a position somebody has taken and can be asked about.
+ */
+export const FINDING_DISPOSITIONS = [
+  'OPEN',
+  'WILL_FIX',
+  'ACCEPTED_RISK',
+  'NOT_APPLICABLE',
+  'RESOLVED',
+] as const;
+export type FindingDispositionStatus = (typeof FINDING_DISPOSITIONS)[number];
+
+export const FINDING_DISPOSITION_LABELS: Record<FindingDispositionStatus, string> = {
+  OPEN: 'Open',
+  WILL_FIX: 'Will fix',
+  ACCEPTED_RISK: 'Accepted risk',
+  NOT_APPLICABLE: 'Not applicable',
+  RESOLVED: 'Resolved',
+};
+
+/** What each decision means, so two people choosing between them choose the same way. */
+export const FINDING_DISPOSITION_DESCRIPTIONS: Record<FindingDispositionStatus, string> = {
+  OPEN: 'Nobody has decided about this yet.',
+  WILL_FIX: 'This will be corrected in the source before migrating.',
+  ACCEPTED_RISK: 'Understood and accepted as it is. The migration will proceed with this unresolved.',
+  NOT_APPLICABLE: 'Real, but it does not matter for this migration — an obsolete field, say.',
+  RESOLVED: 'Already corrected. The next analysis should no longer find it.',
+};
+
+export interface FindingDisposition {
+  findingId: string;
+  status: FindingDispositionStatus;
+  note: string | null;
+  decidedBy: string | null;
+  decidedAt: string;
+}
+
+/**
+ * Whether a decided finding still counts against readiness.
+ *
+ * A finding somebody has accepted or ruled out is still **shown**, with its evidence intact, because the
+ * observation did not stop being true. It stops counting against the score, because the score answers
+ * "what is left to deal with" and a decision is how something stops being left to deal with.
+ *
+ * `WILL_FIX` deliberately still counts. Intending to fix something is not having fixed it, and a readiness
+ * figure that improved on a promise would be worth nothing.
+ */
+export const dispositionSilences = (status: FindingDispositionStatus | undefined) =>
+  status === 'ACCEPTED_RISK' || status === 'NOT_APPLICABLE' || status === 'RESOLVED';

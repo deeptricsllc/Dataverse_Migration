@@ -1,11 +1,29 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { AnalysisAssessmentDto } from '../../../shared/domain';
-import { findingsForTable, sortFindings, type Finding } from '../../../shared/findings';
+import type { AnalysisAssessmentDto, DatasetAnalysisState } from '../../../shared/domain';
+import {
+  dispositionSilences,
+  findingsForTable,
+  sortFindings,
+  type Finding,
+  type FindingDisposition,
+  type FindingDispositionStatus,
+} from '../../../shared/findings';
 import { assessReadiness, executiveSummary } from '../../../shared/analysis-readiness';
 import type { AppDb } from '../db/client';
-import { analysisRuns, analysisTables, environments, projectSources, projects } from '../db/schema';
+import {
+  analysisRuns,
+  analysisTables,
+  environments,
+  findingDispositions,
+  projectSources,
+  projects,
+  stagedTables,
+  users,
+} from '../db/schema';
 import { notFound } from '../lib/errors';
+import type { AnalysisService } from './analysis-service';
+import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 
 /**
@@ -30,9 +48,21 @@ import type { RequestContext } from './context';
  * tagged with the dataset it came from, the readiness is assessed over all of them together, and the
  * summary is a paragraph about the project rather than about one spreadsheet.
  */
+/**
+ * Whether a dataset changed after it was analysed.
+ *
+ * The second of tolerance is not superstition: an import and the analysis that follows it can land in the
+ * same moment, and a dataset reporting itself stale the instant it finished being analysed would teach
+ * people to ignore the word.
+ */
+const isStale = (changedAt: Date | undefined, analysedAt: Date | null) =>
+  Boolean(changedAt && analysedAt && changedAt.getTime() > analysedAt.getTime() + 1000);
+
 export class AssessmentService {
   constructor(
     private readonly db: AppDb,
+    private readonly analysis: AnalysisService,
+    private readonly audit: AuditService,
     private readonly logger: Logger,
   ) {}
 
@@ -61,13 +91,17 @@ export class AssessmentService {
      * project where three of four datasets have been analysed should report on the three rather than
      * refusing to report at all.
      */
-    const runs = await this.db
+    const allRuns = await this.db
       .select()
       .from(analysisRuns)
-      .where(and(eq(analysisRuns.projectId, projectId), eq(analysisRuns.status, 'COMPLETED')))
+      .where(eq(analysisRuns.projectId, projectId))
       .orderBy(asc(analysisRuns.createdAt));
+    const runs = allRuns.filter((r) => r.status === 'COMPLETED');
     const latestByEnvironment = new Map<string, (typeof runs)[number]>();
     for (const run of runs) latestByEnvironment.set(run.environmentId, run);
+    /** The newest run of any status per dataset, which is what decides whether one is running or failed. */
+    const newestAttemptByEnvironment = new Map<string, (typeof allRuns)[number]>();
+    for (const run of allRuns) newestAttemptByEnvironment.set(run.environmentId, run);
 
     const runIds = [...latestByEnvironment.values()].map((r) => r.id);
     const tables = runIds.length
@@ -77,6 +111,33 @@ export class AssessmentService {
           .where(inArray(analysisTables.analysisRunId, runIds))
           .orderBy(asc(analysisTables.orderIndex), asc(analysisTables.logicalName))
       : [];
+
+    /**
+     * When each dataset's contents last changed.
+     *
+     * For a file dataset this is exact: re-importing writes new `stagedTables` rows and `importedAt`
+     * moves. For a database or a Dataverse environment there is no equivalent — the data changes on
+     * their side without telling us — so those datasets are never reported STALE rather than being
+     * reported fresh on a guess. The limitation is real and is stated in the report rather than papered
+     * over with a timestamp that would mean nothing.
+     */
+    const imports = sources.length
+      ? await this.db
+          .select({ environmentId: stagedTables.environmentId, importedAt: stagedTables.importedAt })
+          .from(stagedTables)
+          .where(
+            inArray(
+              stagedTables.environmentId,
+              sources.map((x) => x.environment.id),
+            ),
+          )
+      : [];
+    const lastChangedByEnvironment = new Map<string, Date>();
+    for (const row of imports) {
+      const current = lastChangedByEnvironment.get(row.environmentId);
+      if (!current || row.importedAt > current)
+        lastChangedByEnvironment.set(row.environmentId, row.importedAt);
+    }
 
     const nameByRun = new Map<string, string>();
     for (const [environmentId, run] of latestByEnvironment) {
@@ -103,18 +164,73 @@ export class AssessmentService {
       profiled: tables.length > 0,
       relationships: tables.some((t) => t.dependsOn.length > 0),
     };
-    const readiness = assessReadiness(findings, assessed);
+
+    /**
+     * Decisions people have recorded, and the effect they have.
+     *
+     * A finding somebody has accepted or ruled out is still returned, with its evidence intact — the
+     * observation did not stop being true because a person decided about it. It stops counting against
+     * readiness, because readiness answers "what is left to deal with".
+     *
+     * `WILL_FIX` deliberately still counts: intending to fix something is not having fixed it, and a
+     * score that improved on a promise would be worth nothing.
+     */
+    const dispositionRows = await this.db
+      .select({ row: findingDispositions, user: users })
+      .from(findingDispositions)
+      .leftJoin(users, eq(users.id, findingDispositions.decidedByUserId))
+      .where(eq(findingDispositions.projectId, projectId));
+    const dispositions: FindingDisposition[] = dispositionRows.map(({ row, user }) => ({
+      findingId: row.findingId,
+      status: row.status,
+      note: row.note,
+      decidedBy: user?.displayName ?? null,
+      decidedAt: row.updatedAt.toISOString(),
+    }));
+    const silenced = new Set(
+      dispositions.filter((d) => dispositionSilences(d.status)).map((d) => d.findingId),
+    );
+    const readiness = assessReadiness(
+      findings.filter((f) => !silenced.has(f.id)),
+      assessed,
+    );
 
     const datasets = sources.map((s) => {
       const run = latestByEnvironment.get(s.environment.id);
+      const attempt = newestAttemptByEnvironment.get(s.environment.id);
       const theirTables = tables.filter((t) => t.analysisRunId === run?.id);
       const theirFindings = findings.filter((f) => f.dataset === s.environment.displayName);
+
+      /**
+       * `STALE` is the state worth having.
+       *
+       * The dataset was analysed, and then it changed — a file re-uploaded, more rows imported. Showing
+       * the old findings without saying so is how somebody acts on an assessment of data that no longer
+       * exists, and there is nothing on the screen to tell them. `updatedAt` on the environment moves
+       * whenever its contents are replaced, so comparing it against the run's completion is enough.
+       */
+      const state: DatasetAnalysisState = !attempt
+        ? 'NOT_ANALYSED'
+        : attempt.status === 'QUEUED'
+          ? 'QUEUED'
+          : attempt.status === 'RUNNING'
+            ? 'RUNNING'
+            : attempt.status === 'FAILED' && (!run || attempt.createdAt > run.createdAt)
+              ? 'FAILED'
+              : run && isStale(lastChangedByEnvironment.get(s.environment.id), run.completedAt)
+                ? 'STALE'
+                : run
+                  ? 'ANALYSED'
+                  : 'NOT_ANALYSED';
+
       return {
         environmentId: s.environment.id,
         name: s.environment.displayName,
         connectionType: s.environment.connectionType,
         provider: s.environment.provider,
         analysed: Boolean(run),
+        state,
+        failureMessage: state === 'FAILED' ? (attempt?.errorMessage ?? 'The analysis failed.') : null,
         analysisRunId: run?.id ?? null,
         analysedAt: run?.completedAt?.toISOString() ?? null,
         tables: theirTables.length,
@@ -139,14 +255,111 @@ export class AssessmentService {
       records,
       readiness,
       findings: sorted,
+      dispositions,
+      runs: allRuns
+        .slice()
+        .reverse()
+        .map((run) => {
+          const theirTables = tables.filter((t) => t.analysisRunId === run.id);
+          return {
+            id: run.id,
+            datasetName:
+              sources.find((s) => s.environment.id === run.environmentId)?.environment.displayName ??
+              'Unknown dataset',
+            status: run.status,
+            startedAt: run.createdAt.toISOString(),
+            completedAt: run.completedAt?.toISOString() ?? null,
+            tables: theirTables.length,
+            records: theirTables.reduce((sum, t) => sum + t.recordCount, 0),
+          };
+        }),
       summary: executiveSummary({
         projectName: project.name,
         datasets: datasets.filter((d) => d.analysed).length,
         tables: tables.length,
         records,
         readiness,
-        findings: sorted,
+        findings: sorted.filter((f) => !silenced.has(f.id)),
       }),
     };
+  }
+
+  /**
+   * Starts an analysis for every dataset that needs one.
+   *
+   * "Needs one" means never analysed, failed, or changed since it was last analysed. `all` includes the
+   * ones that are up to date, which is what a deliberate re-analysis means. Datasets already queued or
+   * running are skipped either way, so pressing the button twice does not double the work.
+   */
+  async analyseProject(
+    ctx: RequestContext,
+    projectId: string,
+    opts: { all?: boolean } = {},
+  ): Promise<{ started: string[]; skipped: { dataset: string; reason: string }[] }> {
+    const assessment = await this.forProject(ctx, projectId);
+    const started: string[] = [];
+    const skipped: { dataset: string; reason: string }[] = [];
+
+    for (const dataset of assessment.datasets) {
+      if (dataset.state === 'QUEUED' || dataset.state === 'RUNNING') {
+        skipped.push({ dataset: dataset.name, reason: 'already being analysed' });
+        continue;
+      }
+      if (!opts.all && dataset.state === 'ANALYSED') {
+        skipped.push({ dataset: dataset.name, reason: 'already analysed and unchanged' });
+        continue;
+      }
+      await this.analysis.create(ctx, projectId, { environmentId: dataset.environmentId });
+      started.push(dataset.name);
+    }
+    this.logger.info({ projectId, started: started.length, skipped: skipped.length }, 'Analysis requested');
+    return { started, skipped };
+  }
+
+  /**
+   * Records what a person decided about a finding.
+   *
+   * Upserted per project and finding, so a decision can be changed. The *history* of decisions is the
+   * audit trail's job rather than this table's — what matters here is that nothing about the finding
+   * itself is written, so the evidence a decision was taken against stays exactly as the engine produced
+   * it and the next analysis recomputes it unchanged.
+   */
+  async setDisposition(
+    ctx: RequestContext,
+    projectId: string,
+    findingId: string,
+    input: { status: FindingDispositionStatus; note?: string | null },
+  ): Promise<AnalysisAssessmentDto> {
+    const assessment = await this.forProject(ctx, projectId);
+    const finding = assessment.findings.find((f) => f.id === findingId);
+    if (!finding) throw notFound('Finding');
+
+    const note = input.note?.trim() || null;
+    const now = new Date();
+    await this.db
+      .insert(findingDispositions)
+      .values({
+        organizationId: ctx.organizationId,
+        projectId,
+        findingId,
+        status: input.status,
+        note,
+        decidedByUserId: ctx.userId,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [findingDispositions.projectId, findingDispositions.findingId],
+        set: { status: input.status, note, decidedByUserId: ctx.userId, updatedAt: now },
+      });
+
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'FINDING_DISPOSITION_SET',
+      outcome: 'SUCCESS',
+      requestId: ctx.requestId,
+      details: { projectId, findingId, status: input.status, hasNote: Boolean(note), title: finding.title },
+    });
+    return this.forProject(ctx, projectId);
   }
 }
