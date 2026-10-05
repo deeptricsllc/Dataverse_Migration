@@ -193,6 +193,22 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
 
   return (
     <div className="space-y-5">
+      {/*
+        The one thing to do next, first.
+        It was at the bottom, which on a 1440-wide laptop put the only sentence that tells somebody what
+        to do below the fold, underneath three cards telling them what is true.
+      */}
+      <Card data-testid="migration-next-action">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Next action</p>
+            <p className="mt-0.5 text-base font-semibold text-slate-900">{w.nextAction.label}</p>
+            <p className="mt-0.5 text-sm text-slate-600">{w.nextAction.detail}</p>
+          </div>
+          <NextActionControls w={w} onSection={onSection} />
+        </div>
+      </Card>
+
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title="Scope" data-testid="migration-scope">
           <p className="text-2xl font-semibold text-slate-900">{describeCount(w.plan.datasets, 'dataset')}</p>
@@ -279,12 +295,6 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
           </ul>
         </Card>
       )}
-
-      <Card title="Next action" data-testid="migration-next-action">
-        <p className="text-sm font-semibold text-slate-900">{w.nextAction.label}</p>
-        <p className="mt-0.5 text-sm text-slate-600">{w.nextAction.detail}</p>
-        <NextActionControls w={w} onSection={onSection} />
-      </Card>
     </div>
   );
 }
@@ -309,21 +319,21 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
   const kind = w.nextAction.kind;
   if (kind === 'RESOLVE_BLOCKERS' || kind === 'REVIEW_WARNINGS') {
     return (
-      <Button className="mt-3" variant="secondary" onClick={() => onSection('mapping')}>
+      <Button variant="secondary" onClick={() => onSection('mapping')}>
         Open mapping
       </Button>
     );
   }
   if (kind === 'REVIEW_FAILURES' && w.lastRun) {
     return (
-      <Button className="mt-3" variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
+      <Button variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
         Review the failures
       </Button>
     );
   }
   if (kind === 'WATCH_RUN' && w.lastRun) {
     return (
-      <Button className="mt-3" variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
+      <Button variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
         Watch this run
       </Button>
     );
@@ -331,7 +341,7 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
   if (kind !== 'EXECUTE' || !plan.data) return null;
 
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
+    <div className="flex flex-none flex-wrap gap-2">
       <Link
         to={`/migration/plans/${plan.data.id}/preflight`}
         className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
