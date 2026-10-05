@@ -63,12 +63,13 @@ are the raw record and a drift check in CI compares them against what the reposi
 
 For whoever runs it or connects it to something.
 
-| Document                                                                                                                       |                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| [MICROSOFT_SETUP.md](MICROSOFT_SETUP.md)                                                                                       | Entra registration, the three decisions people conflate, and the troubleshooting table |
-| [SQL_SERVER_SETUP.md](SQL_SERVER_SETUP.md) · [AZURE_SQL_SETUP.md](AZURE_SQL_SETUP.md) · [POSTGRES_SETUP.md](POSTGRES_SETUP.md) | Connecting each engine                                                                 |
-| [UAT_GUIDE.md](UAT_GUIDE.md)                                                                                                   | Acceptance testing, as a script somebody can follow                                    |
-| [DEMO_SCRIPT.md](DEMO_SCRIPT.md)                                                                                               | Showing the product without it going wrong                                             |
+| Document                                                                                                                       |                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [BRANCHES.md](BRANCHES.md)                                                                                                     | Which branch is active, which is retired, and where a deployment's provenance comes from |
+| [MICROSOFT_SETUP.md](MICROSOFT_SETUP.md)                                                                                       | Entra registration, the three decisions people conflate, and the troubleshooting table   |
+| [SQL_SERVER_SETUP.md](SQL_SERVER_SETUP.md) · [AZURE_SQL_SETUP.md](AZURE_SQL_SETUP.md) · [POSTGRES_SETUP.md](POSTGRES_SETUP.md) | Connecting each engine                                                                   |
+| [UAT_GUIDE.md](UAT_GUIDE.md)                                                                                                   | Acceptance testing, as a script somebody can follow                                      |
+| [DEMO_SCRIPT.md](DEMO_SCRIPT.md)                                                                                               | Showing the product without it going wrong                                               |
 
 ## 5. Pilot documentation
 
