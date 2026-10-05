@@ -1,9 +1,9 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2, Database, FileCode, FileSpreadsheet, Plug, Upload } from 'lucide-react';
 import type { EnvironmentDto, StagedPreviewDto, StagedPreviewTableDto, ProjectDto } from '@shared/domain';
-import { Button, Callout, Card, ErrorState, Field, Modal, Spinner, cx } from './ui';
+import { Button, Callout, Card, Disclosure, ErrorState, Field, Modal, Spinner, cx } from './ui';
 import { api } from '../lib/api';
 
 /**
@@ -235,7 +235,16 @@ function Gallery({ onChoose }: { onChoose: (c: Connector) => void }) {
                     </div>
                     <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{connector.blurb}</p>
                     {connector.caveat && (
-                      <p className="mt-1 text-xs leading-relaxed text-amber-800">{connector.caveat}</p>
+                      <p
+                        className={cx(
+                          'mt-1 text-xs leading-relaxed',
+                          // A limit and a warning are different things, and reading identically made the
+                          // blue "connection only" chip argue with its own amber explanation.
+                          connector.availability === 'SIMULATED' ? 'text-amber-800' : 'text-slate-500',
+                        )}
+                      >
+                        {connector.caveat}
+                      </p>
                     )}
                   </div>
                 </button>
@@ -447,7 +456,7 @@ function FileDataset({
 
           {add.error && <ErrorState error={add.error} />}
 
-          <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+          <div className="sticky bottom-0 -mx-5 -mb-4 flex items-center justify-between gap-2 border-t border-slate-100 bg-white px-5 py-3">
             <Button variant="ghost" onClick={() => fileInput.current?.click()}>
               Choose a different file
             </Button>
@@ -527,72 +536,92 @@ function PreviewTable({
           'No reliable record identifier was detected — rows will be counted rather than matched.'
         )}
       </div>
-      <div className="max-h-56 overflow-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-slate-50 text-left">
-            <tr>
-              <th className="px-3 py-1.5 font-medium text-slate-500">Column</th>
-              <th className="px-3 py-1.5 font-medium text-slate-500">Stored as</th>
-              <th className="px-3 py-1.5 font-medium text-slate-500">Detected meaning</th>
-              <th className="px-3 py-1.5 text-right font-medium text-slate-500">Empty</th>
-            </tr>
-          </thead>
-          <tbody>
-            {table.columns.map((column) => (
-              <tr key={column.name} className="border-t border-slate-100">
-                <td className="px-3 py-1.5 font-mono text-[11px] text-slate-800">{column.name}</td>
-                <td className="px-3 py-1.5 text-slate-600">{column.type}</td>
-                <td className="px-3 py-1.5">
-                  {/*
+      <DetailWrapper selectable={selectable}>
+        <div className="max-h-56 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-left">
+              <tr>
+                <th className="px-3 py-1.5 font-medium text-slate-500">Column</th>
+                <th className="px-3 py-1.5 font-medium text-slate-500">Stored as</th>
+                <th className="px-3 py-1.5 font-medium text-slate-500">Detected meaning</th>
+                <th className="px-3 py-1.5 text-right font-medium text-slate-500">Empty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {table.columns.map((column) => (
+                <tr key={column.name} className="border-t border-slate-100">
+                  <td className="px-3 py-1.5 font-mono text-[11px] text-slate-800">{column.name}</td>
+                  <td className="px-3 py-1.5 text-slate-600">{column.type}</td>
+                  <td className="px-3 py-1.5">
+                    {/*
                     The reason the preview exists. "Integer" is true and useless for a column of Excel
                     serial dates; this is where somebody sees that before the dataset is created.
                   */}
-                  {column.semantic ? (
-                    <span className="text-amber-800">{column.semantic.label}</span>
-                  ) : (
-                    <span className="text-slate-300">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
-                  {column.blanks > 0 ? column.blanks.toLocaleString() : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="border-t border-slate-100 px-3 py-2">
-        <Button size="sm" variant="ghost" onClick={() => setShowRows(!showRows)}>
-          {showRows ? 'Hide sample rows' : `Sample rows (${table.sampleRows.length})`}
-        </Button>
-        {showRows && (
-          <div className="mt-2 max-h-48 overflow-auto rounded border border-slate-100">
-            <table className="w-full text-[11px]">
-              <thead className="bg-slate-50 text-left">
-                <tr>
-                  {table.columns.map((c) => (
-                    <th key={c.name} className="whitespace-nowrap px-2 py-1 font-medium text-slate-500">
-                      {c.name}
-                    </th>
-                  ))}
+                    {column.semantic ? (
+                      <span className="text-amber-800">{column.semantic.label}</span>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
+                    {column.blanks > 0 ? column.blanks.toLocaleString() : '—'}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {table.sampleRows.map((row, i) => (
-                  <tr key={i} className="border-t border-slate-100">
-                    {table.columns.map((c, j) => (
-                      <td key={c.name} className="whitespace-nowrap px-2 py-1 text-slate-700">
-                        {row[j] ?? ''}
-                      </td>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-slate-100 px-3 py-2">
+          <Button size="sm" variant="ghost" onClick={() => setShowRows(!showRows)}>
+            {showRows ? 'Hide sample rows' : `Sample rows (${table.sampleRows.length})`}
+          </Button>
+          {showRows && (
+            <div className="mt-2 max-h-48 overflow-auto rounded border border-slate-100">
+              <table className="w-full text-[11px]">
+                <thead className="bg-slate-50 text-left">
+                  <tr>
+                    {table.columns.map((c) => (
+                      <th key={c.name} className="whitespace-nowrap px-2 py-1 font-medium text-slate-500">
+                        {c.name}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                </thead>
+                <tbody>
+                  {table.sampleRows.map((row, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      {table.columns.map((c, j) => (
+                        <td key={c.name} className="whitespace-nowrap px-2 py-1 text-slate-700">
+                          {row[j] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </DetailWrapper>
     </Card>
+  );
+}
+
+/**
+ * The columns and rows of one sheet, folded away while there is a choice to make.
+ *
+ * A five-sheet workbook rendered five full column tables, so choosing which sheets to take meant
+ * scrolling past four screens of detail you had not asked for. A single-table file has no choice to make,
+ * so its detail is the whole point and stays open.
+ */
+function DetailWrapper({ selectable, children }: { selectable: boolean; children: ReactNode }) {
+  if (!selectable) return <>{children}</>;
+  return (
+    <div className="px-3 py-2">
+      <Disclosure summary={<span className="text-xs text-slate-500">Columns and sample rows</span>}>
+        <div className="-mx-3">{children}</div>
+      </Disclosure>
+    </div>
   );
 }
 

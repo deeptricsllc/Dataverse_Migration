@@ -323,7 +323,8 @@ export class AssessmentService {
         }),
       summary: executiveSummary({
         projectName: project.name,
-        datasets: datasets.filter((d) => d.analysed).length,
+        // Datasets as the user counts them: the sheets and tables, not the connections carrying them.
+        datasets: datasets.filter((d) => d.analysed).reduce((n, d) => n + Math.max(d.objects.length, 1), 0),
         tables: tables.length,
         records,
         readiness,

@@ -82,6 +82,15 @@ export function AnalysisWorkspacePage() {
   if (assessment.error) return <ErrorState error={assessment.error} onRetry={() => assessment.refetch()} />;
   const data = assessment.data!;
   const analysed = data.datasets.filter((d) => d.analysed).length;
+  /*
+   * How many datasets there are, counted the way the list counts them and the way a person would: the
+   * sheets and tables, not the connections carrying them. The header said "1 dataset" above a list of
+   * three, because one upload of a three-sheet workbook is one connection.
+   */
+  const datasetCount = data.datasets.reduce((n, d) => n + Math.max(d.objects.length, 1), 0);
+  const analysedCount = data.datasets
+    .filter((d) => d.analysed)
+    .reduce((n, d) => n + Math.max(d.objects.length, 1), 0);
 
   return (
     <div>
@@ -116,13 +125,13 @@ export function AnalysisWorkspacePage() {
           0 records" beside three files that plainly contain data reads as "these files are empty",
           which is both wrong and the opposite of reassuring.
         */}
-        {data.datasets.length === 0
+        {datasetCount === 0
           ? 'No datasets yet.'
           : analysed === 0
-            ? describeCount(data.datasets.length, 'dataset')
-            : `${describeCount(data.datasets.length, 'dataset')} · ${describeCount(data.tables, 'table')} · ${data.records.toLocaleString()} records`}
-        {analysed < data.datasets.length && data.datasets.length > 0 && (
-          <span className="text-amber-700"> · {data.datasets.length - analysed} not analysed yet</span>
+            ? describeCount(datasetCount, 'dataset')
+            : `${describeCount(datasetCount, 'dataset')} · ${data.records.toLocaleString()} records`}
+        {analysedCount < datasetCount && datasetCount > 0 && (
+          <span className="text-amber-700"> · {datasetCount - analysedCount} not analysed yet</span>
         )}
       </p>
 
@@ -132,7 +141,7 @@ export function AnalysisWorkspacePage() {
           onChange={setSection}
           tabs={[
             { value: 'overview', label: 'Overview' },
-            { value: 'datasets', label: `Datasets (${data.datasets.length})` },
+            { value: 'datasets', label: `Datasets (${datasetCount})` },
             { value: 'findings', label: `Findings (${data.findings.length})` },
           ]}
         />
@@ -196,15 +205,21 @@ function AnalyseButton({
   onAnalyse: (all: boolean) => void;
 }) {
   if (datasets.length === 0) return null;
-  const busy = datasets.filter((d) => d.state === 'QUEUED' || d.state === 'RUNNING').length;
-  const pending = datasets.filter(
-    (d) => d.state === 'NOT_ANALYSED' || d.state === 'STALE' || d.state === 'FAILED',
-  ).length;
+  /*
+   * Counted in datasets as the person sees them. A run covers a whole connection, but "Analyse 1 dataset"
+   * over a workbook they just chose three sheets from describes the machinery rather than the work.
+   */
+  const count = (of: AssessedDatasetDto[]) => of.reduce((n, d) => n + Math.max(d.objects.length, 1), 0);
+  const total = count(datasets);
+  const busy = count(datasets.filter((d) => d.state === 'QUEUED' || d.state === 'RUNNING'));
+  const pending = count(
+    datasets.filter((d) => d.state === 'NOT_ANALYSED' || d.state === 'STALE' || d.state === 'FAILED'),
+  );
 
   if (busy > 0) {
     return (
       <Button variant="primary" disabled loading data-testid="analyse">
-        Analysing {busy} of {datasets.length}
+        Analysing {busy} of {total}
       </Button>
     );
   }
@@ -217,9 +232,9 @@ function AnalyseButton({
     >
       {pending === 0
         ? 'Re-analyse'
-        : pending === datasets.length
-          ? `Analyse ${datasets.length === 1 ? 'dataset' : `${datasets.length} datasets`}`
-          : `Analyse ${pending} of ${datasets.length}`}
+        : pending === total
+          ? `Analyse ${total === 1 ? 'dataset' : `${total} datasets`}`
+          : `Analyse ${pending} of ${total}`}
     </Button>
   );
 }
@@ -549,9 +564,10 @@ function DatasetRowItem({
           {object.origin && object.origin !== object.displayName ? ` · ${object.origin}` : ''}
         </p>
       </div>
-      <p className="flex-none text-right text-xs tabular-nums text-slate-600">
+      {/* One line, so thirty rows stay a column of comparable numbers rather than a stack of blocks. */}
+      <p className="w-44 flex-none text-right text-xs tabular-nums text-slate-600">
         {object.recordCount.toLocaleString()} records
-        <span className="block text-slate-400">{object.columnCount} columns</span>
+        <span className="text-slate-400"> · {object.columnCount} columns</span>
       </p>
       <DatasetState dataset={dataset} />
       {staged && (
