@@ -227,3 +227,104 @@ describe('a blocker is a refusal, not a red badge', () => {
     expect(w.runCount).toBe(0);
   });
 });
+
+/**
+ * The trail says which migration, and a rerun says what it will do.
+ *
+ * Two things the old model could not express. Audit events carried the two environments, which was the
+ * only vocabulary available when source and target were application-wide — and cannot tell two migrations
+ * between the same pair of systems apart. And "will this duplicate data if I run it again" was answered
+ * by a control four clicks inside a wizard step.
+ */
+describe('a migration is traceable and a rerun is predictable', () => {
+  let t: TestApp;
+  let api: ApiClient;
+  let project: ProjectDto;
+  let plan: MigrationPlanDto;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    api = new ApiClient(t.app);
+    await api.demoLogin();
+    const envs = await api.post<EnvironmentDto[]>('/api/environments/discover');
+    const dev = envs.find((e) => e.displayName === 'DeepTrics Development')!;
+    const uat = envs.find((e) => e.displayName === 'DeepTrics UAT')!;
+    project = await api.post<ProjectDto>('/api/projects', {
+      name: `Traceable ${Date.now()}`,
+      kind: 'MIGRATION',
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: uat.id,
+    });
+    plan = await api.post<MigrationPlanDto>('/api/plans', {
+      sourceEnvironmentId: dev.id,
+      targetEnvironmentId: uat.id,
+      projectId: project.id,
+      tables: ['account', 'contact'],
+    });
+  });
+  afterAll(async () => {
+    await t?.close();
+  });
+
+  it('records which migration a configuration change belonged to', async () => {
+    await api.put(`/api/plans/${plan.id}/tables`, { tables: ['account', 'contact', 'product'] });
+
+    const audit = await api.get<{ items: { action: string; projectId: string | null }[] }>('/api/audit');
+    const created = audit.items.find((e) => e.action === 'MIGRATION_PLAN_CREATED');
+    const updated = audit.items.find((e) => e.action === 'MIGRATION_PLAN_UPDATED');
+    expect(created, 'creating the configuration is recorded').toBeTruthy();
+    expect(updated, 'changing its scope is recorded').toBeTruthy();
+    /*
+     * The project, not only the environments. Two migrations between the same pair of systems produce
+     * identical environment columns, so a trail that names only those cannot answer "which migration".
+     */
+    expect(created!.projectId).toBe(project.id);
+    expect(updated!.projectId).toBe(project.id);
+  });
+
+  it('says for every dataset how a rerun will tell an insert from an update', async () => {
+    const current = await api.get<MigrationPlanDto>(`/api/projects/${project.id}/migration/plan`);
+    for (const entity of current.entities) {
+      // Never blank: an unanswered identity question is how a second run creates a second copy.
+      expect(entity.matchStrategy, entity.logicalName).toBeTruthy();
+      expect(entity.matchDescription, entity.logicalName).toBeTruthy();
+    }
+  });
+
+  it('carries the run into validation rather than asking for the two ends again', async () => {
+    /*
+     * The handoff §26 requires. Validation derives source, target and scope from the run, so nobody
+     * re-selects the systems they have just migrated between — and the reconciliation is scoped to what
+     * that run actually wrote rather than to everything in the target.
+     */
+    const current = await api.get<MigrationPlanDto>(`/api/plans/${plan.id}`);
+    const started = await api.post<{ id: string; status: string }>(`/api/plans/${plan.id}/execute`, {
+      confirmSourceName: current.sourceEnvironment.displayName,
+      confirmTargetName: current.targetEnvironment.displayName,
+      // Warnings are acknowledged explicitly; the API has no form of this that accepts them silently.
+      acknowledgeWarnings: true,
+    });
+    const worker = t.services.createWorker();
+    await worker.drain(120_000);
+    await worker.stop();
+
+    const validation = await api.post<{ id: string; sourceEnvironment: { id: string } }>('/api/validations', {
+      migrationRunId: started.id,
+    });
+    expect(validation.id).toBeTruthy();
+    expect(validation.sourceEnvironment.id).toBe(plan.sourceEnvironment.id);
+  });
+
+  it('keeps every run, so history is never overwritten', async () => {
+    const runs = await api.get<{ id: string; attempt: number }[]>(
+      `/api/projects/${project.id}/migration/runs`,
+    );
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+    // Each run carries the attempt that produced its current state, so a retry is visible as an attempt.
+    for (const run of runs) expect(run.attempt).toBeGreaterThanOrEqual(1);
+
+    const w = await api.get<MigrationWorkspaceDto>(`/api/projects/${project.id}/migration`);
+    expect(w.runCount).toBe(runs.length);
+    expect(w.lastRun).not.toBeNull();
+  });
+});

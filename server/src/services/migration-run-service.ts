@@ -272,6 +272,9 @@ export class MigrationRunService {
       sourceEnvironmentId: plan.sourceEnvironment.id,
       targetEnvironmentId: plan.targetEnvironment.id,
       runId: run.id,
+      // Which migration this was. Environments alone were the old model's way of saying it, and they
+      // cannot distinguish two migrations between the same pair of systems.
+      projectId: plan.projectId,
       requestId: ctx.requestId,
       details: {
         planId,
@@ -365,12 +368,17 @@ export class MigrationRunService {
     action: 'cancel' | 'pause' | 'resume' | 'retry',
   ): Promise<MigrationRunDto> {
     const run = await this.loadRun(ctx.organizationId, runId);
+    const [ofPlan] = await this.db
+      .select({ projectId: migrationPlans.projectId })
+      .from(migrationPlans)
+      .where(eq(migrationPlans.id, run.planId));
     const auditBase = {
       organizationId: ctx.organizationId,
       userId: ctx.userId,
       sourceEnvironmentId: run.sourceEnvironmentId,
       targetEnvironmentId: run.targetEnvironmentId,
       runId,
+      projectId: ofPlan?.projectId ?? null,
       requestId: ctx.requestId,
     };
     if (action === 'cancel') {

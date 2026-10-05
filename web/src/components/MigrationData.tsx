@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Database, Server } from 'lucide-react';
 import type { EnvironmentDto, MigrationPlanDto, MigrationWorkspaceDto, PlanEntityDto } from '@shared/domain';
 import { isStagedConnection, objectMappingReady } from '@shared/domain';
-import { Button, Callout, Card, EmptyState, ErrorState, Modal, Pill, Spinner } from './ui';
+import { Button, Callout, Card, EmptyState, ErrorState, Modal, Pill, Spinner, cx } from './ui';
 import { ObjectPicker } from './ObjectPicker';
 import { api } from '../lib/api';
 import { describeCount } from '../lib/format';
@@ -100,7 +100,13 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
         {plan.data && plan.data.entities.length > 0 ? (
           <ul className="divide-y divide-slate-100">
             {plan.data.entities.map((entity) => (
-              <ScopeRow key={entity.id} entity={entity} />
+              <ScopeRow
+                key={entity.id}
+                entity={entity}
+                crossProvider={
+                  plan.data!.sourceEnvironment.connectionType !== plan.data!.targetEnvironment.connectionType
+                }
+              />
             ))}
           </ul>
         ) : (
@@ -125,7 +131,7 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
 }
 
 /** One table in scope: how much of it there is, where it is going, and whether that is settled. */
-function ScopeRow({ entity }: { entity: PlanEntityDto }) {
+function ScopeRow({ entity, crossProvider }: { entity: PlanEntityDto; crossProvider: boolean }) {
   // The domain's own rule: a suggestion is usable only when the names match exactly or a person confirmed it.
   const unconfirmed = !objectMappingReady(entity.objectMappingStatus);
   return (
@@ -154,6 +160,25 @@ function ScopeRow({ entity }: { entity: PlanEntityDto }) {
         ) : (
           <p className="text-sm text-red-700">No target table chosen</p>
         )}
+      </div>
+      {/*
+        How a rerun will tell an insert from an update.
+        §23: "if I run this again, will I duplicate data?" is the question a migration turns on, and the
+        answer was buried in a record-matching control four clicks inside a wizard step. A table matched on
+        its source primary id across providers cannot be matched at all — the target assigns its own — so
+        that case is named here rather than discovered by running it twice.
+      */}
+      <div className="w-56 flex-none">
+        <p className="text-xs text-slate-500">Rerun matches on</p>
+        <p
+          className={cx(
+            'truncate text-xs',
+            entity.matchStrategy === 'PRIMARY_ID' && crossProvider ? 'text-red-700' : 'text-slate-800',
+          )}
+          title={entity.matchDescription}
+        >
+          {entity.matchDescription || 'not configured'}
+        </p>
       </div>
       <span className="flex-none">
         {!entity.targetLogicalName ? (

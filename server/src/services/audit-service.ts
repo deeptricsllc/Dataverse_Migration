@@ -188,6 +188,8 @@ export interface AuditInput {
   sourceEnvironmentId?: string | null;
   targetEnvironmentId?: string | null;
   runId?: string | null;
+  /** The project this action belonged to, where it belonged to one. */
+  projectId?: string | null;
   requestId?: string | null;
   details?: Record<string, unknown>;
 }
@@ -209,6 +211,7 @@ export class AuditService {
         sourceEnvironmentId: input.sourceEnvironmentId ?? null,
         targetEnvironmentId: input.targetEnvironmentId ?? null,
         runId: input.runId ?? null,
+        projectId: input.projectId ?? null,
         requestId: input.requestId ?? null,
         details: boundDetails(input.details ?? null),
       });
@@ -217,6 +220,7 @@ export class AuditService {
           audit: input.action,
           outcome: input.outcome,
           runId: input.runId,
+          projectId: input.projectId,
           organizationId: input.organizationId,
           userId: input.userId,
         },
@@ -286,6 +290,7 @@ export class AuditService {
       sourceEnvironment: r.src,
       targetEnvironment: r.tgt,
       runId: r.e.runId,
+      projectId: r.e.projectId,
       details: r.e.details,
       createdAt: r.e.createdAt.toISOString(),
     });

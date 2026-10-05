@@ -1829,6 +1829,8 @@ export interface AuditEventDto {
   sourceEnvironment: string | null;
   targetEnvironment: string | null;
   runId: string | null;
+  /** The project the action belonged to, where it belonged to one. */
+  projectId: string | null;
   details: Record<string, unknown> | null;
   createdAt: string;
 }

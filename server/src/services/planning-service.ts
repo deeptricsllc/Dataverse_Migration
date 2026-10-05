@@ -253,6 +253,7 @@ export class PlanningService {
       sourceEnvironmentId: source.id,
       targetEnvironmentId: target.id,
       runId: plan.id,
+      projectId: plan.projectId,
       requestId: ctx.requestId,
       // The name as well as the tables: an entry that cannot say which plan it was about is hard
       // to find months later, and the trail is now searchable by what it holds.
@@ -593,6 +594,8 @@ export class PlanningService {
       sourceEnvironmentId: plan.sourceEnvironmentId,
       targetEnvironmentId: plan.targetEnvironmentId,
       runId: plan.id,
+      // Configuring a migration is an action on the migration, so the trail says which one.
+      projectId: plan.projectId,
       requestId: ctx.requestId,
       details,
     });

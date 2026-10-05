@@ -981,11 +981,21 @@ export const auditEvents = pgTable(
     sourceEnvironmentId: uuid('source_environment_id'),
     targetEnvironmentId: uuid('target_environment_id'),
     runId: uuid('run_id'),
+    /**
+     * The project the action belonged to.
+     *
+     * Null for events recorded before projects owned migrations, and for actions that genuinely belong to
+     * no project — creating a connection, for instance, which is a workspace asset.
+     */
+    projectId: uuid('project_id'),
     requestId: text('request_id'),
     details: jsonb('details').$type<Record<string, unknown>>(),
     createdAt: createdAt(),
   },
-  (t) => [index('audit_events_org_created_idx').on(t.organizationId, t.createdAt)],
+  (t) => [
+    index('audit_events_org_created_idx').on(t.organizationId, t.createdAt),
+    index('audit_events_project_idx').on(t.projectId, t.createdAt),
+  ],
 );
 
 // ---------------------------------------------------------------------------
