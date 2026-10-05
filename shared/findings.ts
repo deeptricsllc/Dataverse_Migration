@@ -172,6 +172,10 @@ export function findingsForTable(input: FindingsInput): Finding[] {
   const requiredLevelFor = (column: string) =>
     byName.get(column)?.requiredLevel ?? profile.fields.find((f) => f.field === column)?.requiredLevel;
   const found: Finding[] = [];
+  /**
+   * Stable across runs, and derived from the *logical* name rather than the display name — a finding has
+   * to keep its identity when a file is renamed, because that is how two runs are compared.
+   */
   const id = (rule: string, column?: string) =>
     [dataset, profile.table, column ?? '', rule].map((p) => p.replace(/[|]/g, '')).join('|');
 
@@ -190,7 +194,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       title: 'No reliable record identifier',
       summary: `No column in ${profile.displayName} is both unique and filled in for every record, so there is nothing that reliably identifies a row.`,
       dataset,
-      table: profile.table,
+      table: profile.displayName,
       columns: [],
       affected: total,
       affectedPercent: 100,
@@ -225,7 +229,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       title: `${candidate.field} looks like a business key`,
       summary: `Every examined value of ${candidate.field} is distinct and populated, which makes it usable for matching records during migration.`,
       dataset,
-      table: profile.table,
+      table: profile.displayName,
       columns: [candidate.field],
       affected: 0,
       affectedPercent: null,
@@ -253,7 +257,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       title: `${profile.primaryKeyField} is empty in some records`,
       summary: `${plural(profile.primaryKeyMissing, 'record')} have no value in ${profile.primaryKeyField}, the column being used to identify them.`,
       dataset,
-      table: profile.table,
+      table: profile.displayName,
       columns: [profile.primaryKeyField],
       affected: profile.primaryKeyMissing,
       affectedPercent: pct(profile.primaryKeyMissing, examined),
@@ -281,7 +285,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       title: 'Records share the same key',
       summary: `${plural(profile.duplicateKeyCount, 'record')} in ${profile.displayName} share a key value with another record, so the key does not identify a single row.`,
       dataset,
-      table: profile.table,
+      table: profile.displayName,
       columns: profile.primaryKeyField ? [profile.primaryKeyField] : [],
       affected: profile.duplicateKeyCount,
       affectedPercent: pct(profile.duplicateKeyCount, examined),
@@ -309,7 +313,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} is almost unique, but not quite`,
         summary: `${field.field} is distinct in all but ${plural(duplicates, 'record')}. A column that is 99% unique is usually meant to be unique, which makes the exceptions likely data errors.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: duplicates,
         affectedPercent: pct(duplicates, field.examined),
@@ -340,7 +344,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} is empty in every record`,
         summary: `${field.field} contains no value in any of the ${field.examined.toLocaleString()} records examined.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: field.examined,
         affectedPercent: 100,
@@ -374,7 +378,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           ? `${field.field} is marked required, and ${plural(empty, 'record')} have no value in it.`
           : `${plural(empty, 'record')} of the ${field.examined.toLocaleString()} examined have no value in ${field.field}.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: empty,
         affectedPercent: round1(rate * 100),
@@ -408,7 +412,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} contains values that are not dates`,
         summary: `${plural(field.invalidDateCount, 'value')} in ${field.field} could not be read as a date.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: field.invalidDateCount,
         affectedPercent: pct(field.invalidDateCount, field.examined),
@@ -437,7 +441,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} contains values its type cannot hold`,
         summary: `${plural(field.invalidValueCount, 'value')} in ${field.field} could not be converted to ${field.type}.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: field.invalidValueCount,
         affectedPercent: pct(field.invalidValueCount, field.examined),
@@ -467,7 +471,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} has values with stray spaces`,
         summary: `${plural(field.whitespaceCount, 'value')} in ${field.field} begin or end with a space.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: field.whitespaceCount,
         affectedPercent: pct(field.whitespaceCount, field.examined),
@@ -494,7 +498,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         title: `${field.field} holds values of very different lengths`,
         summary: `Values in ${field.field} run from ${field.minLength} to ${field.maxLength} characters, against an average of ${Math.round(field.averageLength ?? 0)}.`,
         dataset,
-        table: profile.table,
+        table: profile.displayName,
         columns: [field.field],
         affected: 0,
         affectedPercent: null,
@@ -537,7 +541,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         .slice(0, 6)
         .join(', ')}${sensitive.length > 6 ? ', …' : ''}.`,
       dataset,
-      table: profile.table,
+      table: profile.displayName,
       columns: sensitive.map((f) => f.field),
       affected: 0,
       affectedPercent: null,
@@ -651,7 +655,7 @@ function fromSemantic(
 ): Finding | null {
   const base = {
     dataset,
-    table: profile.table,
+    table: profile.displayName,
     columns: [column],
     basis: profile.basis,
     confidence: reading.confidence,

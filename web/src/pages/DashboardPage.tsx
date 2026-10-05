@@ -5,7 +5,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Button,
   Card,
-  EmptyState,
   ErrorState,
   PageHeader,
   Pill,
@@ -19,6 +18,7 @@ import {
 import { get } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import { useSession } from '../lib/session';
+import { WorkflowChooser } from '../components/WorkflowChooser';
 
 /**
  * The dashboard.
@@ -43,7 +43,7 @@ export function DashboardPage() {
     <>
       <PageHeader
         title={`Welcome, ${user.displayName.split(' ')[0]}`}
-        description="Analyse a source to understand it, or migrate data into a target. Work lives in projects."
+        description="Understand your data, move it safely, and prove it arrived. Work lives in projects."
         actions={
           <Button
             variant="primary"
@@ -56,28 +56,18 @@ export function DashboardPage() {
         }
       />
 
+      {/*
+        What this product does, as three choices rather than a sentence.
+        First thing on the first screen, because somebody who cannot tell Analyse from Migrate cannot
+        start — and a description in the header is read by nobody.
+      */}
+      <section className="mb-6">
+        <h2 className="mb-3 text-sm font-semibold text-slate-900">What do you need to do?</h2>
+        <WorkflowChooser />
+      </section>
+
       {q.isLoading && <Spinner />}
       {q.error && <ErrorState error={q.error} onRetry={() => q.refetch()} />}
-
-      {d && nothingYet && (
-        <EmptyState
-          icon={<Microscope className="h-6 w-6" />}
-          title="Nothing here yet"
-          description={
-            d.environments.total === 0
-              ? 'Add a connection first, then create an analysis project to find out what is in the source.'
-              : 'Create an analysis project to find out what is in a source, then a migration project that uses what it found.'
-          }
-          action={
-            <Button
-              variant="primary"
-              onClick={() => navigate(d.environments.total === 0 ? '/environments' : '/projects?new=1')}
-            >
-              {d.environments.total === 0 ? 'Add a connection' : 'New project'}
-            </Button>
-          }
-        />
-      )}
 
       {d && !nothingYet && (
         <div className="space-y-6">

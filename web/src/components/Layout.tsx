@@ -202,6 +202,14 @@ export function Layout() {
     !['/', '/settings', '/runs'].includes(path) &&
     !path.startsWith('/projects') &&
     !path.startsWith('/analyses') &&
+    /**
+     * An analysis has datasets, not a source and a target.
+     *
+     * The strip is the migration model made visible, and showing it above an analysis workspace
+     * contradicted the entire point of that workspace: the first thing on a screen about understanding
+     * four spreadsheets was a banner asking which environment they were being migrated into.
+     */
+    !path.startsWith('/analysis/') &&
     !path.startsWith('/data-comparisons') &&
     !path.startsWith('/runs/') &&
     !(path.startsWith('/validation/') && path !== '/validation');

@@ -12,6 +12,7 @@ import { ArrowRight, FolderPlus, Microscope, Scale, Truck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
+import { WorkflowChooser } from '../components/WorkflowChooser';
 import { StagedFileImport } from '../components/StagedFileImport';
 import { get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
@@ -42,6 +43,15 @@ import {
  * safety gate; a comparison project reads two systems and writes to neither. The form asks that
  * first and then only asks for what that kind actually needs.
  */
+/**
+ * Where a project opens.
+ *
+ * An analysis project has its own workspace — datasets, findings, readiness — because it is a different
+ * experience rather than a project page with a flag on it. The other two kinds keep the page they had.
+ */
+const projectHref = (p: { id: string; kind: string }) =>
+  p.kind === 'ANALYSIS' ? `/analysis/${p.id}` : `/projects/${p.id}`;
+
 export function ProjectsPage() {
   /**
    * `?new=1` opens the form on arrival, so a "New project" button elsewhere lands on the form rather
@@ -72,7 +82,7 @@ export function ProjectsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Projects"
-        description="Analyse a source to understand it, migrate data into a target, or compare two systems record by record."
+        description="Every piece of work lives in a project. Analysis projects hold datasets; migration and comparison projects hold two sides."
         actions={
           <div className="flex items-center gap-3">
             <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
@@ -87,6 +97,11 @@ export function ProjectsPage() {
           </div>
         }
       />
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-slate-900">Start something new</h2>
+        <WorkflowChooser compact />
+      </section>
 
       <DemoWorkspaceBuilding onReady={() => void projects.refetch()} />
 
@@ -171,7 +186,7 @@ function ProjectTable({
           {projects.map((p) => (
             <tr key={p.id} className="hover:bg-slate-50">
               <Td>
-                <Link to={`/projects/${p.id}`} className="font-medium text-brand-700 hover:underline">
+                <Link to={projectHref(p)} className="font-medium text-brand-700 hover:underline">
                   {p.name}
                 </Link>
                 {p.description && <div className="text-xs text-slate-500">{p.description}</div>}
@@ -193,7 +208,7 @@ function ProjectTable({
               </Td>
               <Td className="text-xs text-slate-500">{fmtRelative(p.updatedAt)}</Td>
               <Td>
-                <Link to={`/projects/${p.id}`} aria-label={`Open ${p.name}`}>
+                <Link to={projectHref(p)} aria-label={`Open ${p.name}`}>
                   <ArrowRight className="h-4 w-4 text-slate-400" />
                 </Link>
               </Td>
@@ -278,6 +293,11 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
     onSuccess: (project) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
       onClose();
+      /**
+       * The older form still lands on the project page, which is where the controls for adding data and
+       * running an analysis currently live. The new analysis workspace reads results; it does not yet
+       * produce them, so sending this form there would be a dead end.
+       */
       navigate(`/projects/${project.id}`);
     },
   });

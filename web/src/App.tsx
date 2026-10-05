@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { SessionProvider, useSessionQuery } from './lib/session';
 import { AnalysisPage } from './pages/AnalysisPage';
+import { AnalysisWorkspacePage } from './pages/AnalysisWorkspacePage';
 import { ComparePage } from './pages/ComparePage';
 import { ComparisonPage } from './pages/ComparisonPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -62,6 +63,12 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:projectId" element={<ProjectPage />} />
+        {/*
+          The analysis workspace: datasets, findings, readiness. A separate route from `projects/:id`
+          because an analysis project is a different experience rather than a project page with a flag on
+          it — nothing in here has a target, so nothing in here asks for one.
+        */}
+        <Route path="analysis/:projectId" element={<AnalysisWorkspacePage />} />
         <Route path="analyses/:analysisId" element={<AnalysisPage />} />
         <Route path="data-comparisons/:comparisonId" element={<ComparisonPage />} />
         <Route path="environments" element={<EnvironmentsPage />} />
