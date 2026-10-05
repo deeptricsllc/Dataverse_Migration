@@ -126,7 +126,7 @@ export function AnalysisWorkspacePage() {
           which is both wrong and the opposite of reassuring.
         */}
         {datasetCount === 0
-          ? 'No datasets yet.'
+          ? 'No datasets.'
           : analysed === 0
             ? describeCount(datasetCount, 'dataset')
             : `${describeCount(datasetCount, 'dataset')} · ${data.records.toLocaleString()} records`}
@@ -257,7 +257,7 @@ function Overview({
       <Card>
         <EmptyState
           icon={<Database className="h-8 w-8" />}
-          title="Add your first dataset"
+          title="No datasets"
           description="A spreadsheet, a CSV export, a database or a Dataverse environment. Analysis never writes to the source."
           action={
             <Button variant="primary" onClick={onAddDataset}>
@@ -421,7 +421,7 @@ function Datasets({
       <Card>
         <EmptyState
           icon={<Database className="h-8 w-8" />}
-          title="No datasets in this project"
+          title="No datasets"
           description="Add a spreadsheet, a database or a Dataverse environment. The connection stays available to other projects."
           action={
             <Button variant="primary" onClick={onAddDataset}>

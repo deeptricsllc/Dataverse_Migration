@@ -170,7 +170,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
   const workspace = await createProject(page, 'Customer Data Modernization');
 
   // The empty state says what to do, rather than that there is nothing.
-  await expect(page.getByText('Add your first dataset')).toBeVisible();
+  await expect(page.getByText('No datasets', { exact: true }).first()).toBeVisible();
 
   // --- the gallery is honest about what is real -----------------------------
   await page.getByTestId('add-dataset').click();
