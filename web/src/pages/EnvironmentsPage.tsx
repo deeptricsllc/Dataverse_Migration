@@ -240,8 +240,14 @@ function DeleteConnectionModal({
 type ConnectionState = {
   label: string;
   tone: 'teal' | 'amber' | 'slate' | 'blue';
-  /** What it means, for somebody deciding whether to rely on it. */
-  detail: string;
+  /**
+   * What the connection itself reported, when it reported anything.
+   *
+   * Null rather than a sentence restating the badge. The card already carries a DEMO pill, a verification
+   * note and this badge; adding "a demonstration connection, nothing real is contacted" underneath made
+   * four statements of one fact, which is what somebody scanning six cards reads six times.
+   */
+  detail: string | null;
 };
 
 function connectionState(env: EnvironmentDto): ConnectionState {
@@ -265,7 +271,7 @@ function connectionState(env: EnvironmentDto): ConnectionState {
     return {
       label: 'Connected',
       tone: 'teal',
-      detail: env.connectionMessage ?? 'Reached successfully when it was last tested.',
+      detail: env.connectionMessage ?? null,
     };
   }
   /*
@@ -276,13 +282,13 @@ function connectionState(env: EnvironmentDto): ConnectionState {
     return {
       label: 'Simulated',
       tone: 'blue',
-      detail: 'A demonstration connection. Nothing real is contacted and no real data is read.',
+      detail: null,
     };
   }
   return {
     label: 'Not tested',
     tone: 'slate',
-    detail: 'Nothing has tried to reach it yet, so whether it works is unknown.',
+    detail: null,
   };
 }
 
@@ -583,7 +589,7 @@ export function EnvironmentsPage() {
                     {env.lastTestedAt ? `Last tested ${fmtRelative(env.lastTestedAt)}` : 'Never tested'}
                   </span>
                 </div>
-                <p className="mt-1.5 text-xs text-slate-500">{state.detail}</p>
+                {state.detail && <p className="mt-1.5 text-xs text-slate-500">{state.detail}</p>}
                 <div className="mt-auto flex flex-wrap gap-2 pt-4">
                   <Button
                     size="sm"
