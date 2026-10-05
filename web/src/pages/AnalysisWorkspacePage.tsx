@@ -30,7 +30,7 @@ import {
   cx,
 } from '../components/ui';
 import { api } from '../lib/api';
-import { fmtRelative } from '../lib/format';
+import { describeCount, fmtRelative } from '../lib/format';
 
 /**
  * An analysis project: what is in these datasets, and what should be known about them.
@@ -238,8 +238,6 @@ function AnalyseButton({
     </Button>
   );
 }
-
-const describeCount = (n: number, noun: string) => `${n.toLocaleString()} ${n === 1 ? noun : `${noun}s`}`;
 
 // ---------------------------------------------------------------------------
 
@@ -566,8 +564,18 @@ function DatasetRowItem({
       </div>
       {/* One line, so thirty rows stay a column of comparable numbers rather than a stack of blocks. */}
       <p className="w-44 flex-none text-right text-xs tabular-nums text-slate-600">
-        {object.recordCount.toLocaleString()} records
-        <span className="text-slate-400"> · {object.columnCount} columns</span>
+        {object.recordCount === null ? (
+          // A table on somebody else's server has a size nobody here has counted. Saying "0 records"
+          // about a table with millions in it is worse than saying nothing.
+          <span className="text-slate-400">Size not counted yet</span>
+        ) : (
+          <>
+            {object.recordCount.toLocaleString()} records
+            {object.columnCount !== null && (
+              <span className="text-slate-400"> · {object.columnCount} columns</span>
+            )}
+          </>
+        )}
       </p>
       <DatasetState dataset={dataset} />
       {staged && (
@@ -674,8 +682,10 @@ function RemoveDataset({
     <Modal open onClose={onClose} title={`Remove ${row.object.displayName}?`}>
       <div className="space-y-4">
         <p className="text-sm text-slate-600">
-          Its {row.object.recordCount.toLocaleString()} records are deleted from this workspace. To analyse
-          this data again you would upload it again.
+          {row.object.recordCount === null
+            ? 'Its rows are deleted from this workspace.'
+            : `Its ${row.object.recordCount.toLocaleString()} records are deleted from this workspace.`}{' '}
+          To analyse this data again you would upload it again.
         </p>
         {row.object.analysed && (
           <Callout tone="info" title="Earlier analyses are kept">

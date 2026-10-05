@@ -1,6 +1,12 @@
 import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import { PROJECT_KINDS, type ProjectDto, type ProjectKind, type ProjectStatus } from '../../../shared/domain';
+import {
+  PROJECT_KINDS,
+  isStagedConnection,
+  type ProjectDto,
+  type ProjectKind,
+  type ProjectStatus,
+} from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import {
   analysisRuns,
@@ -39,6 +45,17 @@ export class ProjectService {
     private readonly environmentsSvc: EnvironmentService,
     private readonly audit: AuditService,
     private readonly logger: Logger,
+    /**
+     * The objects a live connection actually holds, for checking a selection against reality.
+     *
+     * Injected rather than imported because it needs a connector and a metadata cache, and a project
+     * knowing how to open a database connection is how a service grows into everything. Omitted in tests
+     * that never select objects.
+     */
+    private readonly catalogObjects?: (
+      ctx: RequestContext,
+      environmentId: string,
+    ) => Promise<{ logicalName: string }[]>,
   ) {}
 
   async list(ctx: RequestContext, filter: { kind?: ProjectKind; includeArchived?: boolean } = {}) {
@@ -314,7 +331,12 @@ export class ProjectService {
    * The connection is a workspace asset and is only ever *referenced* here. Nothing in this method, or in
    * `removeSource`, can alter or delete it.
    */
-  async addSource(ctx: RequestContext, projectId: string, environmentId: string): Promise<ProjectDto> {
+  async addSource(
+    ctx: RequestContext,
+    projectId: string,
+    environmentId: string,
+    objects?: string[],
+  ): Promise<ProjectDto> {
     const project = await this.row(ctx, projectId);
     if (project.kind !== 'ANALYSIS') {
       throw badRequest(
@@ -342,11 +364,33 @@ export class ProjectService {
       throw conflict(`${env.displayName} is already a source in this project.`);
     }
 
+    /**
+     * A chosen object has to exist, and this is the moment to find out.
+     *
+     * Checked against the catalogue rather than taken on trust, because the alternative is a dataset that
+     * looks fine in the list and fails hours later inside an analysis — the exact deferral this model
+     * exists to stop. A staged connection carries its own content, so `resolveDataset` above has already
+     * answered for it and there is no catalogue to ask.
+     */
+    const selected = objects?.length ? [...new Set(objects)] : null;
+    if (selected && !isStagedConnection(env.connectionType)) {
+      if (!this.catalogObjects) throw badRequest('Choosing individual tables is not available here.');
+      const available = await this.catalogObjects(ctx, env.id);
+      const names = new Set(available.map((t) => t.logicalName));
+      const missing = selected.filter((name) => !names.has(name));
+      if (missing.length) {
+        throw badRequest(
+          `${env.displayName} has no ${missing.length === 1 ? 'table' : 'tables'} called ${missing.join(', ')}. It may have been renamed or dropped since you last looked.`,
+        );
+      }
+    }
+
     await this.db.insert(projectSources).values({
       projectId,
       environmentId: env.id,
       position: existing.length,
       addedByUserId: ctx.userId,
+      selectedObjects: selected,
     });
     // The first source added is also the primary one, which is what every single-source reader still uses.
     if (!project.sourceEnvironmentId) {

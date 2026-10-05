@@ -1,0 +1,16 @@
+-- Which objects of a connection are the project's datasets.
+--
+-- A connection is not a dataset, and neither is everything behind one. Adding a SQL Server to an analysis
+-- project meant analysing the whole database — every table in every schema, including the audit tables and
+-- the staging copies — because the project listed the *connection* and there was nowhere to record which
+-- tables the person actually meant.
+--
+-- NULL means "everything in it", which is what every existing row means and must go on meaning: an upgrade
+-- that silently narrowed a project's scope would change an analysis without anybody asking for it. A
+-- non-empty array means exactly those objects, named as the catalogue names them (`dbo.Customer` for SQL,
+-- the entity logical name for Dataverse).
+--
+-- Not a foreign key, and could not be: the objects live on somebody else's server. Existence is checked
+-- when the dataset is created, against the catalogue, and a table that disappears afterwards is a truthful
+-- failure at analysis time rather than a constraint this database could have enforced.
+ALTER TABLE "project_sources" ADD COLUMN IF NOT EXISTS "selected_objects" text[];

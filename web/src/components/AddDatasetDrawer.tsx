@@ -1,10 +1,29 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, Database, FileCode, FileSpreadsheet, Plug, Upload } from 'lucide-react';
-import type { EnvironmentDto, StagedPreviewDto, StagedPreviewTableDto, ProjectDto } from '@shared/domain';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Database,
+  FileCode,
+  FileSpreadsheet,
+  Plug,
+  Search,
+  Upload,
+} from 'lucide-react';
+import type {
+  ConnectionType,
+  EnvironmentDto,
+  ProfileDto,
+  ProjectDto,
+  StagedPreviewDto,
+  StagedPreviewTableDto,
+} from '@shared/domain';
+import type { TableSummary } from '@shared/metadata';
 import { Button, Callout, Card, Disclosure, ErrorState, Field, Modal, Spinner, cx } from './ui';
 import { api } from '../lib/api';
+import { describeCount } from '../lib/format';
+import { ConnectionModal } from './ConnectionForm';
 
 /**
  * Adding data to an analysis project.
@@ -84,8 +103,7 @@ const CONNECTORS: Connector[] = [
     category: 'Databases',
     blurb: 'On-premises or hosted. Verified against real SQL Server instances.',
     icon: Database,
-    availability: 'CONNECTION_ONLY',
-    caveat: 'Everything in the database is analysed together. Choosing individual tables is not built yet.',
+    availability: 'FULL',
     step: 'connection',
     connectionType: 'SQL_SERVER',
   },
@@ -107,10 +125,19 @@ const CONNECTORS: Connector[] = [
     category: 'Databases',
     blurb: 'Verified against real PostgreSQL servers.',
     icon: Database,
-    availability: 'CONNECTION_ONLY',
-    caveat: 'Everything in the database is analysed together. Choosing individual tables is not built yet.',
+    availability: 'FULL',
     step: 'connection',
     connectionType: 'POSTGRES',
+  },
+  {
+    id: 'mysql',
+    name: 'MySQL',
+    category: 'Databases',
+    blurb: 'Verified against real MySQL servers.',
+    icon: Database,
+    availability: 'FULL',
+    step: 'connection',
+    connectionType: 'MYSQL',
   },
   {
     id: 'dataverse',
@@ -183,7 +210,7 @@ export function AddDatasetDrawer({
       )}
       {step === 'file' && connector && <FileDataset project={project} connector={connector} onDone={added} />}
       {step === 'connection' && connector && (
-        <ExistingConnection project={project} connector={connector} onDone={added} />
+        <DatabaseDataset project={project} connector={connector} onDone={added} />
       )}
     </Modal>
   );
@@ -628,13 +655,17 @@ function DetailWrapper({ selectable, children }: { selectable: boolean; children
 // ---------------------------------------------------------------------------
 
 /**
- * A database or Dataverse dataset: choose a connection that already exists.
+ * A database becomes datasets: choose the connection, see what is in it, pick the tables, look at one, add.
  *
- * Connections are workspace assets and creating one is its own job, done on the Connections page where it
- * belongs. Putting a credentials form inside "add a dataset" is what made the old experience confusing —
- * two different decisions sharing one screen.
+ * The connection is a means, not the destination. The previous version of this step ended at "choose a
+ * connection", which added *the whole database* to the project — every table in every schema, including the
+ * audit tables and the staging copies somebody left behind in 2019. The person had asked for Customers.
+ *
+ * Nothing here routes away. Creating a connection happens in place and continues to the data, because
+ * sending somebody to a connections page and expecting them to remember why they went is how the old
+ * experience lost people.
  */
-function ExistingConnection({
+function DatabaseDataset({
   project,
   connector,
   onDone,
@@ -643,20 +674,55 @@ function ExistingConnection({
   connector: Connector;
   onDone: () => void;
 }) {
-  const queryClient = useQueryClient();
+  const [connection, setConnection] = useState<EnvironmentDto | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  if (connection) {
+    return (
+      <BrowseConnection
+        project={project}
+        connector={connector}
+        connection={connection}
+        onBack={() => setConnection(null)}
+        onDone={onDone}
+      />
+    );
+  }
+
+  return (
+    <>
+      <ChooseConnection connector={connector} onChoose={setConnection} onCreate={() => setCreating(true)} />
+      {creating && (
+        <ConnectionModal
+          connection={null}
+          initialType={connector.connectionType as ConnectionType}
+          onClose={() => setCreating(false)}
+          onDiscover={() => setCreating(false)}
+          discovering={false}
+          // Straight on to the data. A stored credential is infrastructure; the thing they came for is next.
+          onSaved={(saved) => {
+            setCreating(false);
+            setConnection(saved);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** The connections of this kind that already exist, and the way to make another. */
+function ChooseConnection({
+  connector,
+  onChoose,
+  onCreate,
+}: {
+  connector: Connector;
+  onChoose: (connection: EnvironmentDto) => void;
+  onCreate: () => void;
+}) {
   const environments = useQuery({
     queryKey: ['environments'],
     queryFn: () => api<EnvironmentDto[]>('GET', '/api/environments'),
-  });
-
-  const add = useMutation({
-    mutationFn: (environmentId: string) =>
-      api('POST', `/api/projects/${project.id}/sources`, { environmentId }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
-      await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
-      onDone();
-    },
   });
 
   if (environments.isLoading) return <Spinner label="Loading connections…" />;
@@ -666,8 +732,6 @@ function ExistingConnection({
 
   return (
     <div className="space-y-4">
-      {/* Whatever this connector cannot do, said here as well as on the card — this is the screen where
-          somebody is about to commit to it. */}
       {connector.availability !== 'FULL' && connector.caveat && (
         <Callout
           tone={connector.availability === 'SIMULATED' ? 'warning' : 'info'}
@@ -681,25 +745,10 @@ function ExistingConnection({
         </Callout>
       )}
 
-      {matching.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
-          <Database className="mx-auto h-6 w-6 text-slate-400" aria-hidden />
-          <h3 className="mt-2 text-sm font-semibold text-slate-900">No {connector.name} connection yet</h3>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
-            A connection holds the credentials for reaching a system, and is reusable across projects. Create
-            one on the Connections page, then come back and choose it here.
-          </p>
-          <a
-            href="/environments"
-            className="mt-3 inline-block rounded-md bg-brand-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-800"
-          >
-            Go to Connections
-          </a>
-        </div>
-      ) : (
+      {matching.length > 0 && (
         <>
           <p className="text-sm text-slate-600">
-            Choose a connection. It stays available to your other projects.
+            Use a connection you already have. It stays available to your other projects.
           </p>
           <ul className="space-y-2">
             {matching.map((environment) => (
@@ -707,8 +756,7 @@ function ExistingConnection({
                 <button
                   type="button"
                   data-testid={`choose-connection-${environment.id}`}
-                  disabled={add.isPending}
-                  onClick={() => add.mutate(environment.id)}
+                  onClick={() => onChoose(environment)}
                   className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3.5 py-3 text-left hover:border-brand-300 hover:bg-brand-50/30"
                 >
                   <span className="min-w-0">
@@ -717,16 +765,284 @@ function ExistingConnection({
                     </span>
                     <span className="block truncate text-xs text-slate-500">{environment.url}</span>
                   </span>
-                  {environment.connectionStatus === 'CONNECTED' && (
-                    <CheckCircle2 className="h-4 w-4 flex-none text-emerald-600" aria-label="verified" />
-                  )}
+                  <span className="flex flex-none items-center gap-2">
+                    {environment.connectionStatus === 'CONNECTED' && (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="connected" />
+                    )}
+                    <span className="text-xs font-medium text-brand-700">Browse data</span>
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
-          {add.error && <ErrorState error={add.error} />}
         </>
       )}
+
+      {matching.length === 0 && (
+        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center">
+          <Database className="mx-auto h-6 w-6 text-slate-400" aria-hidden />
+          <h3 className="mt-2 text-sm font-semibold text-slate-900">No {connector.name} connection yet</h3>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
+            A connection holds the details for reaching a server, and is reusable across projects.
+          </p>
+        </div>
+      )}
+
+      <Button
+        variant={matching.length ? 'secondary' : 'primary'}
+        onClick={onCreate}
+        data-testid="new-connection"
+      >
+        Connect to {connector.name}
+      </Button>
     </div>
+  );
+}
+
+/**
+ * What is in this database, and which of it the project wants.
+ *
+ * Grouped by schema and searchable, because a real database has hundreds of tables and a flat list of
+ * hundreds is the same as no list. Row counts are deliberately absent here: counting every table to draw a
+ * list would be a hundred queries to answer a question nobody asked yet. The preview counts the ones that
+ * were chosen.
+ */
+function BrowseConnection({
+  project,
+  connector,
+  connection,
+  onBack,
+  onDone,
+}: {
+  project: ProjectDto;
+  connector: Connector;
+  connection: EnvironmentDto;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState('');
+  const [previewing, setPreviewing] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const tables = useQuery({
+    queryKey: ['environment-tables', connection.id],
+    queryFn: () => api<TableSummary[]>('GET', `/api/environments/${connection.id}/tables`),
+  });
+
+  const add = useMutation({
+    mutationFn: () =>
+      api('POST', `/api/projects/${project.id}/sources`, {
+        environmentId: connection.id,
+        objects: [...chosen],
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
+      await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      onDone();
+    },
+  });
+
+  if (tables.isLoading) return <Spinner label={`Reading what is in ${connection.displayName}…`} />;
+  if (tables.error)
+    return (
+      <div className="space-y-3">
+        <ErrorState error={tables.error} />
+        <Button variant="secondary" onClick={onBack}>
+          Choose a different connection
+        </Button>
+      </div>
+    );
+
+  const all = tables.data ?? [];
+  const needle = filter.trim().toLowerCase();
+  const shown = needle
+    ? all.filter((t) =>
+        [t.logicalName, t.displayName, t.sqlSchema].some((v) =>
+          String(v ?? '')
+            .toLowerCase()
+            .includes(needle),
+        ),
+      )
+    : all;
+
+  /** Grouped by schema, which is how somebody who knows the database thinks about it. */
+  const groups = new Map<string, TableSummary[]>();
+  for (const table of shown) {
+    const key = table.sqlSchema ?? (connector.connectionType === 'DATAVERSE' ? 'Tables' : 'Objects');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(table);
+  }
+
+  const toggle = (name: string) =>
+    setChosen((previous) => {
+      const next = new Set(previous);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">Choose data</h3>
+          <p className="text-xs text-slate-500">
+            {connection.displayName} · {describeCount(all.length, 'object')}
+          </p>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onBack}>
+          Different connection
+        </Button>
+      </div>
+
+      <label className="relative block">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+          aria-hidden
+        />
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search tables"
+          aria-label="Search tables"
+          data-testid="table-search"
+          className="w-full rounded-md border border-slate-300 py-2 pl-8 pr-3 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+      </label>
+
+      <div className="max-h-80 space-y-4 overflow-y-auto">
+        {[...groups.entries()].map(([schema, inSchema]) => (
+          <section key={schema}>
+            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{schema}</h4>
+            <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+              {inSchema.map((table) => (
+                <li
+                  key={table.logicalName}
+                  data-testid={`object-row-${table.logicalName}`}
+                  className="flex items-center gap-3 px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    checked={chosen.has(table.logicalName)}
+                    onChange={() => toggle(table.logicalName)}
+                    aria-label={`Add ${table.logicalName}`}
+                    data-testid={`object-${table.logicalName}`}
+                    className="h-4 w-4 flex-none rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-slate-900">{table.logicalName}</span>
+                    {table.displayName !== table.logicalName && (
+                      <span className="block truncate text-xs text-slate-500">{table.displayName}</span>
+                    )}
+                  </span>
+                  {table.isView && (
+                    <span className="flex-none rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      View
+                    </span>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setPreviewing(table.logicalName)}>
+                    Preview
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+        {shown.length === 0 && (
+          <p className="py-6 text-center text-sm text-slate-500">Nothing matches “{filter}”.</p>
+        )}
+      </div>
+
+      {add.error && <ErrorState error={add.error} />}
+
+      <div className="sticky bottom-0 -mx-5 -mb-4 flex items-center justify-between gap-2 border-t border-slate-100 bg-white px-5 py-3">
+        <span className="text-xs text-slate-500">
+          {chosen.size === 0 ? 'Nothing chosen yet' : describeCount(chosen.size, 'table')} selected
+        </span>
+        <Button
+          variant="primary"
+          data-testid="confirm-add-dataset"
+          disabled={chosen.size === 0}
+          loading={add.isPending}
+          onClick={() => add.mutate()}
+        >
+          {chosen.size > 1 ? `Add ${chosen.size} datasets` : 'Add dataset'}
+        </Button>
+      </div>
+
+      {previewing && (
+        <ObjectPreview connection={connection} table={previewing} onClose={() => setPreviewing(null)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Enough of one table to know it is the right one.
+ *
+ * Counts and reads a sample through the same path the analysis uses, so what is shown is what would be
+ * read. Opened per table rather than for everything chosen: counting and sampling thirty tables to confirm
+ * a selection would cost more than the selection is worth.
+ */
+function ObjectPreview({
+  connection,
+  table,
+  onClose,
+}: {
+  connection: EnvironmentDto;
+  table: string;
+  onClose: () => void;
+}) {
+  const profile = useQuery({
+    queryKey: ['object-preview', connection.id, table],
+    queryFn: () =>
+      api<ProfileDto>(
+        'GET',
+        `/api/environments/${connection.id}/tables/${encodeURIComponent(table)}/profile`,
+      ),
+  });
+
+  const fields = profile.data ? profile.data.nullStats.slice(0, 12) : [];
+
+  return (
+    <Modal open onClose={onClose} wide title={table}>
+      {profile.isLoading && <Spinner label="Counting and reading a sample…" />}
+      {profile.error && <ErrorState error={profile.error} />}
+      {profile.data && (
+        <div className="space-y-3" data-testid="object-preview">
+          <p className="text-sm text-slate-600">
+            {profile.data.countApproximate ? 'About ' : ''}
+            {profile.data.count.toLocaleString()} rows · {profile.data.nullStats.length} columns
+          </p>
+          <p className="text-xs text-slate-500">
+            Identified by <span className="font-mono">{profile.data.primaryIdAttribute}</span>
+          </p>
+          <div className="max-h-72 overflow-auto rounded border border-slate-100">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-left">
+                <tr>
+                  <th className="px-3 py-1.5 font-medium text-slate-500">Column</th>
+                  <th className="px-3 py-1.5 text-right font-medium text-slate-500">Empty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fields.map((field) => (
+                  <tr key={field.field} className="border-t border-slate-100">
+                    <td className="px-3 py-1.5 font-mono text-[11px] text-slate-800">{field.field}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">
+                      {field.nullPercent > 0 ? `${field.nullPercent}%` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400">
+            Measured from a sample of {profile.data.sampleSize.toLocaleString()} records.
+          </p>
+        </div>
+      )}
+    </Modal>
   );
 }

@@ -2246,8 +2246,15 @@ export interface AssessedObjectDto {
   displayName: string;
   /** The sheet it was read from, when a workbook had more than one. Null for anything else. */
   sheetName: string | null;
-  recordCount: number;
-  columnCount: number;
+  /**
+   * How much of it there is, or null when that is not known yet.
+   *
+   * Known from the moment an upload lands, because its rows are here. Not known for a table on somebody
+   * else's server until an analysis has counted it — and "0 records" beside a table that plainly has
+   * millions is worse than saying nothing, because it reads as an answer.
+   */
+  recordCount: number | null;
+  columnCount: number | null;
   /** The file, drive item or list the rows came from, for "where did this come from". */
   origin: string | null;
   /** Whether the latest completed analysis covered it. */

@@ -1069,6 +1069,13 @@ export const projectSources = pgTable(
       .references(() => environments.id, { onDelete: 'cascade' }),
     /** The order they were added in, which is the order they are expected to appear in. */
     position: integer('position').notNull().default(0),
+    /**
+     * Which objects of the connection are this project's datasets.
+     *
+     * Null means everything in it, which is what a project created before objects could be chosen means
+     * and must go on meaning. Named as the catalogue names them: `dbo.Customer`, or an entity logical name.
+     */
+    selectedObjects: text('selected_objects').array(),
     addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },

@@ -159,8 +159,14 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
 
   app.post('/api/projects/:id/sources', async (req) => {
     const { id } = idParams.parse(req.params);
-    const { environmentId } = z.object({ environmentId: uuid }).parse(req.body);
-    return s.projects.addSource(req.ctx, id, environmentId);
+    const { environmentId, objects } = z
+      .object({
+        environmentId: uuid,
+        /** Which tables or entities to take. Omitted means everything the connection holds. */
+        objects: z.array(tableName).max(500).optional(),
+      })
+      .parse(req.body);
+    return s.projects.addSource(req.ctx, id, environmentId, objects);
   });
 
   app.delete('/api/projects/:id/sources/:environmentId', async (req) => {

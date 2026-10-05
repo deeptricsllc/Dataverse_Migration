@@ -157,18 +157,26 @@ function TestResult({ result }: { result: ConnectionTestResultDto }) {
  */
 export function ConnectionModal({
   connection,
+  initialType,
   onClose,
   onSaved,
   onDiscover,
   discovering,
 }: {
   connection: EnvironmentDto | null;
+  /**
+   * The kind to start on, for when the question has already been answered.
+   *
+   * Opened from "add a dataset → SQL Server", the type picker would be asking something the person just
+   * said. Opened from the Connections page it is the first real question, so it stays.
+   */
+  initialType?: ConnectionType;
   onClose: () => void;
   onSaved: (connection: EnvironmentDto) => void;
   onDiscover: () => void;
   discovering: boolean;
 }) {
-  const [type, setType] = useState<ConnectionType | null>(connection?.connectionType ?? null);
+  const [type, setType] = useState<ConnectionType | null>(connection?.connectionType ?? initialType ?? null);
   /** Choosing a server kind moves the port to the one it listens on, unless it was edited. */
   const chooseType = (next: ConnectionType) => {
     setType(next);

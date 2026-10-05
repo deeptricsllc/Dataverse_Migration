@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { AppDb } from '../db/client';
 import { stagedTables } from '../db/schema';
 import type { environments } from '../db/schema';
-import { isStagedConnection } from '../../../shared/domain';
+import { connectionFamily, isStagedConnection } from '../../../shared/domain';
 
 /**
  * Whether a connection actually resolves to data somebody can analyse.
@@ -80,7 +80,17 @@ export async function resolveDataset(db: AppDb, env: EnvironmentRow): Promise<Da
     };
   }
 
-  if (env.dataverseAvailable === false) {
+  /**
+   * A Dataverse environment that Microsoft reports as unavailable.
+   *
+   * Only Dataverse: `dataverse_available` is set from the discovery service's `State`, and every other kind
+   * of connection is stored with it `false` because there is no such thing to report. Checking it without
+   * asking what kind of connection this is made every SQL Server, Azure SQL, PostgreSQL and MySQL
+   * connection permanently "not available" — so none of them could be added to an analysis project at all,
+   * while the same connection worked perfectly as a migration source, which reached this code by a
+   * different path.
+   */
+  if (connectionFamily(env.connectionType) === 'DATAVERSE' && env.dataverseAvailable === false) {
     return {
       resolves: false,
       reason: 'UNAVAILABLE',

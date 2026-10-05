@@ -37,3 +37,7 @@ export const humanize = (s: string) =>
     .split('_')
     .map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
     .join(' ');
+
+/** "1 dataset", "12 datasets". Used wherever a count is read as a sentence rather than as a number. */
+export const describeCount = (n: number, noun: string) =>
+  `${n.toLocaleString()} ${n === 1 ? noun : `${noun}s`}`;

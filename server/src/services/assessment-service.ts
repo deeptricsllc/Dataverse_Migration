@@ -79,7 +79,11 @@ export class AssessmentService {
 
     // Every dataset the project lists, named as the user named it.
     const sources = await this.db
-      .select({ environment: environments, position: projectSources.position })
+      .select({
+        environment: environments,
+        position: projectSources.position,
+        selectedObjects: projectSources.selectedObjects,
+      })
       .from(projectSources)
       .innerJoin(environments, eq(environments.id, projectSources.environmentId))
       .where(eq(projectSources.projectId, projectId))
@@ -223,6 +227,7 @@ export class AssessmentService {
       const staged = imports
         .filter((row) => row.environmentId === s.environment.id)
         .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      const analysedTables = tables.filter((t) => t.analysisRunId === run?.id);
       const objects: AssessedObjectDto[] = staged.length
         ? staged.map((row) => ({
             logicalName: row.logicalName,
@@ -233,14 +238,29 @@ export class AssessmentService {
             origin: row.sourceRef,
             analysed: analysedNames.has(row.logicalName),
           }))
-        : tables
-            .filter((t) => t.analysisRunId === run?.id)
-            .map((t) => ({
+        : s.selectedObjects?.length
+          ? /*
+             * The tables the person chose, listed from the moment they chose them. Their size is
+             * unknown until something counts it, and is reported as unknown rather than as zero.
+             */
+            s.selectedObjects.map((logicalName) => {
+              const analysedTable = analysedTables.find((t) => t.logicalName === logicalName);
+              return {
+                logicalName,
+                displayName: analysedTable?.displayName ?? logicalName,
+                sheetName: null,
+                recordCount: analysedTable?.recordCount ?? null,
+                columnCount: analysedTable?.profile?.columns ?? null,
+                origin: null,
+                analysed: Boolean(analysedTable),
+              };
+            })
+          : analysedTables.map((t) => ({
               logicalName: t.logicalName,
               displayName: t.displayName,
               sheetName: null,
               recordCount: t.recordCount,
-              columnCount: t.profile?.columns ?? 0,
+              columnCount: t.profile?.columns ?? null,
               origin: null,
               analysed: true,
             }));
@@ -361,10 +381,11 @@ export class AssessmentService {
       );
     }
     const sources = await this.db
-      .select({ environment: environments })
+      .select({ environment: environments, selectedObjects: projectSources.selectedObjects })
       .from(projectSources)
       .innerJoin(environments, eq(environments.id, projectSources.environmentId))
       .where(eq(projectSources.projectId, projectId));
+    const chosenFor = new Map(sources.map((s) => [s.environment.id, s.selectedObjects ?? []]));
     const unusable = await unresolvableDatasets(
       this.db,
       sources.map((s) => s.environment),
@@ -393,7 +414,16 @@ export class AssessmentService {
         skipped.push({ dataset: dataset.name, reason: why.message });
         continue;
       }
-      await this.analysis.create(ctx, projectId, { environmentId: dataset.environmentId });
+      /*
+       * Only the tables the project chose. Without this, adding one table of a two-hundred-table database
+       * analysed all two hundred — the selection would have been a label on the screen rather than a fact
+       * about the work, which is the difference this whole model is about.
+       */
+      const tables = chosenFor.get(dataset.environmentId) ?? [];
+      await this.analysis.create(ctx, projectId, {
+        environmentId: dataset.environmentId,
+        ...(tables.length ? { tables } : {}),
+      });
       started.push(dataset.name);
     }
     this.logger.info({ projectId, started: started.length, skipped: skipped.length }, 'Analysis requested');

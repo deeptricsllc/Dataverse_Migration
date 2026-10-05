@@ -247,3 +247,106 @@ describe('a dataset is the data, not the thing that carries it', () => {
     expect(datasets.map((d) => d.environmentId)).not.toContain(empty.id);
   });
 });
+
+describe('a database is not a dataset either', () => {
+  let t: TestApp;
+  let api: ApiClient;
+  let sql: EnvironmentDto;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    api = new ApiClient(t.app);
+    await api.demoLogin();
+    // Discovery is what puts the simulated legacy database in the workspace.
+    await api.post<EnvironmentDto[]>('/api/environments/discover');
+    const envs = await api.get<EnvironmentDto[]>('/api/environments');
+    sql = envs.find((e) => e.connectionType === 'SQL_SERVER')!;
+    expect(sql, 'the demo workspace has a simulated SQL Server').toBeTruthy();
+  });
+  afterAll(async () => {
+    await t?.close();
+  });
+
+  const project = (name: string) => api.post<ProjectDto>('/api/projects', { name, kind: 'ANALYSIS' });
+  const assessment = (id: string) => api.get<AnalysisAssessmentDto>(`/api/projects/${id}/assessment`);
+
+  it('offers the tables of the database so a choice can be made', async () => {
+    const tables = await api.get<{ logicalName: string; sqlSchema?: string | null }[]>(
+      `/api/environments/${sql.id}/tables`,
+    );
+    expect(tables.length).toBeGreaterThan(3);
+    expect(tables.map((x) => x.logicalName)).toContain('dbo.Customer');
+    // More than one schema, which is why the chooser groups them.
+    expect(new Set(tables.map((x) => x.sqlSchema)).size).toBeGreaterThan(1);
+  });
+
+  it('adds only the tables that were chosen', async () => {
+    const p = await project('Two tables of many');
+    await api.post(`/api/projects/${p.id}/sources`, {
+      environmentId: sql.id,
+      objects: ['dbo.Customer', 'config.Region'],
+    });
+
+    const [dataset] = (await assessment(p.id)).datasets;
+    expect(dataset!.objects.map((o) => o.logicalName).sort()).toEqual(['config.Region', 'dbo.Customer']);
+    // Nothing has counted them, so nothing claims to know how big they are.
+    expect(dataset!.objects.every((o) => o.recordCount === null)).toBe(true);
+    expect(dataset!.objects.every((o) => o.analysed === false)).toBe(true);
+  });
+
+  it('refuses a table the database does not have, and says so before anything is created', async () => {
+    const p = await project('Table that is not there');
+    const res = await t.app.inject({
+      method: 'POST',
+      url: `/api/projects/${p.id}/sources`,
+      payload: { environmentId: sql.id, objects: ['dbo.Customer', 'dbo.Nonexistent'] },
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+    expect(res.statusCode).toBe(400);
+    const message = (res.json() as { error: { message: string } }).error.message;
+    expect(message).toContain('dbo.Nonexistent');
+    expect(message).not.toContain('dbo.Customer');
+
+    // Nothing was added: a refused request must not half-succeed.
+    expect((await assessment(p.id)).datasets).toHaveLength(0);
+  });
+
+  it('still takes the whole database when nothing is chosen', async () => {
+    /*
+     * The meaning every project created before this existed has, and must keep. An upgrade that silently
+     * narrowed an existing project's scope would change an analysis nobody asked to change.
+     */
+    const p = await project('Everything in it');
+    await api.post(`/api/projects/${p.id}/sources`, { environmentId: sql.id });
+    const [dataset] = (await assessment(p.id)).datasets;
+    expect(dataset!.objects, 'nothing is listed until a run has looked').toHaveLength(0);
+  });
+
+  it('analyses only the chosen tables', async () => {
+    const p = await project('Scoped analysis');
+    await api.post(`/api/projects/${p.id}/sources`, {
+      environmentId: sql.id,
+      objects: ['config.Region'],
+    });
+    await api.post(`/api/projects/${p.id}/analyse`, { all: true });
+
+    /*
+     * The analysis is queued rather than run inline, which is correct — the request returns before the
+     * work does. Here the test does what the worker does in production.
+     */
+    const worker = t.services.createWorker();
+    await worker.drain(120_000);
+    await worker.stop();
+
+    const [dataset] = (await assessment(p.id)).datasets;
+    expect(dataset!.state).toBe('ANALYSED');
+    /*
+     * The selection is a fact about the work, not a label on a screen. Analysing the whole database
+     * because one table was chosen would read as "we analysed your data" and mean something else.
+     */
+    expect(dataset!.objects.map((o) => o.logicalName)).toEqual(['config.Region']);
+    expect(dataset!.tables).toBe(1);
+    expect(dataset!.objects[0]!.recordCount, 'now it has been counted').toBeGreaterThan(0);
+    expect(dataset!.objects[0]!.analysed).toBe(true);
+  });
+});

@@ -122,7 +122,12 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   const operations = new OperationsService(config, db, logger.child({ component: 'operations' }));
   const team = new TeamService(db, audit, logger.child({ component: 'team' }));
   const profiling = new ProfilingService(db, environments, metadata, connections, logger);
-  const projectsSvc = new ProjectService(db, environments, audit, logger);
+  const projectsSvc = new ProjectService(db, environments, audit, logger, async (ctx, environmentId) => {
+    // What the connection actually holds, so a chosen table is checked against reality rather than trusted.
+    const env = await environments.getAccessible(ctx, environmentId);
+    const conn = await connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
+    return metadata.getCatalog(env.id, conn, false);
+  });
   const analysis = new AnalysisService(
     db,
     projectsSvc,

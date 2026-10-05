@@ -279,6 +279,53 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await contacts.getByTestId('remove-dataset').click();
   await page.getByTestId('confirm-remove').click();
   await expect(page.getByTestId('dataset-row')).toHaveCount(5);
+
+  /*
+   * --- a database is not a dataset either -----------------------------------
+   *
+   * Choosing a connection used to be the end of this journey, and it added the whole database — every
+   * table in every schema, including the audit tables and the staging copies. The person had asked for
+   * two tables.
+   */
+  await page.getByTestId('add-dataset').click();
+  await page.getByTestId('connector-sqlserver').click();
+  await page
+    .getByTestId(/^choose-connection-/)
+    .first()
+    .click();
+
+  await expect(page.getByRole('heading', { name: 'Choose data' })).toBeVisible({ timeout: 60_000 });
+  // Grouped by schema, because a database with one schema is a test fixture and not a customer.
+  await expect(page.getByText('config', { exact: true })).toBeVisible();
+  await expect(page.getByText('dbo', { exact: true })).toBeVisible();
+
+  // Searching narrows it, which is the only way a list of hundreds is usable.
+  await page.getByTestId('table-search').fill('Customer');
+  await expect(page.getByTestId('object-dbo.Customer')).toBeVisible();
+  await expect(page.getByTestId('object-config.Region')).toHaveCount(0);
+  await page.getByTestId('table-search').fill('');
+
+  // The preview is the evidence that this is the right table, before it is added.
+  await page.getByTestId('object-row-dbo.Customer').getByRole('button', { name: 'Preview' }).click();
+  await expect(page.getByTestId('object-preview')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('object-preview')).toContainText('rows');
+  await page.getByRole('dialog', { name: 'dbo.Customer' }).getByLabel('Close').click();
+
+  await page.getByTestId('object-dbo.Customer').check();
+  await page.getByTestId('object-config.Region').check();
+  await expect(page.getByTestId('confirm-add-dataset')).toHaveText('Add 2 datasets');
+  await page.getByTestId('confirm-add-dataset').click();
+  await page.getByTestId('add-dataset').waitFor({ timeout: 60_000 });
+
+  // Two tables of the database, listed as two datasets — not one row called "Legacy SQL Server (Demo)".
+  await expect(page.getByTestId('dataset-row')).toHaveCount(7);
+  for (const table of ['dbo.Customer', 'config.Region']) {
+    await expect(page.getByTestId('dataset-row').filter({ hasText: table })).toHaveCount(1);
+  }
+  // Nothing has counted them, and nothing pretends to have.
+  await expect(page.getByTestId('dataset-row').filter({ hasText: 'dbo.Customer' })).toContainText(
+    'Size not counted yet',
+  );
 });
 
 test('a decision is recorded beside the evidence, never over it', async ({ page }) => {
