@@ -115,6 +115,25 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
    * `DELETE` removes the listing and never the connection: a connection is a workspace asset that several
    * projects may use, so taking it out of one must not take it from the others.
    */
+  /**
+   * What this analysis project found: readiness, findings and a summary across every dataset in it.
+   *
+   * One call, because the overview screen shows all of it at once and three round trips to build one page
+   * is how a page ends up rendering in pieces.
+   */
+  app.get('/api/projects/:id/assessment', async (req) =>
+    s.assessments.forProject(req.ctx, idParams.parse(req.params).id),
+  );
+
+  /**
+   * Builds the worked example: an analysis project over a legacy CRM extract with real problems in it.
+   *
+   * Everything goes through the ordinary path — create a file dataset, import the files, add it as a
+   * source, run the analysis — so what a visitor sees is the product working rather than a fixture
+   * pretending to be one. It is also why this is a POST that takes a while.
+   */
+  app.post('/api/demo/analysis-project', VERY_EXPENSIVE, async (req) => s.demoAnalysis.build(req.ctx));
+
   app.post('/api/projects/:id/sources', async (req) => {
     const { id } = idParams.parse(req.params);
     const { environmentId } = z.object({ environmentId: uuid }).parse(req.body);

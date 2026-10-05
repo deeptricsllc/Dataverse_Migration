@@ -655,6 +655,15 @@ class FieldAccumulator {
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,
       issues: [],
+      /**
+       * Carried onto the profile so a finding about this column is reproducible from the stored run.
+       *
+       * The reading itself is made where the schema is inferred — a file has no declared types, which is
+       * the only place the question "is this integer actually a date" can arise. This copies it forward
+       * rather than re-deriving it, so the profile and the metadata cannot disagree.
+       */
+      semantic: this.attr.semantic ?? null,
+      requiredLevel: this.attr.requiredLevel,
     };
   }
 }

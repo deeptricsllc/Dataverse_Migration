@@ -128,9 +128,28 @@ const URL = /^(https?:\/\/|www\.)[^\s]+$/i;
  * digits, which would swallow every identifier in the file.
  */
 const PHONE = /^[+(]?\d[\d\s().-]{6,19}$|^\(\d[\d\s().-]{6,19}$/;
-const HAS_PHONE_PUNCTUATION = /[\s().+-]/;
+/**
+ * What makes a run of digits *written as* a telephone number.
+ *
+ * A hyphen or a dot is not enough, and assuming it was produced three false readings in the demo dataset
+ * the first time this ran: `2024-03-15` and `8220.50` both matched, so a date column and a currency column
+ * were reported as telephone numbers. A space, a parenthesis or a leading `+` is the actual signal —
+ * nobody writes a date with a space in the middle or an amount in brackets.
+ */
+const HAS_PHONE_PUNCTUATION = /^\+|[\s()]/;
 const CURRENCY = /^[-(]?\s*[$£€¥]\s?\d[\d,]*(\.\d{1,4})?\s*\)?$/;
 const PERCENTAGE = /^-?\d{1,3}(\.\d{1,4})?\s?%$/;
+/**
+ * A column holding a person's name, which is never a choice set.
+ *
+ * The ratio test alone cannot tell the difference: a sample where three hundred contacts share ten first
+ * names satisfies it exactly, and the product then offered to map `first_name` to a target choice column.
+ * A person's name is not a category however few of them a sample happens to contain, so the name of the
+ * column overrules the arithmetic here.
+ */
+const PERSON_NAME =
+  /(^|[^a-z])(first_?name|last_?name|sur_?name|fore_?name|given_?name|middle_?name|full_?name|contact_?name)([^a-z]|$)/i;
+
 /** Digits with a leading zero: an identifier written in digits, which a number would destroy. */
 const LEADING_ZERO_DIGITS = /^-?0\d/;
 
@@ -269,7 +288,8 @@ export function detectSemanticType(input: SemanticInput): SemanticReading | null
     populated >= 50 &&
     distinct >= 2 &&
     distinct <= 25 &&
-    distinct / populated < 0.05
+    distinct / populated < 0.05 &&
+    !PERSON_NAME.test(name)
   ) {
     return {
       type: 'CATEGORICAL',

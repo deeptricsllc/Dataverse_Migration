@@ -12,6 +12,8 @@ import { DataComparisonService } from './data-comparison-service';
 import { DemoScenarioService } from './demo-scenario-service';
 import { EvidenceService } from './evidence-service';
 import { ReadinessService } from './readiness-service';
+import { AssessmentService } from './assessment-service';
+import { DemoAnalysisService } from './demo-analysis-service';
 import { AuditService } from './audit-service';
 import { ComparisonService } from './comparison-service';
 import { EnvironmentService } from './environment-service';
@@ -74,6 +76,7 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
   // One answer to "should we press the button", assembled from findings that already exist. Built
   // before the run service because the run service asks it before starting anything.
   const readiness = new ReadinessService(db, planning, audit, logger.child({ component: 'readiness' }));
+  const assessments = new AssessmentService(db, logger);
   const runs = new MigrationRunService(
     db,
     config,
@@ -222,6 +225,8 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
       { pollMs: config.WORKER_POLL_MS, concurrency: 2, staleMs: 90_000 },
     );
 
+  const demoAnalysis = new DemoAnalysisService(db, projectsSvc, stagedSources, analysis, logger);
+
   return {
     config,
     db,
@@ -247,6 +252,8 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     dataQuality,
     projects: projectsSvc,
     analysis,
+    assessments,
+    demoAnalysis,
     dataComparisons,
     mappingWorkbooks,
     schedules,

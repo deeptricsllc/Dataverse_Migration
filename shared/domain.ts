@@ -8,6 +8,9 @@ import type { ValidationCoverage, ValidationDepth } from './validation-coverage'
 import type { AggregateCheck } from './aggregates';
 import type { ReadinessOverride } from './readiness';
 import type { UniquenessCheck } from './uniqueness';
+import type { SemanticReading } from './semantic-types';
+import type { Finding } from './findings';
+import type { AnalysisReadiness } from './analysis-readiness';
 import type { ReconciliationEvidence, WriteState } from './write-state';
 
 // ---------------------------------------------------------------------------
@@ -763,6 +766,18 @@ export interface FieldProfileDto {
   topValuesTruncated: boolean;
   /** Quality findings for this field, derived from the target and from the data. */
   issues: DataQualityIssueDto[];
+  /**
+   * What the values appear to mean, when that differs from how they are stored.
+   *
+   * Carried on the profile — not only on the column metadata — because the profile is what gets stored
+   * with an analysis run, and a finding about a column has to be reproducible from the record of the run
+   * rather than by re-reading a source that may have changed since.
+   *
+   * Optional for profiles written before it existed.
+   */
+  semantic?: SemanticReading | null;
+  /** Whether the source declares a value mandatory. Decides whether a gap is a warning or a blocker. */
+  requiredLevel?: RequiredLevel;
 }
 
 export interface TableProfileDto {
@@ -2163,6 +2178,41 @@ export interface AnalysisTableDto {
 export interface AnalysisTableDetailDto extends AnalysisTableDto {
   profile: TableProfileDto;
   findings: AnalysisFindingDto[];
+}
+
+/** One dataset inside an analysis project, with what was found in it. */
+export interface AssessedDatasetDto {
+  environmentId: string;
+  name: string;
+  connectionType: string | null;
+  provider: string | null;
+  analysed: boolean;
+  analysisRunId: string | null;
+  analysedAt: string | null;
+  tables: number;
+  records: number;
+  critical: number;
+  warning: number;
+  info: number;
+}
+
+/**
+ * What an analysis project found, across every dataset in it.
+ *
+ * The screen this feeds answers one question — "what did you find?" — so the shape leads with the verdict
+ * and the findings, and the per-dataset breakdown is underneath. Assembled on read from the stored
+ * profiles; see `AssessmentService` for why.
+ */
+export interface AnalysisAssessmentDto {
+  projectId: string;
+  projectName: string;
+  datasets: AssessedDatasetDto[];
+  tables: number;
+  records: number;
+  readiness: AnalysisReadiness;
+  findings: Finding[];
+  /** A paragraph assembled from the findings, for somebody who will read it aloud. */
+  summary: string;
 }
 
 export interface AnalysisFindingDto {
