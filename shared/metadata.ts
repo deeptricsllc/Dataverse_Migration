@@ -7,6 +7,8 @@
  * (see `sql` on AttributeMeta) rather than leaking into the shared model.
  */
 
+import type { SemanticReading } from './semantic-types';
+
 export const ATTRIBUTE_TYPES = [
   'String',
   'Memo',
@@ -103,6 +105,15 @@ export interface AttributeMeta {
    * metadata cached before it existed; see {@link familyOf}.
    */
   family?: ProviderFamily;
+  /**
+   * What the values appear to *mean*, when that differs from how they are stored.
+   *
+   * Set for inferred sources — a file has no declared schema, so a column of five-digit integers under a
+   * heading of `Start Date` is the only place the product can notice it is probably a date. `type` above
+   * stays the observed storage type; this is the reading, and it carries its own confidence. Nothing acts
+   * on it without the user choosing to.
+   */
+  semantic?: SemanticReading | null;
 }
 
 /** What a SQL column is, beyond the normalized type. */

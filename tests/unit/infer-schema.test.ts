@@ -350,3 +350,71 @@ describe('an upload as a migration source', () => {
     for (const attr of meta.attributes) expect(familyOf(attr)).toBe('TABULAR');
   });
 });
+
+/**
+ * The reading that sits alongside the storage type.
+ *
+ * `inferTable` answers "what will the engine read". These cases cover the second question a user actually
+ * has, which is "what is this column *for*" — and the specific failure that prompted it: a spreadsheet
+ * whose `Start Date` column profiled as `Integer` with values like 45292, which is a true statement about
+ * the storage and a useless one about the data.
+ *
+ * `shared/semantic-types.ts` has the detector's own cases. These prove it is reached through the real
+ * inference path and survives into the metadata a screen reads, which is the half a unit test of the
+ * detector cannot see.
+ */
+describe('semantic readings reach the inferred table', () => {
+  const rows = [
+    ['Rollout', '45292', '45380', 'a@b.com', '007'],
+    ['Audit', '45300', '45400', 'c@d.com', '012'],
+    ['Upgrade', '45310', '45420', 'e@f.com', '0456'],
+  ];
+  const headers = ['Task', 'Start Date', 'End Date', 'Owner Email', 'Ref'];
+
+  it('keeps the storage type and adds what the values mean', () => {
+    const inferred = inferTable('tasks', 'Tasks', headers, rows);
+    const byName = new Map(inferred.columns.map((c) => [c.name, c]));
+
+    const start = byName.get('Start Date')!;
+    // The storage type is still the observed truth. The engine reads integers here.
+    expect(start.type).toBe('Integer');
+    // And the reading says what they are, with the date a person can check.
+    expect(start.semantic?.type).toBe('EXCEL_SERIAL_DATE');
+    expect(start.semantic?.confidence).toBe('HIGH');
+    expect(start.semantic?.evidence).toContain('2024-01-01');
+    expect(start.semantic?.suggestedTransformation).toContain('Convert');
+
+    expect(byName.get('End Date')!.semantic?.type).toBe('EXCEL_SERIAL_DATE');
+    expect(byName.get('Owner Email')!.semantic?.type).toBe('EMAIL');
+    // Leading-zero digits are already kept as text by the storage inference; the reading says why.
+    expect(byName.get('Ref')!.type).toBe('String');
+    expect(byName.get('Ref')!.semantic?.type).toBe('IDENTIFIER');
+    // An ordinary text column gets no reading at all, which is most of them.
+    expect(byName.get('Task')!.semantic).toBeNull();
+  });
+
+  it('survives into the attribute metadata a screen reads', () => {
+    const meta = toTableMetadata(inferTable('tasks', 'Tasks', headers, rows));
+    const start = meta.attributes.find((a) => a.logicalName === 'Start Date');
+    expect(start?.type, 'the storage type a target column must accept').toBe('Integer');
+    expect(start?.semantic?.label).toBe('Date, stored as an Excel serial number');
+    expect(meta.attributes.find((a) => a.logicalName === 'Task')?.semantic).toBeNull();
+  });
+
+  it('reports a column that is empty in every row', () => {
+    const withEmpty = rows.map((r) => [...r, '']);
+    const inferred = inferTable('tasks', 'Tasks', [...headers, 'Legacy Notes'], withEmpty);
+    const notes = inferred.columns.find((c) => c.name === 'Legacy Notes')!;
+    expect(notes.semantic?.type).toBe('EMPTY');
+    expect(notes.semantic?.evidence).toContain('No row');
+  });
+
+  it('does not transform anything by detecting it', () => {
+    // The suggestion is a suggestion. The inferred type is untouched by the reading, which is what keeps
+    // "observed" and "inferred" separable all the way to the screen.
+    const inferred = inferTable('tasks', 'Tasks', headers, rows);
+    const start = inferred.columns.find((c) => c.name === 'Start Date')!;
+    expect(start.type).toBe('Integer');
+    expect(start.semantic?.suggestedTransformation).toBeTruthy();
+  });
+});

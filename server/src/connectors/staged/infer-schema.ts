@@ -4,6 +4,7 @@ import type {
   AttributeType,
   TableMetadata,
 } from '../../../../shared/metadata';
+import { detectSemanticType, type SemanticReading } from '../../../../shared/semantic-types';
 
 /**
  * Working out what a spreadsheet's columns are.
@@ -65,6 +66,13 @@ export interface InferredColumn {
   unique: boolean;
   /** Why this type was chosen, in one line, for the import report. */
   reason: string;
+  /**
+   * What the values appear to mean, when that is not the same as how they are stored.
+   *
+   * Separate from `type` and never a substitute for it. `type` is what the engine will read; this is what
+   * a person should be told before they map the column somewhere.
+   */
+  semantic: SemanticReading | null;
 }
 
 export interface InferredTable {
@@ -124,11 +132,54 @@ function uniqueHeaders(headers: string[]): string[] {
   });
 }
 
+/**
+ * The storage type, plus what the values appear to mean.
+ *
+ * Two passes on purpose. `inferStorageType` has eight early returns, one per type it can conclude, and
+ * attaching the semantic reading inside each of them is how one branch ends up silently without it.
+ */
 function inferColumn(
   name: string,
   rows: (string | number | boolean | null)[][],
   index: number,
 ): InferredColumn {
+  const storage = inferStorageType(name, rows, index);
+  const populated = rows.length - storage.blanks;
+  return {
+    ...storage,
+    semantic: detectSemanticType({
+      name,
+      storageType: storage.type,
+      // Distinct values rather than every row: one value repeated ten thousand times should not decide a
+      // pattern, and the cap keeps a wide file affordable.
+      values: distinctSample(rows, index, 500),
+      distinct: storage.distinct,
+      populated,
+    }),
+  };
+}
+
+/** Up to `limit` distinct non-blank values from one column, for pattern detection. */
+function distinctSample(
+  rows: (string | number | boolean | null)[][],
+  index: number,
+  limit: number,
+): string[] {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const text = cellText(row?.[index]);
+    if (isBlank(text)) continue;
+    seen.add(text);
+    if (seen.size >= limit) break;
+  }
+  return [...seen];
+}
+
+function inferStorageType(
+  name: string,
+  rows: (string | number | boolean | null)[][],
+  index: number,
+): Omit<InferredColumn, 'semantic'> {
   let blanks = 0;
   let maxLength = 0;
   let allInteger = true;
@@ -315,6 +366,9 @@ export function toTableMetadata(inferred: InferredTable): TableMetadata {
       format: null,
       dateTimeBehavior: column.type === 'DateTime' ? 'TimeZoneIndependent' : null,
       family: 'TABULAR',
+      // Carried through so a screen can say "Storage type: Number · Detected meaning: Date" instead of
+      // reporting `Integer` and leaving the user to work out why their dates look like five-digit numbers.
+      semantic: column.semantic,
     });
   }
 
