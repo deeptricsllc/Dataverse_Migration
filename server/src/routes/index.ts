@@ -768,6 +768,10 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       .parse(req.params);
     return s.runs.control(req.ctx, id, action);
   });
+  /** Where this run's failures are, grouped by dataset and by the code the engine recorded. */
+  app.get('/api/runs/:id/failures', async (req) =>
+    s.runs.failureSummary(req.ctx, idParams.parse(req.params).id),
+  );
   app.get('/api/runs/:id/errors', async (req) => {
     const { id } = idParams.parse(req.params);
     const q = page

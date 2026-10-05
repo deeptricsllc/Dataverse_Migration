@@ -11,8 +11,10 @@ import {
   type MigrationRunListItemDto,
   type RecordMapDto,
   type RollbackPreviewDto,
+  type RunFailureSummaryDto,
   type RunTrigger,
 } from '../../../shared/domain';
+import { describeFailureCode } from '../../../shared/failure-categories';
 import type { AppDb } from '../db/client';
 import { decideWriteScope } from '../write-scope';
 import {
@@ -715,6 +717,129 @@ export class MigrationRunService {
       completedAt: r.run.completedAt?.toISOString() ?? null,
       createdBy: r.user ?? null,
     }));
+  }
+
+  /**
+   * Where this run's failures are concentrated, and what caused them.
+   *
+   * A flat list of eighteen thousand errors answers "which records failed" and nothing else. The first
+   * question after a run is "what went wrong", and the answer is a small number of causes with very
+   * uneven counts — six thousand of one thing and four of another. That shape is in the data already:
+   * every error carries the code the engine recorded for it.
+   *
+   * Grouped by dataset and by code, counted, and nothing else. No category is invented, no message is
+   * parsed, and a code this product does not define is reported as itself.
+   */
+  async failureSummary(ctx: RequestContext, runId: string): Promise<RunFailureSummaryDto> {
+    const run = await this.loadRun(ctx.organizationId, runId);
+    const entities = await this.db
+      .select()
+      .from(migrationRunEntities)
+      .where(eq(migrationRunEntities.runId, runId))
+      .orderBy(asc(migrationRunEntities.orderIndex));
+
+    const grouped = await this.db
+      .select({
+        logicalName: migrationErrors.logicalName,
+        errorCode: migrationErrors.errorCode,
+        field: migrationErrors.field,
+        retryable: migrationErrors.retryable,
+        severity: migrationErrors.severity,
+        n: sql<number>`count(*)::int`,
+        message: sql<string>`min(${migrationErrors.message})`,
+        example: sql<string>`min(${migrationErrors.sourceRecordId})`,
+      })
+      .from(migrationErrors)
+      .where(eq(migrationErrors.runId, runId))
+      .groupBy(
+        migrationErrors.logicalName,
+        migrationErrors.errorCode,
+        migrationErrors.field,
+        migrationErrors.retryable,
+        migrationErrors.severity,
+      );
+
+    /*
+     * Warnings are kept, and kept apart.
+     *
+     * A run that writes every record and drops three hundred lookups on the way reports COMPLETED with
+     * zero failures, because no record failed — which is true, and on its own it is the wrong impression.
+     * The engine records those as warnings against the record they belong to. They are not failures and
+     * are never counted as such; they are the difference between "it worked" and "it worked, and here is
+     * what it could not carry across".
+     */
+    const describe = (g: (typeof grouped)[number]) => {
+      const described = describeFailureCode(g.errorCode);
+      return {
+        code: g.errorCode,
+        label: described.label,
+        meaning: described.meaning,
+        action: described.action,
+        known: described.known,
+        field: g.field,
+        retryable: g.retryable,
+        records: Number(g.n),
+        exampleRecordId: g.example ?? null,
+        exampleMessage: g.message ?? null,
+      };
+    };
+
+    const datasets = entities.map((entity) => {
+      const mine = grouped.filter((g) => g.logicalName === entity.logicalName && g.severity === 'ERROR');
+      const theirWarnings = grouped
+        .filter((g) => g.logicalName === entity.logicalName && g.severity === 'WARNING')
+        .map(describe)
+        .sort((a, b) => b.records - a.records);
+      const categories = mine
+        .map((g) => {
+          const described = describeFailureCode(g.errorCode);
+          return {
+            code: g.errorCode,
+            label: described.label,
+            meaning: described.meaning,
+            action: described.action,
+            known: described.known,
+            field: g.field,
+            retryable: g.retryable,
+            records: Number(g.n),
+            exampleRecordId: g.example ?? null,
+            exampleMessage: g.message ?? null,
+          };
+        })
+        .sort((a, b) => b.records - a.records);
+      return {
+        logicalName: entity.logicalName,
+        displayName: entity.displayName,
+        attempted: entity.total,
+        succeeded: entity.created + entity.updated + entity.unchanged,
+        failed: entity.failed,
+        skipped: entity.skipped,
+        unresolved: entity.unresolved,
+        categories,
+        warnings: theirWarnings,
+      };
+    });
+
+    return {
+      runId,
+      status: run.status as RunFailureSummaryDto['status'],
+      attempt: run.attempt,
+      failed: run.failed,
+      unresolved: run.unresolved,
+      datasets,
+      /*
+       * Retryable is the engine's own classification, recorded per error when it happened. It is not a
+       * judgement made now: whether another attempt could succeed depends on what the target said at the
+       * time, and nothing here re-decides it.
+       */
+      retryable: grouped
+        .filter((g) => g.severity === 'ERROR' && g.retryable)
+        .reduce((n, g) => n + Number(g.n), 0),
+      permanent: grouped
+        .filter((g) => g.severity === 'ERROR' && !g.retryable)
+        .reduce((n, g) => n + Number(g.n), 0),
+      warnings: grouped.filter((g) => g.severity === 'WARNING').reduce((n, g) => n + Number(g.n), 0),
+    };
   }
 
   async errors(

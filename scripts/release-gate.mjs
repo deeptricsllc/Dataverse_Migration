@@ -19,19 +19,54 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { outcomeOf } from './gate-outcome.mjs';
 
 const withEngines = process.argv.includes('--engines');
-const onWindows = process.platform === 'win32';
-const npx = onWindows ? 'npx.cmd' : 'npx';
-const npm = onWindows ? 'npm.cmd' : 'npm';
+
 /**
- * `shell` is required on Windows and must stay off everywhere else.
+ * Every check is a real process, started by its path, with its arguments in an array.
  *
- * npx and npm are `.cmd` shims there, and Node refuses to spawn one directly — it returns EINVAL, which
- * this script dutifully reported as seven failed gates the first time it ran. Using a shell unconditionally
- * would mean every argument is parsed by one, which is how an argument with a space becomes two.
+ * ## Why there is no shell here any more
+ *
+ * There used to be `shell: true` on Windows, because `npx` and `npm` are `.cmd` shims and Node refuses to
+ * spawn one directly. The cost of that shim was argument safety: with a shell, the command and its
+ * arguments are joined into one string and re-parsed, so anything containing a space becomes two things.
+ * It caught the content lint the day it was added — `process.execPath` is `C:\Program Files\nodejs\node.exe`
+ * on Windows, the shell split it at the space, and the gate reported a failure that was really a gate that
+ * never ran.
+ *
+ * A release gate that can report anything other than what a check actually did is worth less than no gate.
+ * So nothing here goes through a shell: every tool is invoked as `node <its own entry point>`, which is
+ * what the `.cmd` shims do anyway. Arguments are passed as an array and are never re-parsed, so a
+ * repository checked out under "C:\Users\My Name\Documents" works exactly like one that is not.
  */
-const spawnOpts = { stdio: 'inherit', shell: onWindows };
+const node = process.execPath;
+const bin = (...parts) => join('node_modules', ...parts);
+
+/** One check. `node` plus a script path, never a shell string. */
+const run = (args, env) =>
+  spawnSync(node, args, { stdio: 'inherit', env: env ? { ...process.env, ...env } : process.env });
+
+const PRETTIER = bin('prettier', 'bin', 'prettier.cjs');
+const ESLINT = bin('eslint', 'bin', 'eslint.js');
+const TSC = bin('typescript', 'bin', 'tsc');
+const VITEST = bin('vitest', 'vitest.mjs');
+const VITE = bin('vite', 'bin', 'vite.js');
+const TSUP = bin('tsup', 'dist', 'cli-default.js');
+const PLAYWRIGHT = bin('@playwright', 'test', 'cli.js');
+
+/**
+ * Two processes, reported as one gate.
+ *
+ * `typecheck` and `build` are each two commands in package.json. Chaining them through a shell is what
+ * this file is getting rid of, so they run in sequence here and the first non-zero result is the gate's.
+ */
+const both = (first, second) => {
+  const a = run(first);
+  if (a.error || a.status !== 0) return a;
+  return run(second);
+};
 
 /** A gate that needs an environment variable produces SKIPPED rather than a false pass. */
 const needs = (...vars) => vars.filter((v) => !process.env[v]);
@@ -40,12 +75,12 @@ const gates = [
   {
     name: 'format',
     why: 'Prettier is the only formatter; a diff nobody chose is noise in every later review.',
-    run: () => spawnSync(npx, ['prettier', '--check', '.'], spawnOpts),
+    run: () => run([PRETTIER, '--check', '.']),
   },
   {
     name: 'lint',
     why: 'An unused import is a leftover, and a leftover is a thing somebody will read and trust.',
-    run: () => spawnSync(npx, ['eslint', '.'], spawnOpts),
+    run: () => run([ESLINT, '.']),
   },
   {
     name: 'content',
@@ -56,27 +91,28 @@ const gates = [
      * "C:\Program" — which is the argument-with-a-space trap this file warns about a few lines above.
      * node is a real executable, so it needs no shim and no shell.
      */
-    run: () => spawnSync(process.execPath, ['scripts/content-lint.mjs'], { stdio: 'inherit' }),
+    run: () => run(['scripts/content-lint.mjs']),
   },
   {
     name: 'typecheck',
     why: 'Vitest does not typecheck. A suite can be green while the repository does not compile.',
-    run: () => spawnSync(npm, ['run', 'typecheck'], spawnOpts),
+    run: () =>
+      both([TSC, '-p', 'tsconfig.server.json', '--noEmit'], [TSC, '-p', 'tsconfig.web.json', '--noEmit']),
   },
   {
     name: 'unit + integration + golden journeys',
     why: 'Including the seven journeys, which run in the ordinary suite so they cannot be forgotten.',
-    run: () => spawnSync(npx, ['vitest', 'run'], spawnOpts),
+    run: () => run([VITEST, 'run']),
   },
   {
     name: 'build',
     why: 'Before the end-to-end suite, which serves dist/ and does not build it.',
-    run: () => spawnSync(npm, ['run', 'build'], spawnOpts),
+    run: () => both([VITE, 'build', '--config', 'web/vite.config.ts'], [TSUP]),
   },
   {
     name: 'end-to-end',
     why: 'The screens, the mobile widths, and the stale-build guard that refuses yesterday’s bundle.',
-    run: () => spawnSync(npx, ['playwright', 'test'], spawnOpts),
+    run: () => run([PLAYWRIGHT, 'test']),
   },
   {
     name: 'evidence drift',
@@ -96,11 +132,7 @@ const gates = [
       return null;
     },
     run: () =>
-      spawnSync(
-        process.execPath,
-        ['scripts/check-evidence-drift.mjs', process.env.DRIFT_COMMITTED, process.env.DRIFT_FRESH],
-        { stdio: 'inherit' },
-      ),
+      run(['scripts/check-evidence-drift.mjs', process.env.DRIFT_COMMITTED, process.env.DRIFT_FRESH]),
   },
 ];
 
@@ -113,13 +145,13 @@ if (withEngines) {
         const missing = needs('TEST_POSTGRES_URL', 'TEST_MYSQL_URL', 'TEST_MSSQL_URL');
         return missing.length === 3 ? `none of ${missing.join(', ')} is set` : null;
       },
-      run: () => spawnSync(npm, ['run', 'test:engines'], spawnOpts),
+      run: () => run([VITEST, 'run', '--config', 'vitest.engines.config.ts']),
     },
     {
       name: 'Dataverse tenant harness',
       why: 'Never been executed. Stays SIMULATED until it has.',
       skip: () => (process.env.TENANT_TEST_URL ? null : 'TENANT_TEST_URL is not set'),
-      run: () => spawnSync(npm, ['run', 'test:engines'], spawnOpts),
+      run: () => run([VITEST, 'run', '--config', 'vitest.engines.config.ts']),
     },
   );
 }
@@ -132,21 +164,30 @@ for (const gate of gates) {
     console.log(`\n=== SKIPPED  ${gate.name} — ${skipped}\n`);
     continue;
   }
-  console.log(`\n=== RUNNING  ${gate.name}\n    ${gate.why}\n`);
+  const startedAt = new Date();
+  console.log('');
+  console.log(`=== RUNNING  ${gate.name}  (started ${startedAt.toTimeString().slice(0, 8)})`);
+  console.log(`    ${gate.why}`);
+  console.log('');
   const started = Date.now();
   const out = gate.run();
-  /**
-   * `status` is null when the process was killed by a signal, and `error` is set when it never started.
-   * Both are failures, and neither has a usable exit code — a gate that read only `status` would report a
-   * killed suite as a pass.
+  const ms = Date.now() - started;
+
+  /*
+   * Whether the check ran at all is decided in `gate-outcome.mjs`, where it is unit tested against real
+   * spawn results — including a binary that does not exist, which is the case that silently cost a gate.
    */
-  const code = out.error ? -1 : (out.status ?? -1);
+  const outcome = outcomeOf(out);
   results.push({
     name: gate.name,
-    status: code === 0 ? 'PASSED' : 'FAILED',
-    code,
-    seconds: Math.round((Date.now() - started) / 1000),
-    detail: out.error ? out.error.message : undefined,
+    status: outcome.status,
+    code: outcome.code,
+    ran: outcome.ran,
+    pid: out.pid,
+    startedAt: startedAt.toTimeString().slice(0, 8),
+    ms,
+    seconds: Math.round(ms / 1000),
+    detail: outcome.detail,
   });
 }
 
@@ -157,16 +198,29 @@ console.log('='.repeat(width + 34));
 for (const r of results) {
   const time = r.seconds === undefined ? '' : `${String(r.seconds).padStart(5)}s`;
   const code = r.code === undefined ? '' : `  exit ${r.code}`;
-  console.log(`${r.status.padEnd(8)} ${r.name.padEnd(width)} ${time}${code}`);
-  if (r.detail) console.log(`         ${r.detail}`);
+  console.log(`${r.status.padEnd(11)} ${r.name.padEnd(width)} ${time}${code}`);
+  /*
+   * What each check actually did, so the table is evidence rather than a claim. A process that started
+   * has a pid; one that did not says so where its exit code would have been.
+   */
+  if (r.ran !== undefined) {
+    console.log(
+      `            started ${r.startedAt} · ${r.ms} ms · ${r.ran ? `pid ${r.pid} · exited ${r.code}` : 'never started'}`,
+    );
+  }
+  if (r.detail) console.log(`            ${r.detail}`);
 }
 
-const failed = results.filter((r) => r.status === 'FAILED');
+const failed = results.filter((r) => r.status === 'FAILED' || r.status === 'DID NOT RUN');
 const skipped = results.filter((r) => r.status === 'SKIPPED');
 console.log('='.repeat(width + 34));
+const didNotRun = results.filter((r) => r.status === 'DID NOT RUN');
 console.log(
-  `${results.filter((r) => r.status === 'PASSED').length} passed, ${failed.length} failed, ${skipped.length} skipped`,
+  `${results.filter((r) => r.status === 'PASSED').length} passed, ${failed.length - didNotRun.length} failed, ${didNotRun.length} did not run, ${skipped.length} skipped`,
 );
+if (didNotRun.length > 0) {
+  console.log('A check that did not run proves nothing. It is counted as a failure, not as a pass.');
+}
 if (skipped.length > 0) {
   console.log(
     'A skipped gate is not a passed one. What it would have proven is still unproven — see docs/HARNESS_CHECKLIST.md.',

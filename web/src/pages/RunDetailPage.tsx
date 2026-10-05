@@ -32,6 +32,7 @@ import {
   Td,
   Th,
 } from '../components/ui';
+import { RunFailures, RunOutcome } from '../components/RunOutcome';
 import { get, post, qs } from '../lib/api';
 import { fmtDate, fmtDuration, fmtNumber, pct } from '../lib/format';
 
@@ -188,6 +189,12 @@ export function RunDetailPage() {
           </Callout>
         </div>
       )}
+
+      {/*
+        What happened, before anything else. The page used to open on a progress bar, which answers "is
+        it still going" — a question nobody asks about a run that finished an hour ago.
+      */}
+      <RunOutcome run={r} onReviewFailures={() => setTab('errors')} />
 
       <Card className="mb-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -400,6 +407,12 @@ export function RunDetailPage() {
         run's own numbers restated, and a panel that says nothing new teaches people to skip panels.
       */}
       {r.attempt > 1 && <AttemptsPanel run={r} />}
+      {/* Where the failures are, grouped by cause, above the flat list of them. */}
+      {(r.failed > 0 || r.unresolved > 0 || terminal) && (
+        <div className="mb-5">
+          <RunFailures run={r} onOpenRecords={() => setTab('records')} />
+        </div>
+      )}
       {tab === 'errors' && <ErrorsPanel run={r} />}
       {tab === 'records' && <RecordsPanel run={r} />}
       {tab === 'rollback' && <RollbackPanel runId={r.id} />}

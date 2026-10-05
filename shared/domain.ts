@@ -1357,6 +1357,68 @@ export interface MigrationRunDto extends RunCounters {
   latestValidationRunId: string | null;
 }
 
+/**
+ * Where a run's failures are, and what caused them.
+ *
+ * The first question after a run that did not go cleanly is "what went wrong", and the answer is a small
+ * number of causes with very uneven counts. Every category is an error code the engine recorded; none is
+ * inferred from a message. A code this product does not define appears as itself.
+ */
+export interface RunFailureSummaryDto {
+  runId: string;
+  status: MigrationRunStatus;
+  attempt: number;
+  failed: number;
+  /** Records whose write result could not be confirmed. Not failures. See `shared/write-state.ts`. */
+  unresolved: number;
+  /** The engine's own classification, recorded per error when it happened. */
+  retryable: number;
+  permanent: number;
+  /**
+   * Recorded against a record that was written anyway.
+   *
+   * A dropped lookup is the common one: the record exists in the target, and a reference it carried does
+   * not. Never counted as a failure, and never left out — the difference between "it worked" and "it
+   * worked, and here is what it could not carry across".
+   */
+  warnings: number;
+  datasets: {
+    logicalName: string;
+    displayName: string;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+    unresolved: number;
+    categories: {
+      code: string;
+      label: string;
+      meaning: string | null;
+      action: string | null;
+      /** False when the label is the code itself, because this product did not define it. */
+      known: boolean;
+      field: string | null;
+      retryable: boolean;
+      records: number;
+      exampleRecordId: string | null;
+      exampleMessage: string | null;
+    }[];
+    /** Same shape, recorded against records the run wrote. Not failures. */
+    warnings: {
+      code: string;
+      label: string;
+      meaning: string | null;
+      action: string | null;
+      known: boolean;
+      field: string | null;
+      retryable: boolean;
+      records: number;
+      exampleRecordId: string | null;
+      exampleMessage: string | null;
+    }[];
+  }[];
+}
+
 export interface MigrationRunListItemDto {
   id: string;
   planName: string;
