@@ -1878,6 +1878,14 @@ export interface ProjectDto {
   status: ProjectStatus;
   /** The source being analysed or migrated. Set on both kinds once chosen. */
   sourceEnvironment: EnvRef | null;
+  /**
+   * Every dataset this project is about, in the order they were added.
+   *
+   * An analysis project may have several: four workbooks, or a database and a spreadsheet of corrections.
+   * `sourceEnvironment` is the first of these, kept for the workflows whose source genuinely is one thing.
+   * A migration or comparison project has exactly the one.
+   */
+  sources: EnvRef[];
   /** Migration projects only. */
   targetEnvironment: EnvRef | null;
   /** A migration project may be informed by an analysis project's findings. */

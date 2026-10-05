@@ -183,6 +183,13 @@
       "when": 1790928309831,
       "tag": "0025_unique_project_names",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790928310831,
+      "tag": "0026_project_sources",
+      "breakpoints": true
     }
   ]
 }

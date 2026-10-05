@@ -109,6 +109,23 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     s.projects.archive(req.ctx, idParams.parse(req.params).id),
   );
 
+  /**
+   * The datasets an analysis project is about.
+   *
+   * `DELETE` removes the listing and never the connection: a connection is a workspace asset that several
+   * projects may use, so taking it out of one must not take it from the others.
+   */
+  app.post('/api/projects/:id/sources', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { environmentId } = z.object({ environmentId: uuid }).parse(req.body);
+    return s.projects.addSource(req.ctx, id, environmentId);
+  });
+
+  app.delete('/api/projects/:id/sources/:environmentId', async (req) => {
+    const { id, environmentId } = z.object({ id: uuid, environmentId: uuid }).parse(req.params);
+    return s.projects.removeSource(req.ctx, id, environmentId);
+  });
+
   /** The plans inside a migration project. */
   app.get('/api/projects/:id/plans', async (req) =>
     s.planning.listForProject(req.ctx, idParams.parse(req.params).id),

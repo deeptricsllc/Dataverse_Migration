@@ -1,8 +1,16 @@
-import { and, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { PROJECT_KINDS, type ProjectDto, type ProjectKind, type ProjectStatus } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
-import { analysisRuns, dataComparisons, environments, migrationPlans, projects, users } from '../db/schema';
+import {
+  analysisRuns,
+  dataComparisons,
+  environments,
+  migrationPlans,
+  projectSources,
+  projects,
+  users,
+} from '../db/schema';
 import { badRequest, conflict, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
@@ -176,6 +184,20 @@ export class ProjectService {
       });
     const [row] = inserted;
 
+    /**
+     * The source list and the primary source must say the same thing from the first moment.
+     *
+     * A project created with a source through the ordinary API would otherwise report a
+     * `sourceEnvironment` and an empty `sources`, and every screen reading one of the two would disagree
+     * with every screen reading the other. Two representations of one fact have to be written together.
+     */
+    if (source) {
+      await this.db
+        .insert(projectSources)
+        .values({ projectId: row.id, environmentId: source.id, position: 0, addedByUserId: ctx.userId })
+        .onConflictDoNothing();
+    }
+
     await this.audit.record({
       organizationId: ctx.organizationId,
       userId: ctx.userId,
@@ -260,7 +282,126 @@ export class ProjectService {
       .catch((err: unknown) => {
         throw this.asFriendlyNameConflict(err, resultingName);
       });
+
+    // Changing the single source through this path rewrites the list it is the primary entry of. Allowed
+    // only when no work has been recorded (`assertNoWork` above), so there is nothing to orphan.
+    if (next.sourceEnvironmentId !== undefined) {
+      await this.db.delete(projectSources).where(eq(projectSources.projectId, projectId));
+      if (next.sourceEnvironmentId) {
+        await this.db.insert(projectSources).values({
+          projectId,
+          environmentId: next.sourceEnvironmentId,
+          position: 0,
+          addedByUserId: ctx.userId,
+        });
+      }
+    }
     return this.get(ctx, projectId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sources: the datasets a project is about
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Adds a dataset to an analysis project.
+   *
+   * Only analysis projects take more than one. A migration moves data from somewhere to somewhere, and a
+   * comparison has exactly two sides; letting either accumulate a list would make "which one is the
+   * source" a question with no answer, which is the ambiguity this whole model exists to remove.
+   *
+   * The connection is a workspace asset and is only ever *referenced* here. Nothing in this method, or in
+   * `removeSource`, can alter or delete it.
+   */
+  async addSource(ctx: RequestContext, projectId: string, environmentId: string): Promise<ProjectDto> {
+    const project = await this.row(ctx, projectId);
+    if (project.kind !== 'ANALYSIS') {
+      throw badRequest(
+        `A ${project.kind.toLowerCase()} project has a fixed source and target. Only an analysis project can hold several datasets.`,
+      );
+    }
+    // Accessible rather than merely existing: a source somebody cannot open is not a source they can add.
+    const env = await this.environmentsSvc.getAccessible(ctx, environmentId);
+
+    const existing = await this.sourceRows(projectId);
+    if (existing.some((r) => r.environmentId === env.id)) {
+      throw conflict(`${env.displayName} is already a source in this project.`);
+    }
+
+    await this.db.insert(projectSources).values({
+      projectId,
+      environmentId: env.id,
+      position: existing.length,
+      addedByUserId: ctx.userId,
+    });
+    // The first source added is also the primary one, which is what every single-source reader still uses.
+    if (!project.sourceEnvironmentId) {
+      await this.db
+        .update(projects)
+        .set({ sourceEnvironmentId: env.id, updatedAt: new Date() })
+        .where(eq(projects.id, projectId));
+    } else {
+      await this.db.update(projects).set({ updatedAt: new Date() }).where(eq(projects.id, projectId));
+    }
+    this.logger.info({ projectId, environmentId: env.id }, 'Source added to project');
+    return this.get(ctx, projectId);
+  }
+
+  /**
+   * Removes a dataset from a project. **The connection itself is untouched.**
+   *
+   * That distinction is the point of the whole connection model: a connection is a workspace asset that
+   * several projects may use, so taking it out of one project must not take it away from the others, and
+   * must certainly not forget the credential. All this deletes is the listing.
+   */
+  async removeSource(ctx: RequestContext, projectId: string, environmentId: string): Promise<ProjectDto> {
+    const project = await this.row(ctx, projectId);
+    const existing = await this.sourceRows(projectId);
+    const removing = existing.find((r) => r.environmentId === environmentId);
+    if (!removing) throw notFound('Source');
+
+    // Analyses already recorded against this source describe a dataset the project would no longer list.
+    const [analysed] = await this.db
+      .select({ id: analysisRuns.id })
+      .from(analysisRuns)
+      .where(and(eq(analysisRuns.projectId, projectId), eq(analysisRuns.environmentId, environmentId)))
+      .limit(1);
+    if (analysed) {
+      throw conflict(
+        'This source has been analysed in this project. Archive the project or keep the source, so the results stay attached to the dataset they describe.',
+      );
+    }
+
+    await this.db.delete(projectSources).where(eq(projectSources.id, removing.id));
+    // Close the gap, so positions stay contiguous and the order stays the order they were added in.
+    const remaining = existing.filter((r) => r.id !== removing.id);
+    for (const [index, row] of remaining.entries()) {
+      if (row.position !== index) {
+        await this.db.update(projectSources).set({ position: index }).where(eq(projectSources.id, row.id));
+      }
+    }
+    // The primary source follows the list. Null when nothing is left, rather than pointing at a removal.
+    if (project.sourceEnvironmentId === environmentId) {
+      await this.db
+        .update(projects)
+        .set({ sourceEnvironmentId: remaining[0]?.environmentId ?? null, updatedAt: new Date() })
+        .where(eq(projects.id, projectId));
+    } else {
+      await this.db.update(projects).set({ updatedAt: new Date() }).where(eq(projects.id, projectId));
+    }
+    this.logger.info(
+      { projectId, environmentId },
+      'Source removed from project; the connection is unchanged',
+    );
+    return this.get(ctx, projectId);
+  }
+
+  private sourceRows(projectId: string) {
+    return this.db
+      .select()
+      .from(projectSources)
+      .where(eq(projectSources.projectId, projectId))
+      .orderBy(asc(projectSources.position), asc(projectSources.createdAt));
   }
 
   /** Archiving keeps the history: an analysis someone acted on must stay readable. */
@@ -329,8 +470,37 @@ export class ProjectService {
   /** One round of lookups for the whole list, rather than per-row queries. */
   private async toDtos(rows: (typeof projects.$inferSelect)[]): Promise<ProjectDto[]> {
     if (rows.length === 0) return [];
+    const projectIds = rows.map((r) => r.id);
+    /**
+     * Every project's source list, fetched once for the whole page.
+     *
+     * Listing projects is the first screen somebody sees, and a per-project query here would make the
+     * projects page cost one round trip per project — the shape of slowness that only shows up once a
+     * workspace has real work in it.
+     */
+    const sourceRows = await this.db
+      .select({
+        projectId: projectSources.projectId,
+        environmentId: projectSources.environmentId,
+        position: projectSources.position,
+      })
+      .from(projectSources)
+      .where(inArray(projectSources.projectId, projectIds))
+      .orderBy(asc(projectSources.position), asc(projectSources.createdAt));
+    const sourcesByProject = new Map<string, string[]>();
+    for (const row of sourceRows) {
+      const list = sourcesByProject.get(row.projectId) ?? [];
+      list.push(row.environmentId);
+      sourcesByProject.set(row.projectId, list);
+    }
+
     const envIds = [
-      ...new Set(rows.flatMap((r) => [r.sourceEnvironmentId, r.targetEnvironmentId]).filter(Boolean)),
+      ...new Set(
+        [
+          ...rows.flatMap((r) => [r.sourceEnvironmentId, r.targetEnvironmentId]),
+          ...sourceRows.map((r) => r.environmentId),
+        ].filter(Boolean),
+      ),
     ] as string[];
     const envRows = envIds.length
       ? await this.db.select().from(environments).where(inArray(environments.id, envIds))
@@ -383,6 +553,9 @@ export class ProjectService {
       description: r.description,
       status: r.status,
       sourceEnvironment: r.sourceEnvironmentId ? (envs.get(r.sourceEnvironmentId) ?? null) : null,
+      sources: (sourcesByProject.get(r.id) ?? [])
+        .map((envId) => envs.get(envId))
+        .filter((e): e is NonNullable<typeof e> => Boolean(e)),
       targetEnvironment: r.targetEnvironmentId ? (envs.get(r.targetEnvironmentId) ?? null) : null,
       analysisProject: r.analysisProjectId ? (referencedByIds.get(r.analysisProjectId) ?? null) : null,
       itemCount: counts.get(r.id) ?? 0,

@@ -1046,6 +1046,37 @@ export const projects = pgTable(
 // Source analysis
 // ---------------------------------------------------------------------------
 
+/**
+ * The datasets an analysis project is about.
+ *
+ * `projects.source_environment_id` remains the primary source and stays in step with position 0, because
+ * analysis runs, migration projects and comparison projects all still read it. This is the list.
+ *
+ * Both foreign keys cascade on delete, and the asymmetry matters: removing a source from a project deletes
+ * a row here and nothing else, so the reusable connection survives. Nothing in this table can delete an
+ * environment.
+ */
+export const projectSources = pgTable(
+  'project_sources',
+  {
+    id: id(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    /** The order they were added in, which is the order they are expected to appear in. */
+    position: integer('position').notNull().default(0),
+    addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('project_sources_project_env_uq').on(t.projectId, t.environmentId),
+    index('project_sources_project_idx').on(t.projectId, t.position),
+  ],
+);
+
 export const analysisRuns = pgTable(
   'analysis_runs',
   {
