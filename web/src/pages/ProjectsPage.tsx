@@ -13,7 +13,6 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import { WorkflowChooser } from '../components/WorkflowChooser';
-import { StagedFileImport } from '../components/StagedFileImport';
 import { get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import {
@@ -266,8 +265,6 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
    * picker that asked for it.
    */
   const [addingFor, setAddingFor] = useState<'source' | 'target' | null>(null);
-  /** A file source that has just been created here and still holds nothing. */
-  const [importInto, setImportInto] = useState<EnvironmentDto | null>(null);
 
   const environments = useQuery({
     queryKey: ['environments'],
@@ -538,27 +535,8 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
             void qc.invalidateQueries({ queryKey: ['environments'] });
             // A file source holds nothing until a file is in it, so ask for one now rather than
             // letting the project be created against an empty source.
-            if (saved.connectionType === 'FILE') setImportInto(saved);
           }}
         />
-      )}
-
-      {importInto && (
-        <Modal
-          open
-          onClose={() => setImportInto(null)}
-          title={`Add a file to ${importInto.displayName}`}
-          footer={
-            <Button variant="primary" onClick={() => setImportInto(null)} data-testid="file-import-done">
-              Done
-            </Button>
-          }
-        >
-          <StagedFileImport
-            environment={importInto}
-            prompt="This source is empty until a file is in it. Choose one now, or close and add it later from Connections."
-          />
-        </Modal>
       )}
     </Modal>
   );

@@ -9,7 +9,6 @@ import { CONNECTION_TYPE_LABELS, isSqlConnection, isStagedConnection } from '@sh
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
-  CheckCircle2,
   Cloud,
   Database,
   FileSpreadsheet,
@@ -23,13 +22,12 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Table2,
   Trash2,
-  XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
-import { StagedSourceCard } from '../components/StagedSourceCard';
 import {
   Button,
   Callout,
@@ -41,12 +39,10 @@ import {
   SearchInput,
   Select,
   Spinner,
-  StatusBadge,
-  cx,
 } from '../components/ui';
 import { api, get, post } from '../lib/api';
 import { fmtRelative } from '../lib/format';
-import { useSession, useWorkspace } from '../lib/session';
+import { useSession } from '../lib/session';
 
 const TYPE_ICONS: Record<ConnectionType, typeof Database> = {
   DATAVERSE: Database,
@@ -229,10 +225,142 @@ function DeleteConnectionModal({
   );
 }
 
+/**
+ * What a connection's state actually is, in words that mean something.
+ *
+ * The old card said "Connected" for anything whose row said so — including a simulated demo environment
+ * that nothing had ever contacted, and a database nobody had tested since it was typed in. "Connected"
+ * that only means "a row exists" is worse than no badge at all, because it is the one piece of the screen
+ * somebody checks before trusting the rest.
+ *
+ * Four states, and no more. `Authentication expired` and `Unavailable` are not here because nothing in the
+ * platform can currently establish either: a 401 from a database is indistinguishable here from a wrong
+ * password, and inventing the distinction would be the same mistake in a new place.
+ */
+type ConnectionState = {
+  label: string;
+  tone: 'teal' | 'amber' | 'slate' | 'blue';
+  /** What it means, for somebody deciding whether to rely on it. */
+  detail: string;
+};
+
+function connectionState(env: EnvironmentDto): ConnectionState {
+  /*
+   * A failure outranks being simulated. The demo tenant deliberately refuses one environment to show what
+   * that looks like, and reporting it as "Simulated" would bury the one message on the card worth reading.
+   */
+  if (env.connectionStatus === 'FAILED') {
+    return {
+      label: 'Needs attention',
+      tone: 'amber',
+      detail: env.connectionMessage ?? 'The last attempt to reach it did not succeed.',
+    };
+  }
+  /*
+   * A real test result outranks everything, including being simulated — the card carries a DEMO pill for
+   * that, and the question this badge answers is "has anything actually reached it", which a test answers
+   * and a row in a table does not.
+   */
+  if (env.connectionStatus === 'CONNECTED' && env.lastTestedAt) {
+    return {
+      label: 'Connected',
+      tone: 'teal',
+      detail: env.connectionMessage ?? 'Reached successfully when it was last tested.',
+    };
+  }
+  /*
+   * Untested and simulated. Said as "Simulated" rather than "Not tested" because the more useful fact
+   * about it is that there is nothing real on the other side to test.
+   */
+  if (env.provider === 'demo' || env.provider === 'demosql') {
+    return {
+      label: 'Simulated',
+      tone: 'blue',
+      detail: 'A demonstration connection. Nothing real is contacted and no real data is read.',
+    };
+  }
+  return {
+    label: 'Not tested',
+    tone: 'slate',
+    detail: 'Nothing has tried to reach it yet, so whether it works is unknown.',
+  };
+}
+
+/**
+ * What is inside a connection, read-only.
+ *
+ * The question the Connections page exists to answer is "what can this organization reach", and a list of
+ * names answers half of it. This answers the other half without anybody having to create a project to
+ * find out. Nothing here selects anything: choosing data is a thing you do inside the work that needs it.
+ */
+function BrowseConnectionModal({ connection, onClose }: { connection: EnvironmentDto; onClose: () => void }) {
+  const staged = isStagedConnection(connection.connectionType);
+  const tables = useQuery({
+    queryKey: staged ? ['staged-tables', connection.id] : ['environment-tables', connection.id],
+    queryFn: () =>
+      staged
+        ? get<{ logicalName: string; displayName: string; rowCount: number; columnCount: number }[]>(
+            `/api/staged-sources/${connection.id}/tables`,
+          ).then((rows) =>
+            rows.map((r) => ({
+              logicalName: r.logicalName,
+              displayName: r.displayName,
+              detail: `${r.rowCount.toLocaleString()} rows · ${r.columnCount} columns`,
+            })),
+          )
+        : get<{ logicalName: string; displayName: string; sqlSchema?: string | null; isView?: boolean }[]>(
+            `/api/environments/${connection.id}/tables`,
+          ).then((rows) =>
+            rows.map((r) => ({
+              logicalName: r.logicalName,
+              displayName: r.displayName,
+              detail: r.isView ? 'View' : (r.sqlSchema ?? ''),
+            })),
+          ),
+  });
+
+  return (
+    <Modal open onClose={onClose} wide title={connection.displayName}>
+      <div className="space-y-3">
+        <p className="text-sm text-slate-600">
+          What this connection can reach. To work with any of it, add it as a dataset inside a project.
+        </p>
+        {tables.isLoading && <Spinner label="Reading what is in it…" />}
+        {tables.error && <ErrorState error={tables.error} />}
+        {tables.data && tables.data.length === 0 && (
+          <EmptyState
+            title="Nothing in it yet"
+            description={
+              staged
+                ? 'Nothing has been selected from this connection. It holds access, not data.'
+                : 'No tables were returned.'
+            }
+          />
+        )}
+        {tables.data && tables.data.length > 0 && (
+          <>
+            <p className="text-xs text-slate-500">{tables.data.length} objects</p>
+            <ul
+              className="max-h-80 divide-y divide-slate-100 overflow-auto rounded-md border border-slate-200"
+              data-testid="connection-contents"
+            >
+              {tables.data.map((table) => (
+                <li key={table.logicalName} className="flex items-center gap-3 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-900">{table.logicalName}</span>
+                  <span className="flex-none text-xs text-slate-500">{table.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function EnvironmentsPage() {
   const qc = useQueryClient();
   const { user } = useSession();
-  const workspace = useWorkspace();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [kindFilter, setKindFilter] = useState('ALL');
@@ -261,7 +389,8 @@ export function EnvironmentsPage() {
    * the file picker in a section below every other connection. The source existed and there was
    * nothing on screen to suggest what to do next.
    */
-  const [createdStagedId, setCreatedStagedId] = useState<string | null>(null);
+  /** The connection just saved, so the next thing on screen is its data rather than a congratulation. */
+  const [browsing, setBrowsing] = useState<EnvironmentDto | null>(null);
 
   const envs = useQuery({
     queryKey: ['environments'],
@@ -302,16 +431,7 @@ export function EnvironmentsPage() {
   }, [autoDiscover]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const list = useMemo(() => envs.data ?? [], [envs.data]);
-  /** File sources get their own section: what matters about them is their data, not their settings. */
-  const staged = useMemo(() => list.filter((e) => isStagedConnection(e.connectionType)), [list]);
 
-  useEffect(() => {
-    if (!createdStagedId) return;
-    const card = document.querySelector(`[data-testid="staged-source-${createdStagedId}"]`);
-    if (!card) return;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.querySelector<HTMLInputElement>('input[type="file"]')?.focus();
-  }, [createdStagedId, list]);
   const types = useMemo(
     () => ['ALL', ...new Set(list.map((e) => e.environmentType).filter((t): t is string => Boolean(t)))],
     [list],
@@ -322,30 +442,19 @@ export function EnvironmentsPage() {
   );
   const filtered = list.filter(
     (e) =>
-      // File sources have their own section below, with the import control. Showing them here as
-      // well produced a second card whose every row was "—".
-      !isStagedConnection(e.connectionType) &&
+      /*
+       * An uploaded spreadsheet is not a connection. It is reusable access to nothing — there is no host,
+       * no credential and no system on the other side — and listing it here was the implementation's
+       * vocabulary leaking into the product. SharePoint and OneDrive do belong: those authenticate.
+       * A file is managed where it is used, in the project's datasets.
+       */
+      e.connectionType !== 'FILE' &&
       (typeFilter === 'ALL' || e.environmentType === typeFilter) &&
       (kindFilter === 'ALL' || e.connectionType === kindFilter) &&
       `${e.displayName} ${e.url} ${e.uniqueName ?? ''} ${e.sql?.database ?? ''}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-
-  const select = async (role: 'source' | 'target', env: EnvironmentDto) => {
-    const next = {
-      sourceEnvironmentId: workspace.source?.id ?? null,
-      targetEnvironmentId: workspace.target?.id ?? null,
-    };
-    if (role === 'source') {
-      next.sourceEnvironmentId = env.id;
-      if (next.targetEnvironmentId === env.id) next.targetEnvironmentId = null;
-    } else {
-      next.targetEnvironmentId = env.id;
-      if (next.sourceEnvironmentId === env.id) next.sourceEnvironmentId = null;
-    }
-    await workspace.setWorkspace(next);
-  };
 
   return (
     <>
@@ -358,10 +467,15 @@ export function EnvironmentsPage() {
       */}
       <PageHeader
         title="Connections"
+        /*
+         * What this page is for, said in one line. It answers "what systems can this organization reach",
+         * and nothing else: it is not a step of a migration, and nothing here is a source or a target.
+         * Which data a piece of work uses is decided inside that work.
+         */
         description={
           user.organization.isDemo
-            ? 'Simulated Dataverse environments and SQL Server databases available to the demo account.'
-            : 'Dataverse environments discovered through the Microsoft Global Discovery Service, plus the SQL Server and Azure SQL databases you configure here.'
+            ? 'Systems this demo workspace can reach. Simulated — nothing real is contacted.'
+            : 'Systems and storage locations available to your organization. Add one here, then use it in any project.'
         }
         actions={
           <>
@@ -403,11 +517,6 @@ export function EnvironmentsPage() {
         }
       />
 
-      {workspace.error && (
-        <div className="mb-4">
-          <ErrorState error={workspace.error} />
-        </div>
-      )}
       {discover.error && (
         <div className="mb-4">
           <ErrorState error={discover.error} onRetry={() => discover.mutate()} />
@@ -439,6 +548,7 @@ export function EnvironmentsPage() {
           // A staged source has no settings to edit — it has data to import, which is its own card.
           const editable = env.connectionType !== 'DATAVERSE' && !staged;
           const TypeIcon = TYPE_ICONS[env.connectionType];
+          const state = connectionState(env);
           return (
             <article
               key={env.id}
@@ -468,30 +578,22 @@ export function EnvironmentsPage() {
                 <CapabilityList capabilities={env.capabilities} />
                 <VerificationNote type={env.connectionType} />
                 <div className="mt-3 flex items-center gap-2 text-xs">
-                  <StatusBadge
-                    status={env.connectionStatus}
-                    label={env.connectionStatus === 'UNKNOWN' ? 'Not tested' : undefined}
-                  />
-                  {env.lastTestedAt && (
-                    <span className="text-slate-400">{fmtRelative(env.lastTestedAt)}</span>
-                  )}
+                  <Pill tone={state.tone}>{state.label}</Pill>
+                  <span className="text-slate-400">
+                    {env.lastTestedAt ? `Last tested ${fmtRelative(env.lastTestedAt)}` : 'Never tested'}
+                  </span>
                 </div>
-                {env.connectionMessage && (
-                  <p
-                    className={cx(
-                      'mt-1.5 flex items-start gap-1 text-xs',
-                      env.connectionStatus === 'FAILED' ? 'text-red-700' : 'text-slate-500',
-                    )}
-                  >
-                    {env.connectionStatus === 'FAILED' ? (
-                      <XCircle className="mt-0.5 h-3 w-3 flex-none" />
-                    ) : (
-                      <CheckCircle2 className="mt-0.5 h-3 w-3 flex-none text-emerald-600" />
-                    )}
-                    {env.connectionMessage}
-                  </p>
-                )}
+                <p className="mt-1.5 text-xs text-slate-500">{state.detail}</p>
                 <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Table2 className="h-3.5 w-3.5" />}
+                    onClick={() => setBrowsing(env)}
+                    data-testid="browse-connection"
+                  >
+                    Browse data
+                  </Button>
                   {testable && (
                     <Button
                       size="sm"
@@ -548,21 +650,6 @@ export function EnvironmentsPage() {
         </div>
       )}
 
-      {staged.length > 0 && (
-        <div className="mt-8 space-y-4">
-          <h2 className="text-sm font-semibold text-slate-700">File sources</h2>
-          {staged.map((env) => (
-            <StagedSourceCard
-              key={env.id}
-              environment={env}
-              justCreated={env.id === createdStagedId}
-              isSource={workspace.source?.id === env.id}
-              onSetSource={() => void select('source', env)}
-            />
-          ))}
-        </div>
-      )}
-
       {formOpen && (
         <ConnectionModal
           connection={editing}
@@ -571,11 +658,17 @@ export function EnvironmentsPage() {
           onDiscover={() => discover.mutate()}
           onSaved={(saved) => {
             closeForm();
-            if (isStagedConnection(saved.connectionType)) setCreatedStagedId(saved.id);
             void qc.invalidateQueries({ queryKey: ['environments'] });
+            /*
+             * Straight to the data. Storing a credential is infrastructure, not an achievement, and a
+             * dialog that closed on a saved connection left somebody looking at a list wondering what they
+             * had actually gained. The useful next thing is what the connection can now reach.
+             */
+            setBrowsing(saved);
           }}
         />
       )}
+      {browsing && <BrowseConnectionModal connection={browsing} onClose={() => setBrowsing(null)} />}
       {deleting && (
         <DeleteConnectionModal
           connection={deleting}

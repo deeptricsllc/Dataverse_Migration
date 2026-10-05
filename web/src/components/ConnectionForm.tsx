@@ -308,6 +308,12 @@ export function ConnectionModal({
           <fieldset>
             <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {/*
+                No file option. A spreadsheet on somebody's laptop is not reusable authenticated access to
+                a system — it is the data itself — and making people create a "connection" before they
+                could upload one was an implementation detail wearing the product's vocabulary. Files are
+                added as datasets, inside the project that wants them.
+              */}
               {(
                 [
                   'DATAVERSE',
@@ -315,7 +321,6 @@ export function ConnectionModal({
                   'AZURE_SQL',
                   'POSTGRES',
                   'MYSQL',
-                  'FILE',
                   'ONEDRIVE',
                   'SHAREPOINT',
                 ] as ConnectionType[]
