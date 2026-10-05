@@ -1,7 +1,9 @@
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Database, Layers, Server } from 'lucide-react';
 import type {
+  MigrationPlanDto,
   MigrationProjectStatus,
   MigrationWorkspaceDto,
   ProjectDto,
@@ -9,19 +11,15 @@ import type {
 } from '@shared/domain';
 import { MIGRATION_PROJECT_STATUS_LABELS } from '@shared/domain';
 import type { ReadinessFinding } from '@shared/readiness';
-import {
-  Button,
-  Callout,
-  Card,
-  EmptyState,
-  ErrorState,
-  PageHeader,
-  Pill,
-  Spinner,
-  Tabs,
-  cx,
-} from '../components/ui';
+import { Button, Card, EmptyState, ErrorState, PageHeader, Pill, Spinner, Tabs, cx } from '../components/ui';
+import { ExecuteModal } from './PlanPage';
 import { MigrationData } from '../components/MigrationData';
+import {
+  MigrationDependencies,
+  MigrationMapping,
+  MigrationRuns,
+  MigrationTransformations,
+} from '../components/MigrationSections';
 import { api } from '../lib/api';
 import { describeCount } from '../lib/format';
 
@@ -120,7 +118,10 @@ export function MigrationWorkspacePage() {
 
       {section === 'overview' && <Overview w={w} onSection={setSection} />}
       {section === 'data' && <MigrationData w={w} />}
-      {section !== 'overview' && section !== 'data' && <SectionPlaceholder section={section} w={w} />}
+      {section === 'mapping' && <MigrationMapping w={w} />}
+      {section === 'transformations' && <MigrationTransformations w={w} />}
+      {section === 'dependencies' && <MigrationDependencies w={w} />}
+      {section === 'runs' && <MigrationRuns w={w} />}
     </>
   );
 }
@@ -282,7 +283,71 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
       <Card title="Next action" data-testid="migration-next-action">
         <p className="text-sm font-semibold text-slate-900">{w.nextAction.label}</p>
         <p className="mt-0.5 text-sm text-slate-600">{w.nextAction.detail}</p>
+        <NextActionControls w={w} onSection={onSection} />
       </Card>
+    </div>
+  );
+}
+
+/**
+ * Doing the next thing, from the place that said what it was.
+ *
+ * Execution lives here rather than at the end of a wizard, because "can we run this" is a question people
+ * ask repeatedly and from a standing start — the day before the cutover, and again on the morning of it.
+ * The preflight is the checkpoint before anything is written; the engine refuses a run with blockers
+ * whatever this button does.
+ */
+function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: Section) => void }) {
+  const [executing, setExecuting] = useState(false);
+  const navigate = useNavigate();
+  const plan = useQuery({
+    queryKey: ['migration-plan', w.projectId],
+    queryFn: () => api<MigrationPlanDto | null>('GET', `/api/projects/${w.projectId}/migration/plan`),
+    enabled: Boolean(w.plan),
+  });
+
+  const kind = w.nextAction.kind;
+  if (kind === 'RESOLVE_BLOCKERS' || kind === 'REVIEW_WARNINGS') {
+    return (
+      <Button className="mt-3" variant="secondary" onClick={() => onSection('mapping')}>
+        Open mapping
+      </Button>
+    );
+  }
+  if (kind === 'REVIEW_FAILURES' && w.lastRun) {
+    return (
+      <Button className="mt-3" variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
+        Review the failures
+      </Button>
+    );
+  }
+  if (kind === 'WATCH_RUN' && w.lastRun) {
+    return (
+      <Button className="mt-3" variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
+        Watch this run
+      </Button>
+    );
+  }
+  if (kind !== 'EXECUTE' || !plan.data) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Link
+        to={`/migration/plans/${plan.data.id}/preflight`}
+        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+        data-testid="open-preflight"
+      >
+        Preflight (dry run)
+      </Link>
+      <Button variant="primary" data-testid="start-migration" onClick={() => setExecuting(true)}>
+        Start migration
+      </Button>
+      <ExecuteModal
+        plan={plan.data}
+        open={executing}
+        onClose={() => setExecuting(false)}
+        onStarted={(run) => navigate(`/runs/${run.id}`)}
+      />
     </div>
   );
 }
@@ -384,43 +449,6 @@ function Step({
       <p className="mt-0.5 text-xs text-slate-500">{detail}</p>
       <div className="mt-3">{action}</div>
     </div>
-  );
-}
-
-/**
- * A section whose work still lives on the plan screens.
- *
- * Honest rather than empty: it says where the work is and takes you there, instead of pretending the
- * section is finished or that the feature does not exist. These are replaced section by section.
- */
-function SectionPlaceholder({ section, w }: { section: Section; w: MigrationWorkspaceDto }) {
-  if (!w.plan) {
-    return (
-      <Card>
-        <EmptyState
-          title="Nothing to configure yet"
-          description="Add the data you want to move and choose a destination, and this section will have something to describe."
-        />
-      </Card>
-    );
-  }
-  const labels: Record<string, { title: string; where: string }> = {
-    mapping: { title: 'Mapping', where: `/migration/plans/${w.plan.id}?step=mapping` },
-    transformations: { title: 'Transformations', where: `/migration/plans/${w.plan.id}?step=mapping` },
-    dependencies: { title: 'Dependencies', where: `/migration/plans/${w.plan.id}?step=dependencies` },
-    runs: { title: 'Runs', where: `/runs` },
-  };
-  const here = labels[section]!;
-  return (
-    <Card title={here.title}>
-      <Callout tone="info" title="This section is being moved into the workspace">
-        Its work still happens on the configuration screen for now. Nothing has been lost — the link below
-        goes to exactly where it lives today.
-      </Callout>
-      <Link to={here.where} className="mt-3 inline-block text-sm text-brand-700 hover:underline">
-        Open {here.title.toLowerCase()} →
-      </Link>
-    </Card>
   );
 }
 

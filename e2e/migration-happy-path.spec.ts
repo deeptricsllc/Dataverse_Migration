@@ -193,6 +193,26 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await page.mouse.wheel(0, -5000);
   await expect(page.getByTestId('execute-bar')).toBeInViewport();
 
+  /*
+   * Wait for the demo workspace to finish building itself.
+   *
+   * Signing in seeds the workspace by running two real migrations in the background, and the engine
+   * refuses a second migration into a target another run still holds — correctly, because two concurrent
+   * writers to one environment is the thing that guard exists to prevent. The test was racing the seed:
+   * it passed whenever the seed finished first, which is a property of the machine rather than of the
+   * product.
+   */
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async () => {
+          const runs = (await (await fetch('/api/runs')).json()) as { status: string }[];
+          return runs.some((r) => r.status === 'QUEUED' || r.status === 'RUNNING');
+        }),
+      { timeout: 180_000, message: 'the demo workspace should finish seeding before a second migration' },
+    )
+    .toBe(false);
+
   await page.getByRole('button', { name: 'Execute migration' }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm migration execution' });
   await expect(dialog.getByText('DeepTrics Development').first()).toBeVisible();

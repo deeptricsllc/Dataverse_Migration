@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitCompareArrows, RefreshCw } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
   Callout,
@@ -108,7 +107,6 @@ export function ComparePage() {
   if (!ready && !comparisonId) {
     return (
       <>
-        <WizardSteps current={2} links={{ 1: projectId ? `/projects/${projectId}` : '/projects' }} />
         <EmptyState
           icon={<GitCompareArrows className="h-8 w-8" />}
           title="Open this from a migration"
@@ -129,7 +127,6 @@ export function ComparePage() {
   const s = run.data?.summary;
   return (
     <>
-      <WizardSteps current={2} links={{ 1: '/environments', 3: '/migration/new' }} />
       <PageHeader
         title="Schema comparison"
         description="Schema comparison of tables, columns, relationships and alternate keys. Column-level analysis covers custom tables and common business tables."

@@ -3,7 +3,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TableSelector } from '../components/TableSelector';
-import { WizardSteps } from '../components/WizardSteps';
 import { Button, Callout, Card, EmptyState, ErrorState, PageHeader, Spinner } from '../components/ui';
 import { get, post, qs } from '../lib/api';
 
@@ -81,7 +80,6 @@ export function NewMigrationPage() {
 
   return (
     <>
-      <WizardSteps current={3} links={{ 1: `/projects/${projectId}`, 2: '/compare' }} />
       <PageHeader
         title="Select tables to migrate"
         description="Choose the tables whose data should be copied from the source to the target. Record counts are as of the last analysis; the plan refreshes them. Dependencies are shown but never selected automatically."

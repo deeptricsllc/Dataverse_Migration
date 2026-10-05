@@ -29,7 +29,6 @@ import { RecordPreviewCard } from '../components/RecordPreviewCard';
 import { TransformationEditor } from '../components/TransformationEditor';
 import { ObjectMappingCard } from '../components/ObjectMappingCard';
 import { TableSelector } from '../components/TableSelector';
-import { WizardSteps } from '../components/WizardSteps';
 import {
   Button,
   Callout,
@@ -54,7 +53,6 @@ import { get, patch, post, put, qs } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 
 type Step = 'tables' | 'dependencies' | 'mapping' | 'review';
-const STEP_NUMBER: Record<Step, number> = { tables: 3, dependencies: 4, mapping: 5, review: 6 };
 
 export function PlanPage() {
   const { planId } = useParams();
@@ -76,22 +74,9 @@ export function PlanPage() {
   if (plan.isLoading) return <Spinner label="Loading plan…" />;
   if (plan.error || !plan.data) return <ErrorState error={plan.error ?? new Error('Plan not found')} />;
   const p = plan.data;
-  const base = `/migration/plans/${p.id}`;
 
   return (
     <>
-      <WizardSteps
-        current={STEP_NUMBER[step]}
-        links={{
-          1: '/environments',
-          2: p.comparisonRunId ? `/compare/${p.comparisonRunId}` : '/compare',
-          3: `${base}?step=tables`,
-          4: `${base}?step=dependencies`,
-          5: `${base}?step=mapping`,
-          6: `${base}?step=review`,
-          ...(p.lastRunId ? { 7: `/runs/${p.lastRunId}` } : {}),
-        }}
-      />
       <PageHeader
         title={p.name}
         description={
@@ -237,7 +222,14 @@ function EdgeList({ edges, direction }: { edges: DependencyEdgeDto[]; direction:
   );
 }
 
-function DependenciesStep({ plan, onNext }: { plan: MigrationPlanDto; onNext: () => void }) {
+export function DependenciesStep({
+  plan,
+  onNext,
+}: {
+  plan: MigrationPlanDto;
+  /** Omitted when this is a section of the workspace rather than a step of a wizard. */
+  onNext?: () => void;
+}) {
   const analysis = plan.dependencyAnalysis;
   if (!analysis)
     return (
@@ -250,9 +242,11 @@ function DependenciesStep({ plan, onNext }: { plan: MigrationPlanDto; onNext: ()
         title="Migration order"
         subtitle="Tables are migrated in dependency order computed with a topological sort of lookup relationships."
         actions={
-          <Button variant="primary" onClick={onNext}>
-            Continue: Map fields
-          </Button>
+          onNext ? (
+            <Button variant="primary" onClick={onNext}>
+              Continue: Map fields
+            </Button>
+          ) : undefined
         }
       >
         <ol className="flex flex-wrap items-center gap-2" data-testid="migration-order">
@@ -392,14 +386,15 @@ interface Suggestion {
   provider: string;
 }
 
-function MappingStep({
+export function MappingStep({
   plan,
   onPlan,
   onNext,
 }: {
   plan: MigrationPlanDto;
   onPlan: (p: MigrationPlanDto) => void;
-  onNext: () => void;
+  /** Omitted when this is a section of the workspace rather than a step of a wizard. */
+  onNext?: () => void;
 }) {
   const [entityId, setEntityId] = useState(plan.entities[0]?.id);
   const [statusFilter, setStatusFilter] = useState<'ALL' | MappingStatus>('ALL');
@@ -513,9 +508,11 @@ function MappingStep({
             title={`${entity.displayName} — record matching`}
             subtitle="How existing target records are identified (prevents duplicates)."
             actions={
-              <Button variant="primary" onClick={onNext}>
-                Continue: Review plan
-              </Button>
+              onNext ? (
+                <Button variant="primary" onClick={onNext}>
+                  Continue: Review plan
+                </Button>
+              ) : undefined
             }
           >
             <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -874,7 +871,13 @@ function IssueList({ issues }: { issues: PlanIssue[] }) {
   );
 }
 
-function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: MigrationPlanDto) => void }) {
+export function ReviewStep({
+  plan,
+  onPlan,
+}: {
+  plan: MigrationPlanDto;
+  onPlan: (p: MigrationPlanDto) => void;
+}) {
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const settings = useQuery({
@@ -1193,7 +1196,7 @@ function ReviewStep({ plan, onPlan }: { plan: MigrationPlanDto; onPlan: (p: Migr
   );
 }
 
-function ExecuteModal({
+export function ExecuteModal({
   plan,
   open,
   onClose,
