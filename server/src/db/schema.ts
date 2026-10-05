@@ -1027,7 +1027,19 @@ export const projects = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('projects_org_kind_idx').on(t.organizationId, t.kind, t.createdAt)],
+  (t) => [
+    index('projects_org_kind_idx').on(t.organizationId, t.kind, t.createdAt),
+    /**
+     * One active project per name per workspace, case-insensitively.
+     *
+     * Here rather than only in the service, because two concurrent creates both pass a "does this name
+     * exist" check before either has inserted. Scoped to ACTIVE so archiving does not reserve a name
+     * forever. See `0025_unique_project_names.sql`.
+     */
+    uniqueIndex('projects_org_active_name_unique')
+      .on(t.organizationId, sql`lower(${t.name})`)
+      .where(sql`status = 'ACTIVE'`),
+  ],
 );
 
 // ---------------------------------------------------------------------------

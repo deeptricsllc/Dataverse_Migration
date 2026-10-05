@@ -1,9 +1,9 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import { PROJECT_KINDS, type ProjectDto, type ProjectKind, type ProjectStatus } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { analysisRuns, dataComparisons, environments, migrationPlans, projects, users } from '../db/schema';
-import { badRequest, notFound } from '../lib/errors';
+import { badRequest, conflict, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { envRef } from './env-ref';
@@ -71,6 +71,63 @@ export class ProjectService {
     return row;
   }
 
+  /**
+   * Refuses a name another active project in this workspace already has.
+   *
+   * Three projects called `Test_Analysis` used to be possible, which makes a project name useless as a
+   * way to refer to anything: navigation, exports, audit entries, run history and a support conversation
+   * all become ambiguous at once.
+   *
+   * This check exists for the message. It is not what makes the rule hold — two concurrent requests both
+   * pass it before either has inserted — so there is also a partial unique index, and
+   * `asFriendlyNameConflict` turns the race into the same sentence a person reads here. A product that
+   * enforces a rule only in the service enforces it only most of the time.
+   *
+   * Comparison is case-insensitive: "Customer Migration" and "customer migration" are the same name to
+   * the person who has to tell them apart, and that is the ambiguity being prevented.
+   */
+  private async assertNameAvailable(organizationId: string, name: string, exceptProjectId?: string) {
+    const where = [
+      eq(projects.organizationId, organizationId),
+      eq(projects.status, 'ACTIVE'),
+      sql`lower(${projects.name}) = lower(${name})`,
+    ];
+    if (exceptProjectId) where.push(ne(projects.id, exceptProjectId));
+    const [clash] = await this.db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(and(...where))
+      .limit(1);
+    if (clash) throw this.nameConflict(clash.name);
+  }
+
+  private nameConflict(name: string) {
+    return conflict(`A project named "${name}" already exists in this workspace.`);
+  }
+
+  /**
+   * Turns the unique-index violation into the message the pre-check would have given.
+   *
+   * Postgres `23505` is a unique violation. Letting it through would show somebody
+   * `duplicate key value violates unique constraint "projects_org_active_name_unique"`, which names our
+   * index and tells them nothing they can act on. Only this index is translated: any other unique
+   * violation is a bug and must keep looking like one rather than being reported as a naming problem.
+   */
+  private asFriendlyNameConflict(err: unknown, name: string): unknown {
+    const codes: string[] = [];
+    let current: unknown = err;
+    for (let depth = 0; current && depth < 6; depth += 1) {
+      const e = current as { code?: unknown; constraint?: unknown; message?: unknown; cause?: unknown };
+      if (typeof e.code === 'string') codes.push(e.code);
+      const text = `${typeof e.constraint === 'string' ? e.constraint : ''} ${typeof e.message === 'string' ? e.message : ''}`;
+      if (codes.includes('23505') && text.includes('projects_org_active_name_unique')) {
+        return this.nameConflict(name);
+      }
+      current = e.cause;
+    }
+    return err;
+  }
+
   async create(
     ctx: RequestContext,
     input: {
@@ -97,8 +154,9 @@ export class ProjectService {
       throw badRequest('The source and target cannot be the same environment');
     }
     const analysisProjectId = await this.resolveAnalysisReference(ctx, input.kind, input.analysisProjectId);
+    await this.assertNameAvailable(ctx.organizationId, name);
 
-    const [row] = await this.db
+    const inserted = await this.db
       .insert(projects)
       .values({
         organizationId: ctx.organizationId,
@@ -110,7 +168,13 @@ export class ProjectService {
         analysisProjectId,
         createdByUserId: ctx.userId,
       })
-      .returning();
+      .returning()
+      // The check above lost the race. Same sentence either way, so the caller cannot tell which of the
+      // two paths refused them — and does not need to.
+      .catch((err: unknown) => {
+        throw this.asFriendlyNameConflict(err, name);
+      });
+    const [row] = inserted;
 
     await this.audit.record({
       organizationId: ctx.organizationId,
@@ -149,6 +213,21 @@ export class ProjectService {
     if (patch.description !== undefined) next.description = patch.description?.trim() || null;
     if (patch.status !== undefined) next.status = patch.status;
 
+    /**
+     * Renaming and un-archiving are the same hazard as creating.
+     *
+     * A rename can collide with another active project, and bringing an archived project back can collide
+     * with the one that took its name while it was away — which is the case a check written only for
+     * `create` would miss. Both are resolved against the name and status this update will leave behind,
+     * excluding this project from the comparison so renaming something to what it is already called is not
+     * a conflict with itself.
+     */
+    const resultingName = next.name ?? existing.name;
+    const resultingStatus = next.status ?? existing.status;
+    if (resultingStatus === 'ACTIVE' && (next.name !== undefined || next.status !== undefined)) {
+      await this.assertNameAvailable(ctx.organizationId, resultingName, existing.id);
+    }
+
     if (patch.sourceEnvironmentId !== undefined) {
       // Changing the source after an analysis has run would make the stored results describe a
       // database this project no longer points at.
@@ -174,7 +253,13 @@ export class ProjectService {
       );
     }
 
-    await this.db.update(projects).set(next).where(eq(projects.id, projectId));
+    await this.db
+      .update(projects)
+      .set(next)
+      .where(eq(projects.id, projectId))
+      .catch((err: unknown) => {
+        throw this.asFriendlyNameConflict(err, resultingName);
+      });
     return this.get(ctx, projectId);
   }
 
