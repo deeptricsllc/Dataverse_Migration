@@ -321,7 +321,7 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
   });
 
   const kind = w.nextAction.kind;
-  if (kind === 'RESOLVE_BLOCKERS' || kind === 'REVIEW_WARNINGS') {
+  if (kind === 'RESOLVE_BLOCKERS') {
     return (
       <Button variant="secondary" onClick={() => onSection('mapping')}>
         Open mapping
@@ -342,7 +342,14 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
       </Button>
     );
   }
-  if (kind !== 'EXECUTE' || !plan.data) return null;
+  /*
+   * Warnings do not stop a migration, so the screen must not either.
+   *
+   * The next action is still "review the warnings", and the controls to run it are here beside that
+   * sentence: a reader who has read them has nowhere to go otherwise, and the server is the thing that
+   * refuses a run, not this button.
+   */
+  if ((kind !== 'EXECUTE' && kind !== 'REVIEW_WARNINGS') || !plan.data) return null;
 
   return (
     <div className="flex flex-none flex-wrap gap-2">
@@ -353,6 +360,11 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
       >
         Preflight (dry run)
       </Link>
+      {kind === 'REVIEW_WARNINGS' && (
+        <Button variant="secondary" onClick={() => onSection('mapping')}>
+          Open mapping
+        </Button>
+      )}
       <Button variant="primary" data-testid="start-migration" onClick={() => setExecuting(true)}>
         Start migration
       </Button>
