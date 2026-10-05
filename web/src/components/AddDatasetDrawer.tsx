@@ -20,6 +20,7 @@ import type {
   StagedPreviewTableDto,
 } from '@shared/domain';
 import type { TableSummary } from '@shared/metadata';
+import type { GraphDriveItem, GraphList, GraphSite } from '../../../server/src/connectors/staged/graph';
 import { Button, Callout, Card, Disclosure, ErrorState, Field, Modal, Spinner, cx } from './ui';
 import { api } from '../lib/api';
 import { describeCount } from '../lib/format';
@@ -37,7 +38,7 @@ import { ConnectionModal } from './ConnectionForm';
  * project, which is the point of the phase.
  */
 
-type Step = 'gallery' | 'file' | 'connection';
+type Step = 'gallery' | 'file' | 'connection' | 'microsoft';
 
 /**
  * How far a connector actually gets, in the only four answers worth giving.
@@ -140,6 +141,30 @@ const CONNECTORS: Connector[] = [
     connectionType: 'MYSQL',
   },
   {
+    id: 'sharepoint',
+    name: 'SharePoint',
+    category: 'Microsoft',
+    blurb: 'A list, or a spreadsheet in a document library.',
+    icon: Plug,
+    availability: 'SIMULATED',
+    caveat:
+      'Implemented against Microsoft Graph and tested against a simulator. Never run against a real SharePoint tenant, and it needs a Microsoft sign-in — a demo workspace cannot reach it.',
+    step: 'microsoft',
+    connectionType: 'SHAREPOINT',
+  },
+  {
+    id: 'onedrive',
+    name: 'OneDrive',
+    category: 'Microsoft',
+    blurb: 'A spreadsheet in your own OneDrive.',
+    icon: Plug,
+    availability: 'SIMULATED',
+    caveat:
+      'Implemented against Microsoft Graph and tested against a simulator. Never run against a real OneDrive, and it needs a Microsoft sign-in — a demo workspace cannot reach it.',
+    step: 'microsoft',
+    connectionType: 'ONEDRIVE',
+  },
+  {
     id: 'dataverse',
     name: 'Microsoft Dataverse',
     category: 'Microsoft',
@@ -211,6 +236,9 @@ export function AddDatasetDrawer({
       {step === 'file' && connector && <FileDataset project={project} connector={connector} onDone={added} />}
       {step === 'connection' && connector && (
         <DatabaseDataset project={project} connector={connector} onDone={added} />
+      )}
+      {step === 'microsoft' && connector && (
+        <MicrosoftDataset project={project} connector={connector} onDone={added} />
       )}
     </Modal>
   );
@@ -676,6 +704,20 @@ function DatabaseDataset({
 }) {
   const [connection, setConnection] = useState<EnvironmentDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const queryClient = useQueryClient();
+
+  /**
+   * Dataverse environments are discovered rather than typed in, so "create a connection" means "ask
+   * Microsoft which environments this account can reach". Wired to the real thing: a button that closed
+   * the panel and discovered nothing would be worse than no button.
+   */
+  const discover = useMutation({
+    mutationFn: () => api<EnvironmentDto[]>('POST', '/api/environments/discover'),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['environments'] });
+      setCreating(false);
+    },
+  });
 
   if (connection) {
     return (
@@ -697,8 +739,8 @@ function DatabaseDataset({
           connection={null}
           initialType={connector.connectionType as ConnectionType}
           onClose={() => setCreating(false)}
-          onDiscover={() => setCreating(false)}
-          discovering={false}
+          onDiscover={() => discover.mutate()}
+          discovering={discover.isPending}
           // Straight on to the data. A stored credential is infrastructure; the thing they came for is next.
           onSaved={(saved) => {
             setCreating(false);
@@ -1093,5 +1135,362 @@ function ObjectPreview({
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * SharePoint and OneDrive: connect, find the content, add it.
+ *
+ * The integrity problem this replaces: choosing SharePoint created a connection, nothing was selected from
+ * it, and the product let the analysis path continue — so an authenticated connection holding nothing
+ * looked exactly like a dataset. The server refuses that now. This is the other half: a journey that
+ * actually reaches content, instead of a dead end that asked for `sites/{site-id}/lists/{list-id}` — a pair
+ * of ids that appear in no URL anybody ever sees.
+ *
+ * **What is proven and what is not.** Every Graph call below is tested against a simulated Graph, and none
+ * has ever been executed against a real Microsoft tenant. It also needs a Microsoft sign-in, so a demo
+ * workspace cannot reach it at all. The card says so before anybody starts, and the error below says so
+ * again if they do.
+ */
+function MicrosoftDataset({
+  project,
+  connector,
+  onDone,
+}: {
+  project: ProjectDto;
+  connector: Connector;
+  onDone: () => void;
+}) {
+  const kind = connector.id === 'onedrive' ? 'ONEDRIVE' : 'SHAREPOINT';
+  const [connection, setConnection] = useState<EnvironmentDto | null>(null);
+  const [site, setSite] = useState<GraphSite | null>(null);
+  const queryClient = useQueryClient();
+
+  const existing = useQuery({
+    queryKey: ['environments'],
+    queryFn: () => api<EnvironmentDto[]>('GET', '/api/environments'),
+  });
+
+  const connect = useMutation({
+    mutationFn: () =>
+      api<EnvironmentDto>('POST', '/api/staged-sources', {
+        displayName: connector.name,
+        kind: kind === 'ONEDRIVE' ? 'ONEDRIVE' : 'SHAREPOINT',
+      }),
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({ queryKey: ['environments'] });
+      setConnection(created);
+    },
+  });
+
+  if (existing.isLoading) return <Spinner label="Loading connections…" />;
+
+  const matching = (existing.data ?? []).filter((e) => e.connectionType === kind);
+
+  if (!connection) {
+    return (
+      <div className="space-y-4">
+        <Callout tone="warning" title={`${connector.name} is not certified`}>
+          {connector.caveat}
+        </Callout>
+        {matching.length > 0 && (
+          <>
+            <p className="text-sm text-slate-600">Use a connection you already have.</p>
+            <ul className="space-y-2">
+              {matching.map((environment) => (
+                <li key={environment.id}>
+                  <button
+                    type="button"
+                    data-testid={`choose-connection-${environment.id}`}
+                    onClick={() => setConnection(environment)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3.5 py-3 text-left hover:border-brand-300 hover:bg-brand-50/30"
+                  >
+                    <span className="text-sm font-medium text-slate-900">{environment.displayName}</span>
+                    <span className="text-xs font-medium text-brand-700">Browse content</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {connect.error && <ErrorState error={connect.error} />}
+        <Button
+          variant={matching.length ? 'secondary' : 'primary'}
+          loading={connect.isPending}
+          onClick={() => connect.mutate()}
+          data-testid="new-connection"
+        >
+          Connect to {connector.name}
+        </Button>
+        {/*
+          The distinction the whole invariant rests on, said before anybody relies on the opposite.
+        */}
+        <p className="text-xs text-slate-500">
+          Connecting does not add any data. You choose what to work with next, and that is what becomes a
+          dataset.
+        </p>
+      </div>
+    );
+  }
+
+  if (kind === 'SHAREPOINT' && !site) {
+    return <ChooseSite connection={connection} onBack={() => setConnection(null)} onChoose={setSite} />;
+  }
+
+  return (
+    <ChooseMicrosoftContent
+      project={project}
+      connection={connection}
+      site={site}
+      onBack={() => (site ? setSite(null) : setConnection(null))}
+      onDone={onDone}
+    />
+  );
+}
+
+/** Which SharePoint site. Searchable, because a tenant can have thousands. */
+function ChooseSite({
+  connection,
+  onBack,
+  onChoose,
+}: {
+  connection: EnvironmentDto;
+  onBack: () => void;
+  onChoose: (site: GraphSite) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const sites = useQuery({
+    queryKey: ['sharepoint-sites', connection.id, search],
+    queryFn: () =>
+      api<GraphSite[]>(
+        'GET',
+        `/api/staged-sources/${connection.id}/sites${search ? `?q=${encodeURIComponent(search)}` : ''}`,
+      ),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-base font-semibold text-slate-900">Choose a SharePoint site</h3>
+        <Button size="sm" variant="ghost" onClick={onBack}>
+          Back
+        </Button>
+      </div>
+
+      <form
+        className="relative"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearch(query.trim());
+        }}
+      >
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+          aria-hidden
+        />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search sites"
+          aria-label="Search sites"
+          data-testid="site-search"
+          className="w-full rounded-md border border-slate-300 py-2 pl-8 pr-3 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+      </form>
+
+      {sites.isLoading && <Spinner label="Asking SharePoint which sites you can see…" />}
+      {sites.error && <ErrorState error={sites.error} />}
+      {sites.data?.length === 0 && (
+        <p className="py-6 text-center text-sm text-slate-500">No sites matched.</p>
+      )}
+      <ul className="space-y-2">
+        {(sites.data ?? []).map((site) => (
+          <li key={site.id}>
+            <button
+              type="button"
+              data-testid={`site-${site.id}`}
+              onClick={() => onChoose(site)}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3.5 py-3 text-left hover:border-brand-300 hover:bg-brand-50/30"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-slate-900">{site.displayName}</span>
+                <span className="block truncate text-xs text-slate-500">{site.webUrl}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The content itself: a list, or a file in a library.
+ *
+ * Both end as a dataset; neither the site nor the connection ever does. Lists are offered first because a
+ * list *is* a table, and a file has to be read before anybody knows what is in it.
+ */
+function ChooseMicrosoftContent({
+  project,
+  connection,
+  site,
+  onBack,
+  onDone,
+}: {
+  project: ProjectDto;
+  connection: EnvironmentDto;
+  site: GraphSite | null;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const [folder, setFolder] = useState<{ id: string | null; name: string }[]>([{ id: null, name: 'Files' }]);
+  const queryClient = useQueryClient();
+  const here = folder[folder.length - 1]!;
+
+  const lists = useQuery({
+    queryKey: ['sharepoint-lists', connection.id, site?.id],
+    queryFn: () => api<GraphList[]>('GET', `/api/staged-sources/${connection.id}/sites/${site!.id}/lists`),
+    enabled: Boolean(site),
+  });
+
+  const files = useQuery({
+    queryKey: ['microsoft-files', connection.id, site?.id, here.id],
+    queryFn: () =>
+      api<GraphDriveItem[]>(
+        'GET',
+        `/api/staged-sources/${connection.id}/files?${new URLSearchParams({
+          ...(site ? { siteId: site.id } : {}),
+          ...(here.id ? { parentId: here.id } : {}),
+        }).toString()}`,
+      ),
+  });
+
+  const added = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
+    await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+    onDone();
+  };
+
+  const addList = useMutation({
+    mutationFn: async (list: GraphList) => {
+      await api('POST', `/api/staged-sources/${connection.id}/import-sharepoint-list`, {
+        reference: `sites/${site!.id}/lists/${list.id}`,
+      });
+      await api('POST', `/api/projects/${project.id}/sources`, { environmentId: connection.id });
+    },
+    onSuccess: added,
+  });
+
+  const addFile = useMutation({
+    mutationFn: async (item: GraphDriveItem) => {
+      await api('POST', `/api/staged-sources/${connection.id}/import-onedrive`, {
+        reference: item.reference,
+      });
+      await api('POST', `/api/projects/${project.id}/sources`, { environmentId: connection.id });
+    },
+    onSuccess: added,
+  });
+
+  const busy = addList.isPending || addFile.isPending;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">Choose data</h3>
+          <p className="text-xs text-slate-500">{site ? site.displayName : connection.displayName}</p>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onBack}>
+          Back
+        </Button>
+      </div>
+
+      {(addList.error || addFile.error) && <ErrorState error={addList.error ?? addFile.error!} />}
+
+      {site && (
+        <section>
+          <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Lists</h4>
+          {lists.isLoading && <Spinner label="Reading the site…" />}
+          {lists.error && <ErrorState error={lists.error} />}
+          <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+            {(lists.data ?? [])
+              .filter((list) => list.template !== 'documentLibrary')
+              .map((list) => (
+                <li key={list.id} className="flex items-center gap-3 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-900">{list.displayName}</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    data-testid={`add-list-${list.id}`}
+                    onClick={() => addList.mutate(list)}
+                  >
+                    Add dataset
+                  </Button>
+                </li>
+              ))}
+            {lists.data?.filter((l) => l.template !== 'documentLibrary').length === 0 && (
+              <li className="px-3 py-3 text-sm text-slate-500">This site has no lists you can read.</li>
+            )}
+          </ul>
+        </section>
+      )}
+
+      <section>
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          {site ? 'Documents' : 'Files'}
+        </h4>
+        {/* Where you are, and the way back out of it. */}
+        <p className="mb-1 text-xs text-slate-500">
+          {folder.map((step, i) => (
+            <span key={`${step.id ?? 'root'}-${i}`}>
+              {i > 0 && ' / '}
+              <button
+                type="button"
+                className="hover:underline"
+                onClick={() => setFolder((f) => f.slice(0, i + 1))}
+              >
+                {step.name}
+              </button>
+            </span>
+          ))}
+        </p>
+        {files.isLoading && <Spinner label="Reading the folder…" />}
+        {files.error && <ErrorState error={files.error} />}
+        <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+          {(files.data ?? []).map((item) => (
+            <li key={item.id} className="flex items-center gap-3 px-3 py-2">
+              <span className="flex-none text-slate-400">
+                {item.isFolder ? <Database className="h-4 w-4" /> : <FileSpreadsheet className="h-4 w-4" />}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm text-slate-900">{item.name}</span>
+              {item.isFolder ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setFolder((f) => [...f, { id: item.id, name: item.name }])}
+                >
+                  Open
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  data-testid={`add-file-${item.id}`}
+                  onClick={() => addFile.mutate(item)}
+                >
+                  Add dataset
+                </Button>
+              )}
+            </li>
+          ))}
+          {files.data?.length === 0 && (
+            <li className="px-3 py-3 text-sm text-slate-500">Nothing in this folder.</li>
+          )}
+        </ul>
+      </section>
+    </div>
   );
 }

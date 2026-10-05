@@ -350,3 +350,154 @@ describe('a database is not a dataset either', () => {
     expect(dataset!.objects[0]!.analysed).toBe(true);
   });
 });
+
+/**
+ * The SharePoint integrity test.
+ *
+ * The behaviour this exists to make impossible, observed on the build before the reset:
+ *
+ *   create a SharePoint connection   -> HTTP 201
+ *   select no site, list or file     -> nothing
+ *   add it to a project as a dataset -> HTTP 200      ← accepted
+ *   analyse                          -> HTTP 200      ← accepted
+ *   … asynchronously …               -> FAILED
+ *
+ * Authenticating to SharePoint is not choosing a list. A connection that holds nothing is not a dataset,
+ * and every door into the product has to agree about that — including the ones a browser never opens,
+ * because a disabled button is a courtesy and the API is the contract.
+ */
+describe('a SharePoint connection that holds nothing', () => {
+  let t: TestApp;
+  let api: ApiClient;
+  let connection: EnvironmentDto;
+  let project: ProjectDto;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    api = new ApiClient(t.app);
+    await api.demoLogin();
+    connection = await api.post<EnvironmentDto>(
+      '/api/staged-sources',
+      { displayName: 'Claims Operations', kind: 'SHAREPOINT' },
+      201,
+    );
+    project = await api.post<ProjectDto>('/api/projects', {
+      name: 'SharePoint integrity',
+      kind: 'ANALYSIS',
+    });
+  });
+  afterAll(async () => {
+    await t?.close();
+  });
+
+  const call = (method: 'POST' | 'GET', url: string, payload?: unknown) =>
+    t.app.inject({
+      method,
+      url,
+      payload: payload as never,
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+
+  it('is created successfully, because authenticating is a thing that can succeed', async () => {
+    expect(connection.id).toBeTruthy();
+    expect(connection.connectionType).toBe('SHAREPOINT');
+  });
+
+  it('is refused as a dataset, in words that name the choice nobody has made', async () => {
+    const res = await call('POST', `/api/projects/${project.id}/sources`, {
+      environmentId: connection.id,
+    });
+    expect(res.statusCode).toBe(400);
+    const message = (res.json() as { error: { message: string } }).error.message;
+    expect(message).toContain('no content has been selected');
+    // Not a malfunction — a next step.
+    expect(message).toContain('Choose the list, library or file');
+  });
+
+  it('is refused the same way by a direct API call that skips the screen entirely', async () => {
+    /*
+     * The same request, made the way a script would. There is no second path: the rule lives in the
+     * domain, so there is nowhere to make this request from where it is accepted.
+     */
+    const res = await t.app.inject({
+      method: 'POST',
+      url: `/api/projects/${project.id}/sources`,
+      payload: { environmentId: connection.id } as never,
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('cannot be analysed, and no empty analysis is produced by trying', async () => {
+    const res = await call('POST', `/api/projects/${project.id}/analyse`, { all: true });
+    expect(res.statusCode).toBe(400);
+
+    const assessment = await api.get<AnalysisAssessmentDto>(`/api/projects/${project.id}/assessment`);
+    /*
+     * The negative claim that matters. Nothing may be created by asking for the impossible: no run, no
+     * readiness, no findings, no "0 tables / 0 records" presented as an assessment of data that is not
+     * there.
+     */
+    expect(assessment.datasets).toHaveLength(0);
+    expect(assessment.runs).toHaveLength(0);
+    expect(assessment.findings).toHaveLength(0);
+    expect(assessment.readiness.score).toBeNull();
+  });
+
+  it('becomes a dataset the moment it actually holds content, and not before', async () => {
+    /*
+     * Content arrives here by import rather than by Graph, because a tenant is not available to this
+     * test — but the rule under test is not about where the rows came from. It is that the connection
+     * was refused while it held nothing and accepted once it held something.
+     */
+    const csv = 'claim_number,status\r\nCLM-1,Open\r\nCLM-2,Closed';
+    const imported = await call('POST', `/api/staged-sources/${connection.id}/import`, {
+      filename: 'Claims.csv',
+      contentBase64: Buffer.from(csv, 'utf8').toString('base64'),
+    });
+    expect(imported.statusCode).toBe(200);
+
+    const accepted = await call('POST', `/api/projects/${project.id}/sources`, {
+      environmentId: connection.id,
+    });
+    expect(accepted.statusCode, 'the selection is what makes it a dataset').toBe(200);
+
+    const assessment = await api.get<AnalysisAssessmentDto>(`/api/projects/${project.id}/assessment`);
+    expect(assessment.datasets).toHaveLength(1);
+    expect(assessment.datasets[0]!.objects.map((o) => o.displayName)).toEqual(['Claims']);
+  });
+});
+
+describe('browsing a Microsoft connection needs a Microsoft sign-in, and says so', () => {
+  let t: TestApp;
+  let api: ApiClient;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    api = new ApiClient(t.app);
+    await api.demoLogin();
+  });
+  afterAll(async () => {
+    await t?.close();
+  });
+
+  it('explains what is missing rather than failing obscurely', async () => {
+    const connection = await api.post<EnvironmentDto>(
+      '/api/staged-sources',
+      { displayName: 'Finance SharePoint', kind: 'SHAREPOINT' },
+      201,
+    );
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/staged-sources/${connection.id}/sites`,
+      headers: { cookie: api.cookie },
+    });
+    /*
+     * A demo workspace has no Microsoft token, so this cannot work — and the one thing that must not
+     * happen is a blank list, which would read as "your tenant has no sites".
+     */
+    expect(res.statusCode).toBe(400);
+    const message = (res.json() as { error: { message: string } }).error.message;
+    expect(message).toContain('Microsoft sign-in');
+  });
+});

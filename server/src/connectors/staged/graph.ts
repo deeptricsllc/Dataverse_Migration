@@ -1,4 +1,5 @@
 import { DataverseError } from '../../dataverse/errors';
+import type { GraphDriveItem, GraphList, GraphSite } from '../../../../shared/graph';
 
 /**
  * Reading a spreadsheet out of OneDrive or SharePoint, and a SharePoint list, through Microsoft Graph.
@@ -362,6 +363,147 @@ export async function probeGraphAccess(
     message: `${code ? `${code}: ` : ''}${detail}`,
     resolution: 'Check the Microsoft Graph permissions granted to this application.',
   };
+}
+
+// ---------------------------------------------------------------------------
+// Browsing: finding the thing, rather than being told where it is
+// ---------------------------------------------------------------------------
+
+/**
+ * Why browsing exists at all.
+ *
+ * Importing needed a Graph reference — `sites/{site-id}/lists/{list-id}` — which is not something anybody
+ * has. A site id is a comma-separated triple of GUIDs that appears in no URL a person ever sees, so the
+ * only honest instruction the product could give was "ask a developer". These three calls are what turn
+ * "connect to SharePoint" into "choose the Claims list": the names people recognise, resolved to the ids
+ * the import already knew how to use.
+ *
+ * Every one is a read. Nothing here can change anything in SharePoint or OneDrive, which is why the two
+ * scopes requested are the `.Read.` ones.
+ */
+
+/** Graph answers a collection as `{ value: [...] }`; anything else is a response we should not read. */
+function collection(json: unknown): Record<string, unknown>[] {
+  const value = (json as { value?: unknown } | null)?.value;
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+}
+
+function text(row: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
+}
+
+/**
+ * The SharePoint sites this account can reach.
+ *
+ * `search=*` is Graph's way of saying "all of them" and is the only way to enumerate sites without
+ * knowing one first. A query narrows it, because a tenant can have thousands and a list of thousands is
+ * the same as no list.
+ */
+export type { GraphDriveItem, GraphList, GraphSite };
+
+export async function listSites(request: GraphRequest, query?: string): Promise<GraphSite[]> {
+  const search = encodeURIComponent(query?.trim() || '*');
+  const res = await request(`sites?search=${search}`);
+  if (res.status === 403) {
+    throw new DataverseError(
+      'FORBIDDEN',
+      'The signed-in account cannot list SharePoint sites. Sites.Read.All may not be consented, or the account may have no SharePoint licence.',
+      403,
+    );
+  }
+  if (res.status >= 400) {
+    throw new DataverseError(
+      'SERVER_ERROR',
+      `Microsoft Graph returned ${res.status} when listing SharePoint sites.`,
+      502,
+    );
+  }
+  return collection(res.json)
+    .map((row) => ({
+      id: text(row, 'id'),
+      displayName: text(row, 'displayName', 'name') || text(row, 'webUrl'),
+      webUrl: text(row, 'webUrl'),
+    }))
+    .filter((site) => site.id);
+}
+
+/**
+ * The lists and document libraries of one site.
+ *
+ * Hidden lists are dropped. Every SharePoint site carries a dozen of them — `Form Templates`,
+ * `Style Library`, `appdata` — which are plumbing, and offering them as datasets would bury the three
+ * lists somebody actually keeps data in.
+ */
+export async function listSiteLists(request: GraphRequest, siteId: string): Promise<GraphList[]> {
+  const res = await request(`sites/${encodeURIComponent(siteId)}/lists`);
+  if (res.status === 404) {
+    throw new DataverseError('NOT_FOUND', 'That site could not be found, or is not visible to you.', 404);
+  }
+  if (res.status >= 400) {
+    throw new DataverseError(
+      'SERVER_ERROR',
+      `Microsoft Graph returned ${res.status} when reading that site.`,
+      502,
+    );
+  }
+  return collection(res.json)
+    .filter((row) => {
+      const list = row.list as { hidden?: boolean } | undefined;
+      return list?.hidden !== true;
+    })
+    .map((row) => ({
+      id: text(row, 'id'),
+      displayName: text(row, 'displayName', 'name'),
+      template: ((row.list as { template?: string } | undefined)?.template ?? null) as string | null,
+      webUrl: text(row, 'webUrl'),
+    }))
+    .filter((list) => list.id && list.displayName);
+}
+
+/**
+ * The folders and files inside a drive, one level at a time.
+ *
+ * One level rather than a recursive walk: a document library can hold a hundred thousand items, and
+ * reading all of them to draw a folder nobody opened would be slow and rude to somebody else's tenant.
+ *
+ * `parent` is a Graph item id, or null for the root. `drive` names which drive — `me/drive` for OneDrive,
+ * `sites/{id}/drive` for a site's default library.
+ */
+export async function listDriveChildren(
+  request: GraphRequest,
+  drive: string,
+  parent?: string | null,
+): Promise<GraphDriveItem[]> {
+  const base = parent ? `${drive}/items/${encodeURIComponent(parent)}/children` : `${drive}/root/children`;
+  const res = await request(base);
+  if (res.status === 404) {
+    throw new DataverseError('NOT_FOUND', 'That folder could not be found, or is not visible to you.', 404);
+  }
+  if (res.status >= 400) {
+    throw new DataverseError(
+      'SERVER_ERROR',
+      `Microsoft Graph returned ${res.status} when reading that folder.`,
+      502,
+    );
+  }
+  return collection(res.json)
+    .map((row) => {
+      const id = text(row, 'id');
+      const parentRef = row.parentReference as { driveId?: string } | undefined;
+      return {
+        id,
+        name: text(row, 'name'),
+        isFolder: Boolean(row.folder),
+        size: typeof row.size === 'number' ? row.size : null,
+        // The form the importer already resolves, so browsing and pasting a link end in the same place.
+        reference: parentRef?.driveId ? `drives/${parentRef.driveId}/items/${id}` : `${drive}/items/${id}`,
+      };
+    })
+    .filter((item) => item.id && item.name);
 }
 
 /**

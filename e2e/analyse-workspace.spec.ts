@@ -339,6 +339,33 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await expect(page.getByTestId('dataset-row').filter({ hasText: 'dbo.Customer' })).toContainText(
     'Size not counted yet',
   );
+
+  /*
+   * --- connecting is not choosing ---------------------------------------------
+   *
+   * The integrity test. On the build before the reset, choosing SharePoint created a connection, nothing
+   * was selected from it, and the product let it be added and analysed — so an authenticated connection
+   * holding nothing looked exactly like a dataset, and the user met the consequence later as a failure.
+   */
+  await page.getByTestId('add-dataset').click();
+  await page.getByTestId('connector-sharepoint').click();
+
+  // The card said what this is before anybody started, and the step says it again.
+  await expect(page.getByText('SharePoint is not certified')).toBeVisible();
+  await expect(page.getByText(/Never run against a real SharePoint tenant/)).toBeVisible();
+  await expect(page.getByText(/Connecting does not add any data/)).toBeVisible();
+
+  await page.getByTestId('new-connection').click();
+
+  /*
+   * A demo workspace has no Microsoft token, so browsing cannot work — and the one thing that must not
+   * happen is an empty list, which would read as "your tenant has no sites".
+   */
+  await expect(page.getByText(/Microsoft sign-in/)).toBeVisible({ timeout: 30_000 });
+
+  // And nothing became a dataset by connecting.
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByTestId('dataset-row')).toHaveCount(7);
 });
 
 test('a decision is recorded beside the evidence, never over it', async ({ page }) => {

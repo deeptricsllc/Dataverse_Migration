@@ -4,6 +4,9 @@ import {
   fetchDriveItem,
   fetchListRows,
   GRAPH_READ_SCOPES,
+  listDriveChildren,
+  listSiteLists,
+  listSites,
   resolveGraphTarget,
   resolveListReference,
   sharingLinkToShareId,
@@ -321,5 +324,133 @@ describe('telling somebody what is actually wrong', () => {
     const result = await probeGraphAccess(broken, 'ONEDRIVE');
     expect(result.ok).toBe(false);
     expect(result.resolution).toMatch(/outbound access/);
+  });
+});
+
+/**
+ * Browsing SharePoint and OneDrive.
+ *
+ * The decisions are here: which endpoint "all sites" means, which lists are plumbing and must not be
+ * offered as datasets, and what reference a browsed file resolves to. All of it tested against a stubbed
+ * Graph, for the same reason the rest of this file is — a tenant is not available to test against, and
+ * the alternative is shipping code whose first run is somebody's production SharePoint.
+ *
+ * What this cannot prove is stated plainly rather than implied: these have never been executed against a
+ * real Microsoft tenant. See docs/DATAVERSE_REAL_TENANT_READ_ONLY_CERTIFICATION.md for the same
+ * distinction applied to Dataverse.
+ */
+describe('browsing a Microsoft connection', () => {
+  it('asks Graph for every site when nothing is searched for', async () => {
+    const graph = stubGraph({
+      'sites?search=*': {
+        json: {
+          value: [
+            {
+              id: 'contoso.sharepoint.com,guid1,guid2',
+              displayName: 'Claims Operations',
+              webUrl: 'https://c/claims',
+            },
+            { id: 'contoso.sharepoint.com,guid3,guid4', name: 'Finance', webUrl: 'https://c/finance' },
+          ],
+        },
+      },
+    });
+    const sites = await listSites(graph.request);
+    // `search=*` is Graph's way of saying "all of them"; there is no other way to enumerate sites.
+    expect(graph.asked).toEqual(['sites?search=*']);
+    expect(sites.map((s) => s.displayName)).toEqual(['Claims Operations', 'Finance']);
+    // The id is the comma-separated triple the list reference needs, carried through untouched.
+    expect(sites[0]!.id).toBe('contoso.sharepoint.com,guid1,guid2');
+  });
+
+  it('narrows the search, because a tenant can have thousands of sites', async () => {
+    const graph = stubGraph({ 'sites?search=claims': { json: { value: [] } } });
+    await listSites(graph.request, 'claims');
+    expect(graph.asked).toEqual(['sites?search=claims']);
+  });
+
+  it('says what is wrong when the account may not list sites', async () => {
+    const graph = stubGraph({ 'sites?search=*': { status: 403, json: {} } });
+    await expect(listSites(graph.request)).rejects.toThrow(/Sites.Read.All|cannot list/i);
+  });
+
+  it('offers the lists somebody keeps data in, and not the plumbing', async () => {
+    const graph = stubGraph({
+      'sites/site1/lists': {
+        json: {
+          value: [
+            {
+              id: 'l1',
+              displayName: 'Claims',
+              list: { template: 'genericList' },
+              webUrl: 'https://c/claims',
+            },
+            {
+              id: 'l2',
+              displayName: 'Documents',
+              list: { template: 'documentLibrary' },
+              webUrl: 'https://c/d',
+            },
+            // Every SharePoint site carries a dozen of these. Offering them as datasets would bury the
+            // two lists above them.
+            { id: 'l3', displayName: 'Form Templates', list: { template: 'documentLibrary', hidden: true } },
+            { id: 'l4', displayName: 'appdata', list: { hidden: true } },
+          ],
+        },
+      },
+    });
+    const lists = await listSiteLists(graph.request, 'site1');
+    expect(lists.map((l) => l.displayName)).toEqual(['Claims', 'Documents']);
+    expect(lists[0]!.template).toBe('genericList');
+    expect(lists[1]!.template).toBe('documentLibrary');
+  });
+
+  it('reads one level of a drive and resolves each item to a reference the importer takes', async () => {
+    const graph = stubGraph({
+      'me/drive/root/children': {
+        json: {
+          value: [
+            { id: 'f1', name: 'Legacy', folder: { childCount: 3 }, parentReference: { driveId: 'd1' } },
+            { id: 'x1', name: 'Customers.xlsx', size: 20_480, parentReference: { driveId: 'd1' } },
+          ],
+        },
+      },
+    });
+    const items = await listDriveChildren(graph.request, 'me/drive');
+    expect(items.map((i) => i.name)).toEqual(['Legacy', 'Customers.xlsx']);
+    expect(items[0]!.isFolder).toBe(true);
+    expect(items[1]!.isFolder).toBe(false);
+    expect(items[1]!.size).toBe(20_480);
+    /*
+     * The same shape a pasted `drives/{id}/items/{id}` link resolves to, so browsing to a file and
+     * pasting a link to it end in exactly the same import rather than two code paths that can disagree.
+     */
+    expect(items[1]!.reference).toBe('drives/d1/items/x1');
+    expect(resolveGraphTarget(items[1]!.reference).itemPath).toBe('drives/d1/items/x1');
+  });
+
+  it('opens a folder by id rather than walking everything', async () => {
+    const graph = stubGraph({
+      'me/drive/items/f1/children': { json: { value: [{ id: 'x2', name: 'Orders.csv' }] } },
+    });
+    const items = await listDriveChildren(graph.request, 'me/drive', 'f1');
+    expect(graph.asked).toEqual(['me/drive/items/f1/children']);
+    expect(items.map((i) => i.name)).toEqual(['Orders.csv']);
+  });
+
+  it("reads a site's library rather than the signed-in user's own drive", async () => {
+    const graph = stubGraph({ 'sites/site1/drive/root/children': { json: { value: [] } } });
+    await listDriveChildren(graph.request, 'sites/site1/drive');
+    expect(graph.asked).toEqual(['sites/site1/drive/root/children']);
+  });
+
+  it('reports a folder that is not there as not there', async () => {
+    const graph = stubGraph({});
+    await expect(listDriveChildren(graph.request, 'me/drive', 'gone')).rejects.toThrow(/could not be found/);
+  });
+
+  it('ignores a response that is not a collection rather than inventing rows from it', async () => {
+    const graph = stubGraph({ 'sites?search=*': { json: { error: { code: 'nope' } } } });
+    await expect(listSites(graph.request)).resolves.toEqual([]);
   });
 });

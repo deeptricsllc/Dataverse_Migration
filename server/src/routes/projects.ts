@@ -568,6 +568,30 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     );
   });
 
+  // Browsing a Microsoft connection: every one of these is a read, and none can change anything.
+
+  app.get('/api/staged-sources/:id/sites', EXPENSIVE, async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { q } = z.object({ q: z.string().max(200).optional() }).parse(req.query);
+    return s.stagedSources.browseSites(req.ctx, id, q);
+  });
+
+  app.get('/api/staged-sources/:id/sites/:siteId/lists', EXPENSIVE, async (req) => {
+    const { id, siteId } = z.object({ id: uuid, siteId: z.string().min(1).max(300) }).parse(req.params);
+    return s.stagedSources.browseLists(req.ctx, id, siteId);
+  });
+
+  app.get('/api/staged-sources/:id/files', EXPENSIVE, async (req) => {
+    const { id } = idParams.parse(req.params);
+    const { siteId, parentId } = z
+      .object({
+        siteId: z.string().min(1).max(300).optional(),
+        parentId: z.string().min(1).max(300).optional(),
+      })
+      .parse(req.query);
+    return s.stagedSources.browseFiles(req.ctx, id, { siteId, parentId });
+  });
+
   /** Imports a spreadsheet out of OneDrive or a SharePoint document library. */
   app.post('/api/staged-sources/:id/import-onedrive', EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);

@@ -16,9 +16,15 @@ import {
   fetchDriveItem,
   fetchListRows,
   graphRequester,
+  listDriveChildren,
+  listSiteLists,
+  listSites,
   resolveGraphTarget,
   resolveListReference,
+  type GraphDriveItem,
+  type GraphList,
   type GraphRequest,
+  type GraphSite,
 } from '../connectors/staged/graph';
 import { stagedProvider } from '../connectors/staged/staged-connector';
 import { readXlsx, type XlsxReadSheet } from '../lib/xlsx';
@@ -414,6 +420,47 @@ export class StagedSourceService {
   }
 
   /** A Graph caller for the signed-in user, or a clear refusal when the feature is off. */
+  // ---------------------------------------------------------------------------
+  // Browsing: finding the content, rather than being told where it is
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Where a SharePoint connection could take its data from.
+   *
+   * Before this, importing needed `sites/{site-id}/lists/{list-id}` — a pair of ids that appear in no URL
+   * anybody ever sees — so the only honest instruction the product could give was "ask a developer", and
+   * a SharePoint connection that authenticated perfectly was a dead end.
+   */
+  async browseSites(ctx: RequestContext, environmentId: string, query?: string): Promise<GraphSite[]> {
+    await this.stagedEnvironment(ctx, environmentId);
+    return listSites(await this.requester(ctx), query);
+  }
+
+  /** The lists and document libraries of one site, without the plumbing ones. */
+  async browseLists(ctx: RequestContext, environmentId: string, siteId: string): Promise<GraphList[]> {
+    await this.stagedEnvironment(ctx, environmentId);
+    return listSiteLists(await this.requester(ctx), siteId);
+  }
+
+  /**
+   * One level of a drive: OneDrive's root, or a site's document library.
+   *
+   * One level rather than a recursive walk, because a document library can hold a hundred thousand items
+   * and reading all of them to draw a folder nobody opened is slow and rude to somebody else's tenant.
+   */
+  async browseFiles(
+    ctx: RequestContext,
+    environmentId: string,
+    opts: { siteId?: string; parentId?: string } = {},
+  ): Promise<GraphDriveItem[]> {
+    const env = await this.stagedEnvironment(ctx, environmentId);
+    const drive = opts.siteId ? `sites/${opts.siteId}/drive` : 'me/drive';
+    if (!opts.siteId && env.connectionType === 'SHAREPOINT') {
+      throw badRequest('Choose a SharePoint site before browsing its files.');
+    }
+    return listDriveChildren(await this.requester(ctx), drive, opts.parentId ?? null);
+  }
+
   private async requester(ctx: RequestContext): Promise<GraphRequest> {
     if (!this.graphToken) {
       throw badRequest(
