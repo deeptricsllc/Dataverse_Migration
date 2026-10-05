@@ -58,7 +58,7 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
         </Card>
 
         <Card
-          title="Destination"
+          title="Target"
           subtitle={w.target ? w.target.displayName : 'Not selected'}
           actions={
             <Button
@@ -67,7 +67,7 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
               onClick={() => setChoosingTarget(true)}
               data-testid="choose-destination"
             >
-              {w.target ? 'Change destination' : 'Choose destination'}
+              {w.target ? 'Change target' : 'Select target'}
             </Button>
           }
         >
@@ -83,7 +83,7 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
 
       <Card
         title="Scope"
-        subtitle="Each row is one source table and the target table it will be written into."
+        subtitle="Each row is one source table and its target table."
         data-testid="migration-scope-list"
         bodyClassName="p-0"
       >
@@ -115,7 +115,7 @@ export function MigrationData({ w }: { w: MigrationWorkspaceDto }) {
               <EmptyState
                 icon={<Database className="h-7 w-7" />}
                 title="Nothing in scope yet"
-                description="Add the tables you want to move. You can add or remove them at any point — doing so keeps the mapping work already done on the others."
+                description="Select the tables to move. Adding or removing a table keeps the mapping on the others."
               />
             </div>
           )
@@ -211,15 +211,13 @@ function TargetCapability({
       <p className="text-sm text-slate-600">{target.url}</p>
       {target.environmentClass === 'PRODUCTION' && <Pill tone="red">Production</Pill>}
       {capability?.simulated && (
-        <Callout tone="warning" title="This destination is simulated">
-          Nothing real is written. A run against it exercises the engine and proves the configuration; it is
-          not evidence that a real system would accept this data.
+        <Callout tone="warning" title="Simulated target">
+          A run against this target writes nothing. It tests the configuration, not the target.
         </Callout>
       )}
       {capability && !capability.writable && (
-        <Callout tone="danger" title="This destination cannot be written to">
-          {capability.reason} A migration into it would be refused, so it is not a destination you can execute
-          against today.
+        <Callout tone="danger" title="Target is read-only">
+          {capability.reason} The server refuses a migration into this target.
         </Callout>
       )}
     </div>
@@ -313,9 +311,8 @@ function AddSourceData({
     >
       <div className="space-y-4">
         {needsTarget && (
-          <Callout tone="info" title="Choose a destination first">
-            A migration's scope is a pairing: each source table is written into a target table. Choose where
-            the data is going, and this will have something to map onto.
+          <Callout tone="info" title="Select a target first">
+            Each source table is written into a target table. Select a target to map against.
           </Callout>
         )}
 
@@ -406,7 +403,7 @@ function ChooseDestination({
     <Modal
       open
       onClose={onClose}
-      title="Choose destination"
+      title="Select target"
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -417,14 +414,14 @@ function ChooseDestination({
             loading={save.isPending}
             onClick={() => save.mutate()}
           >
-            {changing && hasWork ? 'Change destination anyway' : 'Use this destination'}
+            {changing && hasWork ? 'Change target' : 'Select target'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <label className="block">
-          <span className="text-xs font-medium text-slate-600">Destination system</span>
+          <span className="text-xs font-medium text-slate-600">Target system</span>
           <select
             value={targetId ?? ''}
             onChange={(e) => setTargetId(e.target.value || null)}
@@ -441,17 +438,10 @@ function ChooseDestination({
         </label>
 
         {changing && hasWork && (
-          <Callout tone="danger" title="This may invalidate work already done">
-            <p>
-              {describeCount(plan!.entities.length, 'table')} are mapped against{' '}
-              <strong>{w.target!.displayName}</strong>. Moving to a different destination may invalidate table
-              mappings, field mappings, choice mappings, user mappings and lookup configuration, because the
-              new system is not obliged to have the same schema.
-            </p>
+          <Callout tone="danger" title="Change target?">
+            <p>Existing mappings can become invalid. The new target can have a different schema.</p>
             <p className="mt-2">
-              The configuration is reassessed afterwards and anything that no longer holds is reported as a
-              blocker. Runs that have already happened are untouched — they describe what happened, which does
-              not change because the plan did.
+              The configuration is reassessed after the change. Previous runs will not change.
             </p>
           </Callout>
         )}

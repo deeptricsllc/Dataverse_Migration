@@ -537,7 +537,7 @@ export function EnvironmentsPage() {
         <EmptyState
           icon={<Database className="h-8 w-8" />}
           title="No connections yet"
-          description="Discovery found no Dataverse environments your account can access. You can also add a SQL Server or Azure SQL connection by hand."
+          description="Discovery found no Dataverse environments for this account. Add a SQL Server or Azure SQL connection manually."
           action={<Button onClick={() => discover.mutate()}>Discover environments</Button>}
         />
       )}

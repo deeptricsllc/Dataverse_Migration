@@ -39,7 +39,7 @@ export function MigrationPage() {
     <>
       <PageHeader
         title="Migration plans"
-        description="Plans capture the selected tables, dependency order, field mappings, execution options and every issue found before anything is written."
+        description="A plan holds the selected tables, dependency order, field mappings and execution options."
         actions={
           <Button
             variant="primary"

@@ -203,25 +203,19 @@ function explanationFor(issue: PlanIssue): string {
   // The message says what was observed; this says what it costs. Only for codes where the
   // consequence is not obvious from the message itself.
   const consequences: Record<string, string> = {
-    REQUIRED_TARGET_COLUMN_UNMAPPED:
-      'The target refuses a record without this column, so every record in this table would fail.',
+    REQUIRED_TARGET_COLUMN_UNMAPPED: 'The target requires this column. Every record in this table fails.',
     INCOMPATIBLE_COLUMN:
-      'The two columns cannot hold the same values, so the migration would either fail or quietly change data.',
-    LOSSY_CONVERSION: 'Information present in the source would not exist in the target afterwards.',
-    DEPENDENCY_MISSING_IN_TARGET:
-      'Records in this table point at a table the target does not have, so their references cannot resolve.',
-    DEPENDENCY_NOT_SELECTED:
-      'The table this one points at is not in the plan, so the references would be left unresolved.',
+      'The source and target types are not compatible. The migration can fail or change the value.',
+    LOSSY_CONVERSION: 'The target cannot hold all of the source value. Some information is lost.',
+    DEPENDENCY_MISSING_IN_TARGET: 'The referenced table does not exist in the target. References fail.',
+    DEPENDENCY_NOT_SELECTED: 'The referenced table is not in the migration. References stay unresolved.',
     CIRCULAR_DEPENDENCY_TWO_PASS:
-      'These tables point at each other, so some references can only be written on a second pass.',
+      'These tables reference each other. Some references are written on a second pass.',
     CROSS_PROVIDER_IDENTITY:
-      'The target assigns its own keys, so the identity map is the only record of which source record became which target record.',
-    TARGET_HAS_DATA_CREATE_ONLY:
-      'The target already holds records, and this strategy will not touch them — so what is there now stays.',
-    ALTERNATE_KEY_MISSING:
-      'Without the key, there is no way to tell whether a record already exists in the target.',
-    BUSINESS_KEY_UNIQUENESS:
-      'Two source records share the key, so a match would be a guess about which one owns the target record.',
+      'The target assigns its own keys. The identity map is the only record of which source record became which target record.',
+    TARGET_HAS_DATA_CREATE_ONLY: 'The target already holds records. This strategy does not change them.',
+    ALTERNATE_KEY_MISSING: 'Without a key, the migration cannot tell if a record already exists.',
+    BUSINESS_KEY_UNIQUENESS: 'Two source records share this key. A match would be a guess.',
   };
   return consequences[issue.code] ?? issue.message;
 }
@@ -272,9 +266,9 @@ function connectorFindings(plan: MigrationPlanDto): ReadinessFinding[] {
             name: plan[`${side.label as 'source' | 'target'}Environment`].displayName,
           },
           evidence: `${type} ${capability} is ${VERIFICATION_LABELS[level].label}, not verified against a real engine.`,
-          explanation: `This capability is implemented and tested against the connector contract, and has not been exercised against a real ${type} server in continuous integration.`,
+          explanation: `This capability is tested against the connector contract. It is not tested against a real ${type} server.`,
           recommendation:
-            'Treat the first run against this connection as the verification. Keep the scope small and validate at FULL depth.',
+            'Treat the first run as the verification. Use a small scope. Validate at FULL depth.',
           source: 'CONNECTOR_VERIFICATION',
         });
       }
@@ -298,9 +292,8 @@ function targetFindings(plan: MigrationPlanDto): ReadinessFinding[] {
         .map((e) => `${e.targetLogicalName} (${e.targetCount})`)
         .join(', ')}${populated.length > 5 ? ', …' : ''}.`,
       explanation:
-        'Records this run did not write will be in the target alongside the ones it did, so a row count comparison cannot be read as a result, and aggregate reconciliation will report NOT VERIFIED rather than compare two totals that mean different things.',
-      recommendation:
-        'Expect the validation report to say so. If the totals matter, migrate into an empty target.',
+        'The target holds records this run did not write. Row counts and aggregates cannot be compared. Validation reports NOT VERIFIED for them.',
+      recommendation: 'To compare totals, migrate into an empty target.',
       source: 'TARGET_INSPECTION',
     },
   ];
@@ -331,10 +324,10 @@ function resumeFindings(plan: MigrationPlanDto): ReadinessFinding[] {
       severity: 'WARNING' as const,
       overridability: 'OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT' as const,
       object: { kind: 'TABLE' as const, name: e.logicalName },
-      evidence: `${e.logicalName} is matched on the record id, and ${plan.targetEnvironment.displayName} assigns its own keys (${plan.sourceEnvironment.connectionType} to ${plan.targetEnvironment.connectionType}), so nothing can identify a record whose write was interrupted.`,
+      evidence: `${e.logicalName} is matched on the record id. ${plan.targetEnvironment.displayName} assigns its own keys. Nothing can identify a record whose write was interrupted.`,
       explanation:
-        'If this run is interrupted mid-write, the platform will stop rather than risk creating a record twice, and somebody will have to look in the target and say what they found before it can continue. No data is at risk either way — this is about who has to do what if it happens.',
-      recommendation: `Configure an alternate key or a business key for ${e.logicalName} and an interruption resolves itself. Without one, expect to reconcile by hand if the run is interrupted; the run will name every record and refuse to guess.`,
+        'An interrupted run stops instead of writing a record twice. It then needs manual reconciliation. No data is at risk.',
+      recommendation: `Configure an alternate key or a business key for ${e.logicalName}. An interrupted run then resolves itself.`,
       source: 'RESUME_ANALYSIS' as const,
     }));
 }
@@ -350,11 +343,9 @@ function scaleFindings(plan: MigrationPlanDto): ReadinessFinding[] {
     severity: 'WARNING' as const,
     overridability: 'OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT' as const,
     object: { kind: 'TABLE' as const, name: e.logicalName },
-    evidence: `${e.logicalName} holds ${(e.sourceCount ?? 0).toLocaleString()} records; the platform's bookkeeping has been measured to ${MEASURED_PER_TABLE.toLocaleString()} per table.`,
-    explanation:
-      'Everything above that is extrapolated rather than measured. The known costs are flat per record, so the expectation is a longer run rather than a failure — but it is an expectation, not a measurement.',
-    recommendation:
-      'Validate at STANDARD depth rather than FULL, expect the run to take proportionally longer, and consider a smaller first pass to measure the real rate against these connections.',
+    evidence: `${e.logicalName} holds ${(e.sourceCount ?? 0).toLocaleString()} records. The measured limit is ${MEASURED_PER_TABLE.toLocaleString()} per table.`,
+    explanation: 'Behaviour above the measured limit is extrapolated. Expect a longer run, not a failure.',
+    recommendation: 'Validate at STANDARD depth. Run a smaller first pass to measure the rate.',
     source: 'SCALE_ENVELOPE' as const,
   }));
 }
@@ -369,9 +360,9 @@ function rollbackFindings(plan: MigrationPlanDto): ReadinessFinding[] {
       object: { kind: 'PLAN', name: plan.name },
       evidence: 'This platform records what it wrote and offers that as a rollback inventory.',
       explanation:
-        'There is no automatic destructive undo. Reversing a migration means acting on the inventory — deliberately, with the identity map as the list of what this run put there.',
+        'There is no automatic undo. The identity map lists what this run wrote. Reversing the migration means acting on that list.',
       recommendation:
-        'Before writing to a target you cannot restore, take whatever backup that system offers. The inventory tells you what to undo; it does not undo it.',
+        'Back up the target before the run. The inventory lists what to undo. It does not undo it.',
       source: 'ROLLBACK_MODEL',
     },
   ];

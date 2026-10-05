@@ -258,7 +258,7 @@ function Overview({
         <EmptyState
           icon={<Database className="h-8 w-8" />}
           title="Add your first dataset"
-          description="A spreadsheet, a CSV export, a database or a Dataverse environment. Add as many as the question needs — this project is about all of them together, and nothing is ever written back."
+          description="A spreadsheet, a CSV export, a database or a Dataverse environment. Analysis never writes to the source."
           action={
             <Button variant="primary" onClick={onAddDataset}>
               Add dataset
@@ -352,7 +352,7 @@ function Overview({
         <Card>
           <EmptyState
             title="Nothing critical and nothing to warn about"
-            description="The informational findings under the Findings tab are mapping decisions and observations rather than problems."
+            description="The informational findings under Findings are observations, not problems."
           />
         </Card>
       )}
@@ -422,7 +422,7 @@ function Datasets({
         <EmptyState
           icon={<Database className="h-8 w-8" />}
           title="No datasets in this project"
-          description="Add a spreadsheet, a database or a Dataverse environment. Adding one here does not copy it — the connection stays a workspace asset, available to your other projects."
+          description="Add a spreadsheet, a database or a Dataverse environment. The connection stays available to other projects."
           action={
             <Button variant="primary" onClick={onAddDataset}>
               Add dataset
@@ -681,17 +681,14 @@ function RemoveDataset({
   return (
     <Modal open onClose={onClose} title={`Remove ${row.object.displayName}?`}>
       <div className="space-y-4">
+        {/* Action, consequence, decision. §17: state what is removed and what is kept. */}
         <p className="text-sm text-slate-600">
           {row.object.recordCount === null
-            ? 'Its rows are deleted from this workspace.'
-            : `Its ${row.object.recordCount.toLocaleString()} records are deleted from this workspace.`}{' '}
-          To analyse this data again you would upload it again.
+            ? `${row.object.displayName} is removed from this project.`
+            : `${row.object.displayName} and its ${row.object.recordCount.toLocaleString()} records are removed from this project.`}
         </p>
         {row.object.analysed && (
-          <Callout tone="info" title="Earlier analyses are kept">
-            The runs that profiled this dataset stay in the project’s history, so an assessment somebody has
-            already read does not change. They will refer to a dataset that is no longer listed here.
-          </Callout>
+          <p className="text-sm text-slate-600">Previous analysis runs remain available.</p>
         )}
         {remove.error && <ErrorState error={remove.error} />}
         <div className="flex justify-end gap-2">

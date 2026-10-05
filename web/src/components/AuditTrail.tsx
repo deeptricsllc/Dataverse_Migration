@@ -147,7 +147,7 @@ export function AuditTrailCard({
   return (
     <Card
       title="Audit trail"
-      subtitle="Every consequential action, with who did it, against which environments and with which options."
+      subtitle="Every recorded action, with the actor, the environments and the options."
       bodyClassName="p-0"
       data-testid="audit-trail"
       actions={

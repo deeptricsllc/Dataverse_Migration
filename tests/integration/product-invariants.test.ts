@@ -59,8 +59,8 @@ describe('a connection is not a dataset', () => {
     });
     expect(res.statusCode).toBe(400);
     // The message names the missing choice, not a malfunction.
-    expect(body(res).error!.message).toContain('has no files in it yet');
-    expect(body(res).error!.message).toContain('Add a file to it');
+    expect(body(res).error!.message).toContain('contains no files');
+    expect(body(res).error!.message).toContain('Add a file to this connection');
   });
 
   it('refuses a SharePoint connection with nothing selected, and says what to choose', async () => {
@@ -71,8 +71,8 @@ describe('a connection is not a dataset', () => {
       environmentId: connection.id,
     });
     expect(res.statusCode).toBe(400);
-    expect(body(res).error!.message).toContain('no content has been selected');
-    expect(body(res).error!.message).toContain('Choose the list, library or file');
+    expect(body(res).error!.message).toContain('No content is selected');
+    expect(body(res).error!.message).toContain('Select a list, library or file');
   });
 
   it('refuses to analyse a project that has no datasets', async () => {
@@ -80,7 +80,7 @@ describe('a connection is not a dataset', () => {
     const res = await call('POST', `/api/projects/${project.id}/analyse`, { all: true });
 
     expect(res.statusCode).toBe(400);
-    expect(body(res).error!.message).toContain('no datasets yet');
+    expect(body(res).error!.message).toContain('has no datasets');
   });
 
   /**

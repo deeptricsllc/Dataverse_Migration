@@ -43,7 +43,7 @@ export function DashboardPage() {
     <>
       <PageHeader
         title={`Welcome, ${user.displayName.split(' ')[0]}`}
-        description="Understand your data, move it safely, and prove it arrived. Work lives in projects."
+        description="Inspect a source, migrate it, and validate the result. Work lives in projects."
         actions={
           <Button
             variant="primary"

@@ -58,7 +58,7 @@ export function ComparisonProject({ project }: { project: ProjectDto }) {
 
       <Card
         title="Comparisons"
-        subtitle="Each run is a point-in-time reconciliation. Run it as often as you need — nothing is overwritten and nothing is written to either side."
+        subtitle="Each run is a point-in-time reconciliation. A comparison writes to neither side."
         data-testid="comparisons"
         actions={
           <Button
@@ -79,7 +79,7 @@ export function ComparisonProject({ project }: { project: ProjectDto }) {
           <EmptyState
             icon={<Scale className="h-6 w-6" />}
             title="Nothing compared yet"
-            description="A comparison matches records on a key you choose, then reports what agrees, what differs field by field, and what exists on only one side."
+            description="A comparison matches records on a key you select. It reports what agrees, what differs, and what exists on one side only."
             action={
               <Button variant="primary" disabled={!ready} onClick={() => setStarting(true)}>
                 New comparison

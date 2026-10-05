@@ -50,11 +50,11 @@ test('a migration is one workspace, from empty to configured', async ({ page }) 
   // --- empty, not broken -----------------------------------------------------
   await expect(page.getByTestId('migration-status')).toHaveText('Draft');
   await expect(page.getByTestId('migration-empty')).toBeVisible();
-  await expect(page.getByText('Start your migration')).toBeVisible();
-  await expect(page.getByText(/Migration readiness/)).toContainText('not assessed yet');
+  await expect(page.getByText('Migration not configured')).toBeVisible();
+  await expect(page.getByText(/Migration readiness/)).toContainText('Not assessed');
   // Both ends are shown as missing rather than as a failed step.
   const ends = page.getByTestId('migration-ends');
-  await expect(ends).toContainText('No source data yet');
+  await expect(ends).toContainText('No source data');
   await expect(ends).toContainText('Not selected');
 
   // --- the destination is chosen inside the migration ------------------------
@@ -64,7 +64,7 @@ test('a migration is one workspace, from empty to configured', async ({ page }) 
   await page.getByTestId('save-destination').click();
   await expect(page.getByTestId('migration-ends')).toContainText('DeepTrics UAT', { timeout: 30_000 });
   // A simulated destination never looks executable.
-  await expect(page.getByRole('main')).toContainText('This destination is simulated');
+  await expect(page.getByRole('main')).toContainText('Simulated target');
 
   // --- source data, through the same picker the dataset experience uses ------
   await page.getByTestId('add-source-data').click();

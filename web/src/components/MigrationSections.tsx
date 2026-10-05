@@ -35,10 +35,7 @@ function useCurrentPlan(projectId: string) {
 function NothingConfigured({ what }: { what: string }) {
   return (
     <Card>
-      <EmptyState
-        title={`Nothing to ${what} yet`}
-        description="Add the data you want to move and choose a destination, and this section will have something to describe."
-      />
+      <EmptyState title={`No data to ${what}`} description="Add source data and select a target." />
     </Card>
   );
 }
@@ -114,8 +111,8 @@ export function MigrationTransformations({ w }: { w: MigrationWorkspaceDto }) {
 
   return (
     <Card
-      title="What happens to the data before it is written"
-      subtitle="Every transformation configured in this migration. Change one beside the field it belongs to, under Mapping."
+      title="Transformations"
+      subtitle="Edit a transformation under Mapping, beside the field it applies to."
       data-testid="transformations-list"
       bodyClassName="p-0"
     >
@@ -131,10 +128,7 @@ export function MigrationTransformations({ w }: { w: MigrationWorkspaceDto }) {
       )}
       {transformed.data && transformed.data.length === 0 && (
         <div className="p-5">
-          <EmptyState
-            title="Nothing is transformed"
-            description="Every mapped field is written exactly as it is read. That is a legitimate answer, and it is worth knowing before a run rather than after."
-          />
+          <EmptyState title="No transformations" description="Every mapped field is written as it is read." />
         </div>
       )}
       {transformed.data && transformed.data.length > 0 && (
@@ -203,10 +197,7 @@ export function MigrationRuns({ w }: { w: MigrationWorkspaceDto }) {
   if (rows.length === 0) {
     return (
       <Card>
-        <EmptyState
-          title="This migration has not been run"
-          description="Once it has, every run stays here with what it attempted, what succeeded and what failed."
-        />
+        <EmptyState title="No runs" description="Run the migration to see results here." />
       </Card>
     );
   }
@@ -214,7 +205,7 @@ export function MigrationRuns({ w }: { w: MigrationWorkspaceDto }) {
   return (
     <Card
       title={describeCount(rows.length, 'run')}
-      subtitle="Newest first. Nothing here is ever overwritten: a retry is a further attempt of the same run, and running again is a new one."
+      subtitle="Newest first. A retry adds an attempt to a run. Running again creates a new run."
       data-testid="migration-runs"
       bodyClassName="p-0"
     >

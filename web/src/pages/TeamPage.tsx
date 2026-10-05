@@ -62,7 +62,7 @@ export function TeamPage() {
 
       {setRole.error && (
         <Callout tone="danger" title="That role was not changed">
-          {setRole.error instanceof Error ? setRole.error.message : 'Something went wrong.'}
+          {setRole.error instanceof Error ? setRole.error.message : 'The role change failed.'}
         </Callout>
       )}
 

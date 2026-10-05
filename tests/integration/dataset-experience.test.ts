@@ -409,9 +409,9 @@ describe('a SharePoint connection that holds nothing', () => {
     });
     expect(res.statusCode).toBe(400);
     const message = (res.json() as { error: { message: string } }).error.message;
-    expect(message).toContain('no content has been selected');
+    expect(message).toContain('No content is selected');
     // Not a malfunction — a next step.
-    expect(message).toContain('Choose the list, library or file');
+    expect(message).toContain('Select a list, library or file');
   });
 
   it('is refused the same way by a direct API call that skips the screen entirely', async () => {

@@ -285,10 +285,11 @@ export function DependenciesStep({
               >
                 {c.resolvable ? (
                   <>
-                    <p>
-                      <strong>Pass 1</strong> creates records without these optional lookups;{' '}
-                      <strong>pass 2</strong> sets them once all referenced records exist:
-                    </p>
+                    {/* State, then the two steps, as instructions rather than prose. */}
+                    <p className="font-medium">Execution</p>
+                    <p>Pass 1: Create the records without the optional lookup.</p>
+                    <p>Pass 2: Set the lookup after both records exist.</p>
+                    <p className="mt-2 font-medium">Deferred lookups</p>
                     <ul className="mt-1 list-disc pl-5">
                       {c.deferredEdges.map((e) => (
                         <li key={`${e.from}.${e.attribute}.${e.to}`}>
@@ -301,7 +302,7 @@ export function DependenciesStep({
                     </ul>
                   </>
                 ) : (
-                  'This cycle consists of required lookups and cannot be handled automatically. Make one lookup optional in the target or migrate these tables separately.'
+                  'This cycle uses required lookups. It cannot be resolved automatically. Make one lookup optional in the target, or migrate these tables separately.'
                 )}
               </Callout>
             ))}

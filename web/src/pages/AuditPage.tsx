@@ -17,7 +17,7 @@ export function AuditPage() {
     <>
       <PageHeader
         title="Audit trail"
-        description="Every consequential action in this workspace: who did it, when, to which environment, and what the platform recorded about it."
+        description="Every recorded action in this workspace: the actor, the time, the environment and the outcome."
       />
       <AuditTrailCard
         page={page.data}

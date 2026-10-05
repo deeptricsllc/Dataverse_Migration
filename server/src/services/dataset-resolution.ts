@@ -66,11 +66,11 @@ export async function resolveDataset(db: AppDb, env: EnvironmentRow): Promise<Da
         resolves: false,
         reason: isUpload ? 'NO_FILES_IMPORTED' : 'NO_CONTENT_SELECTED',
         message: isUpload
-          ? `${env.displayName} has no files in it yet, so there is nothing to analyse.`
-          : `${env.displayName} is connected, but no content has been selected from it yet.`,
+          ? `${env.displayName} contains no files.`
+          : `${env.displayName} is connected. No content is selected.`,
         whatToDo: isUpload
-          ? 'Add a file to it, then add it to the project.'
-          : 'Choose the list, library or file you want to work with, then add it to the project.',
+          ? 'Add a file to this connection, then add it to the project.'
+          : 'Select a list, library or file, then add it to the project.',
       };
     }
     const records = rows.reduce((sum, r) => sum + r.rowCount, 0);
@@ -95,7 +95,7 @@ export async function resolveDataset(db: AppDb, env: EnvironmentRow): Promise<Da
       resolves: false,
       reason: 'UNAVAILABLE',
       message: `${env.displayName} is not available.`,
-      whatToDo: 'Check the connection, then try again.',
+      whatToDo: 'Test the connection.',
     };
   }
 
@@ -111,8 +111,8 @@ export async function resolveDataset(db: AppDb, env: EnvironmentRow): Promise<Da
     return {
       resolves: false,
       reason: 'UNAVAILABLE',
-      message: `The last attempt to reach ${env.displayName} failed, so its data cannot be read.`,
-      whatToDo: 'Test the connection and fix whatever it reports, then add it to the project.',
+      message: `The last attempt to reach ${env.displayName} failed.`,
+      whatToDo: 'Test the connection. Fix the reported error, then add it to the project.',
     };
   }
 

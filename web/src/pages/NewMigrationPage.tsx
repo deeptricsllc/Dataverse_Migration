@@ -53,7 +53,7 @@ export function NewMigrationPage() {
     return (
       <EmptyState
         title="Start from a migration project"
-        description="A migration moves data between two systems, and those two ends belong to the migration itself. Create a migration project and choose them there."
+        description="A migration needs a source and a target. Create a migration project and select them there."
         action={
           <Button variant="primary" onClick={() => navigate('/projects')}>
             Go to Projects
@@ -82,7 +82,7 @@ export function NewMigrationPage() {
     <>
       <PageHeader
         title="Select tables to migrate"
-        description="Choose the tables whose data should be copied from the source to the target. Record counts are as of the last analysis; the plan refreshes them. Dependencies are shown but never selected automatically."
+        description="Select the tables to copy from the source to the target. Record counts are from the last analysis. Dependencies are shown but not selected automatically."
         actions={
           <Button
             variant="primary"

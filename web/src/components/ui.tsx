@@ -332,7 +332,7 @@ export function EmptyState({
 }
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
-  const message = error instanceof Error ? error.message : 'Something went wrong';
+  const message = error instanceof Error ? error.message : 'The request failed.';
   const requestId = error instanceof ApiError ? error.requestId : undefined;
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">

@@ -81,7 +81,7 @@ export function ProjectsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Projects"
-        description="Every piece of work lives in a project. Analysis projects hold datasets; migration and comparison projects hold two sides."
+        description="Analysis projects hold datasets. Migration and comparison projects hold a source and a target."
         actions={
           <div className="flex items-center gap-3">
             <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
@@ -111,7 +111,7 @@ export function ProjectsPage() {
         <EmptyState
           icon={<Microscope className="h-6 w-6" />}
           title="No projects yet"
-          description="Start with an analysis project to find out what is in a source system, then create a migration project that uses it."
+          description="Create an analysis project to inspect a source. Create a migration project to move data."
           action={
             <Button variant="primary" onClick={() => setCreating(true)}>
               New project

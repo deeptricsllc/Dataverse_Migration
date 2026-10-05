@@ -66,6 +66,7 @@ For whoever runs it or connects it to something.
 
 | Document                                                                                                                       |                                                                                          |
 | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| [PRODUCT_LANGUAGE_STANDARD.md](PRODUCT_LANGUAGE_STANDARD.md)                                                                   | The approved term for each concept, and the pattern for every kind of message            |
 | [BRANCHES.md](BRANCHES.md)                                                                                                     | Which branch is active, which is retired, and where a deployment's provenance comes from |
 | [MICROSOFT_SETUP.md](MICROSOFT_SETUP.md)                                                                                       | Entra registration, the three decisions people conflate, and the troubleshooting table   |
 | [SQL_SERVER_SETUP.md](SQL_SERVER_SETUP.md) · [AZURE_SQL_SETUP.md](AZURE_SQL_SETUP.md) · [POSTGRES_SETUP.md](POSTGRES_SETUP.md) | Connecting each engine                                                                   |

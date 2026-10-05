@@ -118,10 +118,10 @@ export function AccessRequestForm({ compact = false }: { compact?: boolean }) {
       {submit.error && (
         <p className="text-sm text-rose-300" role="alert">
           {rateLimited
-            ? 'That is several requests in a short time. Please try again in a few minutes.'
+            ? 'Too many requests. Try again in a few minutes.'
             : submit.error instanceof Error
               ? submit.error.message
-              : 'Something went wrong. Please try again.'}
+              : 'The request failed. Try again.'}
         </p>
       )}
       <button

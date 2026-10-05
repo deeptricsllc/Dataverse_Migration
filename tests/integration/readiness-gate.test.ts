@@ -91,7 +91,7 @@ describe('readiness assessment and gate', () => {
     const readiness = await assess(plan.id);
     const finding = readiness.findings.find((f) => f.code === 'ROLLBACK_IS_INVENTORY')!;
     expect(finding.severity).toBe('INFORMATION');
-    expect(finding.explanation).toMatch(/no automatic destructive undo/i);
+    expect(finding.explanation).toMatch(/no automatic undo/i);
   }, 120_000);
 
   // -------------------------------------------------------------------------

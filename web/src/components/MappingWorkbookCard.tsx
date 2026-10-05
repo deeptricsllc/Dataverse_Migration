@@ -52,7 +52,7 @@ export function MappingWorkbookCard({ plan }: { plan: MigrationPlanDto }) {
   return (
     <Card
       title="Mapping workbook"
-      subtitle="The mapping as a spreadsheet, for the people who know the source but will never open this tool."
+      subtitle="The mapping as a spreadsheet, for review outside this tool."
       data-testid="mapping-workbook"
       actions={
         <ExportButton href={`/api/plans/${plan.id}/mapping.xlsx`} label="Download workbook" size="md" />

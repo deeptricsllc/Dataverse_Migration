@@ -110,7 +110,7 @@ export function ComparePage() {
         <EmptyState
           icon={<GitCompareArrows className="h-8 w-8" />}
           title="Open this from a migration"
-          description="Comparing two schemas needs to know which two. A migration's two ends belong to the migration itself, so this page is reached from the migration project that has them."
+          description="A schema comparison needs a source and a target. Open this from a migration project."
           action={
             <Button
               variant="primary"

@@ -82,10 +82,7 @@ export function MigrationWorkspacePage() {
     <>
       <PageHeader
         title={w.projectName}
-        description={
-          w.description ??
-          'Move defined data from one place to another, with the evidence to know what will happen.'
-        }
+        description={w.description ?? 'Move data from a source to a target.'}
         actions={
           <span data-testid="migration-status">
             <Pill tone={STATUS_TONES[w.status]}>{MIGRATION_PROJECT_STATUS_LABELS[w.status]}</Pill>
@@ -142,11 +139,11 @@ function Ends({
 }) {
   return (
     <div className="mb-5 flex flex-wrap items-stretch gap-3" data-testid="migration-ends">
-      <End label="Source" env={source} icon={<Database className="h-4 w-4" />} missing="No source data yet" />
+      <End label="Source" env={source} icon={<Database className="h-4 w-4" />} missing="No source data" />
       <span className="flex items-center text-slate-300">
         <ArrowRight className="h-5 w-5" aria-hidden />
       </span>
-      <End label="Destination" env={target} icon={<Server className="h-4 w-4" />} missing="Not selected" />
+      <End label="Target" env={target} icon={<Server className="h-4 w-4" />} missing="Not selected" />
     </div>
   );
 }
@@ -213,12 +210,10 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
         <Card title="Scope" data-testid="migration-scope">
           <p className="text-2xl font-semibold text-slate-900">{describeCount(w.plan.datasets, 'dataset')}</p>
           <p className="mt-0.5 text-sm text-slate-500">
-            {w.plan.records === null
-              ? 'Records not counted yet'
-              : `${w.plan.records.toLocaleString()} records`}
+            {w.plan.records === null ? 'Records not counted' : `${w.plan.records.toLocaleString()} records`}
           </p>
           <Button size="sm" variant="ghost" className="mt-2" onClick={() => onSection('data')}>
-            What exactly is moving?
+            View datasets
           </Button>
         </Card>
 
@@ -237,21 +232,23 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
                     ? 'Ready with warnings'
                     : 'Ready'}
               </p>
-              <p className="mt-0.5 text-sm text-slate-500">
-                {w.readiness.blockers > 0 && (
-                  <span className="font-medium text-red-700">
-                    {describeCount(w.readiness.blockers, 'blocker')}
-                  </span>
-                )}
-                {w.readiness.blockers > 0 && w.readiness.warnings > 0 && ' · '}
-                {w.readiness.warnings > 0 && `${describeCount(w.readiness.warnings, 'warning')}`}
-                {w.readiness.blockers === 0 && w.readiness.warnings === 0 && 'Nothing outstanding'}
-              </p>
+              <dl className="mt-1 text-sm">
+                <div className="flex gap-2">
+                  <dt className="text-slate-500">Blockers</dt>
+                  <dd className={cx('tabular-nums', w.readiness.blockers > 0 && 'font-medium text-red-700')}>
+                    {w.readiness.blockers}
+                  </dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="text-slate-500">Warnings</dt>
+                  <dd className="tabular-nums text-slate-700">{w.readiness.warnings}</dd>
+                </div>
+              </dl>
             </>
           ) : (
             <>
               <p className="text-2xl font-semibold text-slate-400">Not assessed</p>
-              <p className="mt-0.5 text-sm text-slate-500">Nothing has checked this configuration yet.</p>
+              <p className="mt-0.5 text-sm text-slate-500">This configuration is not assessed.</p>
             </>
           )}
         </Card>
@@ -260,12 +257,23 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
           {w.lastRun ? (
             <>
               <p className="text-2xl font-semibold text-slate-900">{runLabel(w.lastRun.status)}</p>
-              <p className="mt-0.5 text-sm text-slate-500">
-                {w.lastRun.succeeded.toLocaleString()} succeeded
-                {w.lastRun.failed > 0 && (
-                  <span className="text-red-700"> · {w.lastRun.failed.toLocaleString()} failed</span>
-                )}
-              </p>
+              <dl className="mt-1 text-sm">
+                <div className="flex gap-2">
+                  <dt className="text-slate-500">Succeeded</dt>
+                  <dd className="tabular-nums text-slate-700">{w.lastRun.succeeded.toLocaleString()}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="text-slate-500">Failed</dt>
+                  <dd
+                    className={cx(
+                      'tabular-nums',
+                      w.lastRun.failed > 0 ? 'font-medium text-red-700' : 'text-slate-700',
+                    )}
+                  >
+                    {w.lastRun.failed.toLocaleString()}
+                  </dd>
+                </div>
+              </dl>
               <Link
                 to={`/runs/${w.lastRun.id}`}
                 className="mt-2 inline-block text-sm text-brand-700 hover:underline"
@@ -276,18 +284,14 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
           ) : (
             <>
               <p className="text-2xl font-semibold text-slate-400">None yet</p>
-              <p className="mt-0.5 text-sm text-slate-500">This migration has not been run.</p>
+              <p className="mt-0.5 text-sm text-slate-500">This migration has no runs.</p>
             </>
           )}
         </Card>
       </div>
 
       {w.readiness && w.readiness.top.length > 0 && (
-        <Card
-          title={w.readiness.blockers > 0 ? 'Biggest blockers' : 'Worth knowing before you run'}
-          subtitle="Each one names what was observed, why it matters, and what to do."
-          data-testid="migration-blockers"
-        >
+        <Card title={w.readiness.blockers > 0 ? 'Blockers' : 'Warnings'} data-testid="migration-blockers">
           <ul className="space-y-3">
             {w.readiness.top.map((finding) => (
               <FindingRow key={`${finding.code}:${finding.object?.name ?? ''}`} finding={finding} />
@@ -398,15 +402,15 @@ function EmptyMigration({ w, onSection }: { w: MigrationWorkspaceDto; onSection:
     <Card data-testid="migration-empty">
       <EmptyState
         icon={<Layers className="h-8 w-8" />}
-        title="Start your migration"
-        description="Set this up by adding the data you want to move and choosing where it should go. Either order is fine."
+        title="Migration not configured"
+        description="Add source data and select a target. Either order."
       />
       <div className="mx-auto mt-2 grid max-w-2xl gap-3 sm:grid-cols-2">
         <Step
           n={1}
           title="Add source data"
           done={hasData}
-          detail={hasData ? describeCount(w.plan!.datasets, 'dataset') : 'Choose what you want to move.'}
+          detail={hasData ? describeCount(w.plan!.datasets, 'dataset') : 'Select the data to move.'}
           action={
             <Button variant={hasData ? 'secondary' : 'primary'} onClick={() => onSection('data')}>
               {hasData ? 'Review source data' : 'Add source data'}
@@ -415,18 +419,18 @@ function EmptyMigration({ w, onSection }: { w: MigrationWorkspaceDto; onSection:
         />
         <Step
           n={2}
-          title="Choose destination"
+          title="Select target"
           done={Boolean(w.target)}
-          detail={w.target ? w.target.displayName : 'Select where this data should go.'}
+          detail={w.target ? w.target.displayName : 'Select where the data is written.'}
           action={
             <Button variant={w.target ? 'secondary' : 'primary'} onClick={() => onSection('data')}>
-              {w.target ? 'Change destination' : 'Choose destination'}
+              {w.target ? 'Change target' : 'Select target'}
             </Button>
           }
         />
       </div>
       <p className="mt-5 text-center text-sm text-slate-500">
-        Migration readiness: <span className="font-medium text-slate-700">not assessed yet</span>
+        Migration readiness: <span className="font-medium text-slate-700">Not assessed</span>
       </p>
     </Card>
   );

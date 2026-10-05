@@ -48,6 +48,17 @@ const gates = [
     run: () => spawnSync(npx, ['eslint', '.'], spawnOpts),
   },
   {
+    name: 'content',
+    why: 'Interface text that sounds like an AI describing the product. A guardrail, not a language review.',
+    /*
+     * No shell for this one. `process.execPath` is an absolute path that contains a space on Windows
+     * ("C:\Program Files\nodejs\node.exe"), and a shell splits it at the space and tries to run
+     * "C:\Program" — which is the argument-with-a-space trap this file warns about a few lines above.
+     * node is a real executable, so it needs no shim and no shell.
+     */
+    run: () => spawnSync(process.execPath, ['scripts/content-lint.mjs'], { stdio: 'inherit' }),
+  },
+  {
     name: 'typecheck',
     why: 'Vitest does not typecheck. A suite can be green while the repository does not compile.',
     run: () => spawnSync(npm, ['run', 'typecheck'], spawnOpts),

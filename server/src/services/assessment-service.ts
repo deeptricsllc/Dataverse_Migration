@@ -376,9 +376,7 @@ export class AssessmentService {
      * data yet". The second is true and is the thing the person can act on.
      */
     if (assessment.datasets.length === 0) {
-      throw badRequest(
-        'This project has no datasets yet, so there is nothing to analyse. Add a file, a table or a list first.',
-      );
+      throw badRequest('This project has no datasets. Add a file, a table or a list.');
     }
     const sources = await this.db
       .select({ environment: environments, selectedObjects: projectSources.selectedObjects })
