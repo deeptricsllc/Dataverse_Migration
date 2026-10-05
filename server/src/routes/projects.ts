@@ -194,6 +194,8 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
         tables: z.array(tableName).max(200).optional(),
         sampleSize: z.coerce.number().int().min(100).max(200_000).optional(),
         full: z.boolean().optional(),
+        /** Which dataset to analyse. Omitted means the project's primary source. */
+        environmentId: uuid.optional(),
       })
       .parse(req.body ?? {});
     return s.analysis.create(req.ctx, id, body);
@@ -545,12 +547,19 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
       .object({
         filename: z.string().min(1).max(300),
         contentBase64: z.string().min(1),
+        /** Which sheets to take. Omitted means the whole workbook. */
+        sheets: z.array(z.string().min(1).max(300)).max(200).optional(),
       })
       .parse(req.body);
-    return s.stagedSources.importFile(req.ctx, id, {
-      filename: body.filename,
-      content: Buffer.from(body.contentBase64, 'base64'),
-    });
+    return s.stagedSources.importFile(
+      req.ctx,
+      id,
+      {
+        filename: body.filename,
+        content: Buffer.from(body.contentBase64, 'base64'),
+      },
+      { sheets: body.sheets },
+    );
   });
 
   /** Imports a spreadsheet out of OneDrive or a SharePoint document library. */
@@ -565,6 +574,13 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     const { id } = idParams.parse(req.params);
     const { reference } = z.object({ reference: z.string().min(1).max(2000) }).parse(req.body);
     return s.stagedSources.importFromSharePointList(req.ctx, id, { reference });
+  });
+
+  /** Renames a dataset. The display name only — see `renameTable`. */
+  app.patch('/api/staged-sources/:id/tables/:table', async (req) => {
+    const { id, table } = z.object({ id: uuid, table: tableName }).parse(req.params);
+    const { displayName } = z.object({ displayName: z.string().min(1).max(200) }).parse(req.body);
+    return s.stagedSources.renameTable(req.ctx, id, table, displayName);
   });
 
   app.delete('/api/staged-sources/:id/tables/:table', async (req, reply) => {

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { AnalysisAssessmentDto, DatasetAnalysisState } from '../../../shared/domain';
+import type { AnalysisAssessmentDto, AssessedObjectDto, DatasetAnalysisState } from '../../../shared/domain';
 import {
   dispositionSilences,
   findingsForTable,
@@ -124,7 +124,16 @@ export class AssessmentService {
      */
     const imports = sources.length
       ? await this.db
-          .select({ environmentId: stagedTables.environmentId, importedAt: stagedTables.importedAt })
+          .select({
+            environmentId: stagedTables.environmentId,
+            importedAt: stagedTables.importedAt,
+            logicalName: stagedTables.logicalName,
+            displayName: stagedTables.displayName,
+            sheetName: stagedTables.sheetName,
+            sourceRef: stagedTables.sourceRef,
+            rowCount: stagedTables.rowCount,
+            columns: stagedTables.columns,
+          })
           .from(stagedTables)
           .where(
             inArray(
@@ -198,6 +207,43 @@ export class AssessmentService {
 
     const datasets = sources.map((s) => {
       const run = latestByEnvironment.get(s.environment.id);
+      const analysedNames = new Set(
+        tables.filter((t) => t.analysisRunId === run?.id).map((t) => t.logicalName),
+      );
+
+      /**
+       * What this dataset actually resolves to.
+       *
+       * Two different answers because two different kinds of connection. A staged one — a file, a
+       * SharePoint list — holds its content here, so `staged_tables` is the truth and is known before
+       * anything is analysed. A database or a Dataverse environment keeps its tables on their side, so
+       * until an analysis has looked there is nothing this can honestly list; it reports what the last
+       * run saw rather than inventing a catalogue.
+       */
+      const staged = imports
+        .filter((row) => row.environmentId === s.environment.id)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      const objects: AssessedObjectDto[] = staged.length
+        ? staged.map((row) => ({
+            logicalName: row.logicalName,
+            displayName: row.displayName,
+            sheetName: row.sheetName,
+            recordCount: row.rowCount,
+            columnCount: row.columns.length,
+            origin: row.sourceRef,
+            analysed: analysedNames.has(row.logicalName),
+          }))
+        : tables
+            .filter((t) => t.analysisRunId === run?.id)
+            .map((t) => ({
+              logicalName: t.logicalName,
+              displayName: t.displayName,
+              sheetName: null,
+              recordCount: t.recordCount,
+              columnCount: t.profile?.columns ?? 0,
+              origin: null,
+              analysed: true,
+            }));
       const attempt = newestAttemptByEnvironment.get(s.environment.id);
       const theirTables = tables.filter((t) => t.analysisRunId === run?.id);
       const theirFindings = findings.filter((f) => f.dataset === s.environment.displayName);
@@ -239,6 +285,7 @@ export class AssessmentService {
         critical: theirFindings.filter((f) => f.severity === 'CRITICAL').length,
         warning: theirFindings.filter((f) => f.severity === 'WARNING').length,
         info: theirFindings.filter((f) => f.severity === 'INFO').length,
+        objects,
       };
     });
 

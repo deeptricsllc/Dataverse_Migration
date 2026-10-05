@@ -138,7 +138,7 @@ export class StagedSourceService {
     ctx: RequestContext,
     environmentId: string,
     file: { filename: string; content: Buffer },
-    opts: { kind?: StagedSourceKind; sourceRef?: string } = {},
+    opts: { kind?: StagedSourceKind; sourceRef?: string; sheets?: string[] } = {},
   ): Promise<StagedImportResultDto> {
     const env = await this.stagedEnvironment(ctx, environmentId);
     if (file.content.length === 0) throw badRequest('That file is empty');
@@ -151,8 +151,31 @@ export class StagedSourceService {
     const sourceRef = (opts.sourceRef ?? file.filename).slice(0, 300);
     const sheets = readSheets(file.content, file.filename);
 
+    /**
+     * Which sheets the person actually asked for.
+     *
+     * A workbook that happens to contain "Instructions" and "Lookup Notes" tabs should not force two
+     * meaningless datasets into an analysis, so the caller may name the sheets it wants. Omitting the
+     * option takes the whole workbook, which is what every existing caller means.
+     *
+     * Matched on the reader's own sheet name. A selection that matches nothing is a mistake worth
+     * naming rather than an import that silently does nothing.
+     */
+    const wanted = opts.sheets?.length ? new Set(opts.sheets) : null;
+    if (wanted) {
+      const available = sheets.map((s) => s.name);
+      const unknown = [...wanted].filter((name) => !available.includes(name));
+      if (unknown.length) {
+        throw badRequest(
+          `${file.filename} has no sheet called ${unknown.map((u) => `"${u}"`).join(', ')}. It has ${available.map((a) => `"${a}"`).join(', ')}.`,
+        );
+      }
+    }
+
     const result: StagedImportResultDto = { tables: [], skipped: [], totalRows: 0, replaced: [] };
     for (const sheet of sheets) {
+      // Not chosen is not the same as unusable, so an unselected sheet is not reported as skipped.
+      if (wanted && !wanted.has(sheet.name)) continue;
       const prepared = prepareSheet(sheet);
       if (!prepared) {
         result.skipped.push({
@@ -322,6 +345,7 @@ export class StagedSourceService {
       const logicalName = tableNameFor(sheet.name, file.filename);
       const inferred = inferTable(logicalName, sheet.name || file.filename, prepared.headers, prepared.rows);
       tables.push({
+        sheet: sheet.name,
         sheetName: sheets.length > 1 ? sheet.name : null,
         displayName: inferred.displayName,
         logicalName: inferred.logicalName,
@@ -509,6 +533,8 @@ export class StagedSourceService {
 
   async removeTable(ctx: RequestContext, environmentId: string, logicalName: string): Promise<void> {
     const env = await this.stagedEnvironment(ctx, environmentId);
+    const existing = await this.existingTable(env.id, logicalName);
+    if (!existing) throw notFound('Dataset');
     await this.db
       .delete(stagedRows)
       .where(and(eq(stagedRows.environmentId, env.id), eq(stagedRows.logicalName, logicalName)));
@@ -516,6 +542,56 @@ export class StagedSourceService {
       .delete(stagedTables)
       .where(and(eq(stagedTables.environmentId, env.id), eq(stagedTables.logicalName, logicalName)));
     await this.metadata.forget(env.id);
+    /*
+     * Recorded because removing data is exactly the kind of thing somebody asks about later. The rows go;
+     * the analysis runs that profiled them do not, so an assessment produced before this remains readable
+     * and this entry is what explains why its dataset is no longer listed.
+     */
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'STAGED_SOURCE_TABLE_REMOVED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: env.id,
+      requestId: ctx.requestId,
+      details: { logicalName, displayName: existing.displayName, rows: existing.rowCount },
+    });
+    this.logger.info({ environmentId: env.id, logicalName }, 'Dataset removed');
+  }
+
+  /**
+   * Renames a dataset, for a sheet somebody called "Sheet1" and a table called `TBL_CUST_MSTR_V2`.
+   *
+   * The display name only. `logicalName` is the identity an import replaces by and an analysis run refers
+   * to, so renaming it would orphan both — a dataset is allowed to be called something better without
+   * becoming a different dataset.
+   */
+  async renameTable(
+    ctx: RequestContext,
+    environmentId: string,
+    logicalName: string,
+    displayName: string,
+  ): Promise<StagedTableDto> {
+    const env = await this.stagedEnvironment(ctx, environmentId);
+    const existing = await this.existingTable(env.id, logicalName);
+    if (!existing) throw notFound('Dataset');
+    const trimmed = displayName.trim();
+    if (!trimmed) throw badRequest('A dataset needs a name');
+    await this.db
+      .update(stagedTables)
+      .set({ displayName: trimmed })
+      .where(and(eq(stagedTables.environmentId, env.id), eq(stagedTables.logicalName, logicalName)));
+    await this.metadata.forget(env.id);
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'DATASET_RENAMED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: env.id,
+      requestId: ctx.requestId,
+      details: { logicalName, from: existing.displayName, to: trimmed },
+    });
+    return this.tableDto(env.id, logicalName);
   }
 
   /** What is already stored under this name, so an import can say what it is about to overwrite. */

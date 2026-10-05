@@ -161,8 +161,14 @@ test('the assessment can be read, taken apart and challenged', async ({ page }) 
 
   // --- the datasets tab describes what is being analysed ---------------------
   await page.getByRole('tab', { name: /Datasets/ }).click();
-  const dataset = page.getByTestId('dataset-card').first();
-  await expect(dataset).toContainText('Legacy CRM extract');
+  /*
+   * Four tables in one uploaded extract are four datasets. They are listed as the things they are —
+   * `contacts`, `orders` — rather than as one row called "Legacy CRM extract", which is the name of a file
+   * and not the name of any data.
+   */
+  await expect(page.getByTestId('dataset-row')).toHaveCount(4);
+  const dataset = page.getByTestId('dataset-row').first();
   await expect(dataset).toContainText('Files');
-  await expect(dataset).toContainText('4 tables');
+  await expect(dataset).toContainText('records');
+  await expect(dataset).toContainText('columns');
 });

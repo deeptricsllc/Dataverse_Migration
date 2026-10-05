@@ -2203,6 +2203,11 @@ export interface StagedPreviewDto {
 }
 
 export interface StagedPreviewTableDto {
+  /**
+   * The sheet this came from, as the reader named it. Always set, and the identifier the import is
+   * given to say which sheets to take — a display name is not unique enough to select by.
+   */
+  sheet: string;
   /** Set only for a workbook with more than one sheet, where it is the thing that tells them apart. */
   sheetName: string | null;
   displayName: string;
@@ -2228,6 +2233,27 @@ export interface StagedPreviewColumnDto {
 }
 
 /** One dataset inside an analysis project, with what was found in it. */
+/**
+ * One concrete thing that was selected: a sheet, a table, a list.
+ *
+ * This is what the word "dataset" means to the person using the product — `Customers`, not "the
+ * connection that happens to hold Customers". A connection may hold several, and a workbook usually
+ * does, so the screen lists these rather than the connections that carry them.
+ */
+export interface AssessedObjectDto {
+  /** Its identity inside the connection. Stable across re-imports, which is what makes replace work. */
+  logicalName: string;
+  displayName: string;
+  /** The sheet it was read from, when a workbook had more than one. Null for anything else. */
+  sheetName: string | null;
+  recordCount: number;
+  columnCount: number;
+  /** The file, drive item or list the rows came from, for "where did this come from". */
+  origin: string | null;
+  /** Whether the latest completed analysis covered it. */
+  analysed: boolean;
+}
+
 export interface AssessedDatasetDto {
   environmentId: string;
   name: string;
@@ -2244,6 +2270,14 @@ export interface AssessedDatasetDto {
   critical: number;
   warning: number;
   info: number;
+  /**
+   * The concrete content this dataset resolves to.
+   *
+   * Empty means the connection is in the project but nothing in it has been selected or seen yet —
+   * which the server already refuses to analyse, and which the screen should say plainly rather than
+   * showing a dataset that is not one.
+   */
+  objects: AssessedObjectDto[];
 }
 
 /**

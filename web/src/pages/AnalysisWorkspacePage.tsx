@@ -6,6 +6,7 @@ import type {
   AnalysisAssessmentDto,
   AnalysisRunSummaryDto,
   AssessedDatasetDto,
+  AssessedObjectDto,
   DatasetAnalysisState,
   ProjectDto,
 } from '@shared/domain';
@@ -20,6 +21,8 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Field,
+  Modal,
   PageHeader,
   Select,
   Spinner,
@@ -145,6 +148,7 @@ export function AnalysisWorkspacePage() {
       )}
       {section === 'datasets' && (
         <Datasets
+          project={project.data!}
           datasets={data.datasets}
           runs={data.runs}
           onAddDataset={() => setAdding(true)}
@@ -160,7 +164,17 @@ export function AnalysisWorkspacePage() {
         />
       )}
 
-      <AddDatasetDrawer project={project.data!} open={adding} onClose={() => setAdding(false)} />
+      <AddDatasetDrawer
+        project={project.data!}
+        open={adding}
+        onClose={() => setAdding(false)}
+        // What you added is the thing to look at. Landing back on Overview left people wondering whether
+        // the upload had worked at all, because nothing visible had changed.
+        onAdded={() => {
+          setAdding(false);
+          setSection('datasets');
+        }}
+      />
     </div>
   );
 }
@@ -335,17 +349,60 @@ function Overview({
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The datasets in this project, listed as the things they are.
+ *
+ * One row per dataset — `Customers`, `Contacts`, `Orders` — not one row per connection. A workbook with
+ * three sheets is three datasets, and the connection that carries them is where they came from rather than
+ * what they are. The previous list showed one card per connection, so adding a five-sheet workbook produced
+ * one row called `CustomerMigration.xlsx`, which is the name of a file and not the name of any data.
+ *
+ * Built to be read at thirty rows, not three: a row is one line, the counts are aligned, and a filter
+ * appears once there are enough to need one.
+ */
 function Datasets({
+  project,
   datasets,
   runs,
   onAddDataset,
   onAnalyseAll,
 }: {
+  project: ProjectDto;
   datasets: AssessedDatasetDto[];
   runs: AnalysisRunSummaryDto[];
   onAddDataset: () => void;
   onAnalyseAll: () => void;
 }) {
+  const [filter, setFilter] = useState('');
+  const [renaming, setRenaming] = useState<DatasetRow | null>(null);
+  const [removing, setRemoving] = useState<DatasetRow | null>(null);
+
+  /**
+   * Every dataset, flattened out of the connections that hold them.
+   *
+   * A connection with nothing selected yet is kept as a row of its own rather than dropped. It is in the
+   * project, the server will refuse to analyse it, and saying so is the only way the person finds out what
+   * they have not finished doing.
+   */
+  const rows = useMemo<DatasetRow[]>(
+    () =>
+      datasets.flatMap((dataset): DatasetRow[] =>
+        dataset.objects.length
+          ? dataset.objects.map((object) => ({ dataset, object }))
+          : [{ dataset, object: null }],
+      ),
+    [datasets],
+  );
+
+  const needle = filter.trim().toLowerCase();
+  const shown = needle
+    ? rows.filter(({ dataset, object }) =>
+        [object?.displayName, object?.sheetName, object?.origin, dataset.name, datasetKindLabel(dataset)]
+          .filter(Boolean)
+          .some((text) => String(text).toLowerCase().includes(needle)),
+      )
+    : rows;
+
   if (datasets.length === 0) {
     return (
       <Card>
@@ -362,48 +419,48 @@ function Datasets({
       </Card>
     );
   }
+
   return (
     <div className="space-y-3">
-      {datasets.map((dataset) => (
-        <Card key={dataset.environmentId} data-testid="dataset-card">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex min-w-0 gap-3">
-              <span className="mt-0.5 flex-none text-slate-400">
-                {dataset.connectionType === 'FILE' ? (
-                  <FileSpreadsheet className="h-5 w-5" />
-                ) : (
-                  <Database className="h-5 w-5" />
-                )}
-              </span>
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-slate-900">{dataset.name}</h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {datasetKindLabel(dataset)}
-                  {dataset.analysed
-                    ? ` · ${describeCount(dataset.tables, 'table')} · ${dataset.records.toLocaleString()} records`
-                    : ' · not analysed yet'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 text-sm">
-              {dataset.analysed && (
-                <>
-                  {dataset.critical > 0 && (
-                    <span className="font-semibold text-red-700">{dataset.critical} critical</span>
-                  )}
-                  {dataset.warning > 0 && (
-                    <span className="font-semibold text-amber-800">{dataset.warning} warnings</span>
-                  )}
-                  {dataset.critical === 0 && dataset.warning === 0 && (
-                    <span className="text-emerald-700">No problems found</span>
-                  )}
-                </>
-              )}
-              <DatasetState dataset={dataset} />
-            </div>
-          </div>
-        </Card>
-      ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-600">
+          {describeCount(rows.length, 'dataset')}
+          {needle && shown.length !== rows.length && ` · ${shown.length} matching`}
+        </p>
+        {rows.length >= 6 && (
+          <label className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+              aria-hidden
+            />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter datasets"
+              aria-label="Filter datasets"
+              data-testid="dataset-filter"
+              className="w-56 rounded-md border border-slate-300 py-1.5 pl-8 pr-3 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </label>
+        )}
+      </div>
+
+      <Card bodyClassName="p-0">
+        <ul className="divide-y divide-slate-100">
+          {shown.map(({ dataset, object }) => (
+            <DatasetRowItem
+              key={`${dataset.environmentId}:${object?.logicalName ?? 'none'}`}
+              dataset={dataset}
+              object={object}
+              onRename={() => setRenaming({ dataset, object })}
+              onRemove={() => setRemoving({ dataset, object })}
+            />
+          ))}
+          {shown.length === 0 && (
+            <li className="px-4 py-6 text-center text-sm text-slate-500">Nothing matches “{filter}”.</li>
+          )}
+        </ul>
+      </Card>
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button variant="secondary" onClick={onAddDataset}>
@@ -417,7 +474,215 @@ function Datasets({
       </div>
 
       <RunHistory runs={runs} />
+
+      {renaming?.object && (
+        <RenameDataset
+          project={project}
+          row={{ dataset: renaming.dataset, object: renaming.object }}
+          onClose={() => setRenaming(null)}
+        />
+      )}
+      {removing?.object && (
+        <RemoveDataset
+          project={project}
+          row={{ dataset: removing.dataset, object: removing.object }}
+          onClose={() => setRemoving(null)}
+        />
+      )}
     </div>
+  );
+}
+
+interface DatasetRow {
+  dataset: AssessedDatasetDto;
+  /** Null for a connection in the project that nothing has been selected from yet. */
+  object: AssessedObjectDto | null;
+}
+
+/** One dataset: what it is, how much of it there is, and whether it has been looked at. */
+function DatasetRowItem({
+  dataset,
+  object,
+  onRename,
+  onRemove,
+}: {
+  dataset: AssessedDatasetDto;
+  object: AssessedObjectDto | null;
+  onRename: () => void;
+  onRemove: () => void;
+}) {
+  const staged = dataset.connectionType === 'FILE';
+
+  if (!object) {
+    /*
+     * In the project, but not yet a dataset. The server refuses to analyse this, so the row says what is
+     * missing instead of showing a row of zeroes that would read as "we looked and found nothing".
+     */
+    return (
+      <li className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="dataset-row">
+        <Database className="h-4 w-4 flex-none text-amber-600" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-slate-900">{dataset.name}</p>
+          <p className="text-xs text-amber-800">
+            Nothing has been chosen from this connection yet, so there is nothing to analyse.
+          </p>
+        </div>
+        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-inset ring-amber-200">
+          Nothing selected
+        </span>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="dataset-row">
+      <span className="flex-none text-slate-400">
+        {staged ? <FileSpreadsheet className="h-4 w-4" /> : <Table2 className="h-4 w-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-slate-900" data-testid="dataset-name">
+          {object.displayName}
+        </p>
+        <p className="truncate text-xs text-slate-500">
+          {datasetKindLabel(dataset)}
+          {object.sheetName ? ` · ${object.sheetName} sheet` : ''}
+          {object.origin && object.origin !== object.displayName ? ` · ${object.origin}` : ''}
+        </p>
+      </div>
+      <p className="flex-none text-right text-xs tabular-nums text-slate-600">
+        {object.recordCount.toLocaleString()} records
+        <span className="block text-slate-400">{object.columnCount} columns</span>
+      </p>
+      <DatasetState dataset={dataset} />
+      {staged && (
+        <span className="flex flex-none items-center gap-1">
+          <Button size="sm" variant="ghost" onClick={onRename} data-testid="rename-dataset">
+            Rename
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onRemove} data-testid="remove-dataset">
+            Remove
+          </Button>
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** Renames the dataset, not the file it came from. */
+function RenameDataset({
+  project,
+  row,
+  onClose,
+}: {
+  project: ProjectDto;
+  row: { dataset: AssessedDatasetDto; object: AssessedObjectDto };
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(row.object.displayName);
+  const queryClient = useQueryClient();
+  const rename = useMutation({
+    mutationFn: () =>
+      api(
+        'PATCH',
+        `/api/staged-sources/${row.dataset.environmentId}/tables/${encodeURIComponent(row.object.logicalName)}`,
+        { displayName: name.trim() },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal open onClose={onClose} title="Rename dataset">
+      <div className="space-y-4">
+        <Field label="Name" htmlFor="rename-dataset-name" hint="What this data is called in the project.">
+          <input
+            id="rename-dataset-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          />
+        </Field>
+        {rename.error && <ErrorState error={rename.error} />}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!name.trim() || name.trim() === row.object.displayName}
+            loading={rename.isPending}
+            onClick={() => rename.mutate()}
+            data-testid="confirm-rename"
+          >
+            Rename
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Removes a dataset, having said what that costs.
+ *
+ * The rows go. The analyses that profiled them do not: a run is evidence of what was true when it ran, and
+ * deleting it to tidy up a list would destroy the only record of an assessment somebody may have acted on.
+ * So this says both halves, because "are you sure?" on its own tells nobody anything.
+ */
+function RemoveDataset({
+  project,
+  row,
+  onClose,
+}: {
+  project: ProjectDto;
+  row: { dataset: AssessedDatasetDto; object: AssessedObjectDto };
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const remove = useMutation({
+    mutationFn: () =>
+      api(
+        'DELETE',
+        `/api/staged-sources/${row.dataset.environmentId}/tables/${encodeURIComponent(row.object.logicalName)}`,
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
+      await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`Remove ${row.object.displayName}?`}>
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">
+          Its {row.object.recordCount.toLocaleString()} records are deleted from this workspace. To analyse
+          this data again you would upload it again.
+        </p>
+        {row.object.analysed && (
+          <Callout tone="info" title="Earlier analyses are kept">
+            The runs that profiled this dataset stay in the project’s history, so an assessment somebody has
+            already read does not change. They will refer to a dataset that is no longer listed here.
+          </Callout>
+        )}
+        {remove.error && <ErrorState error={remove.error} />}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Keep it
+          </Button>
+          <Button
+            variant="danger"
+            loading={remove.isPending}
+            onClick={() => remove.mutate()}
+            data-testid="confirm-remove"
+          >
+            Remove dataset
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

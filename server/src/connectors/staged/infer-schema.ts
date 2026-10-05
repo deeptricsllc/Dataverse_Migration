@@ -53,7 +53,17 @@ const AMBIGUOUS_DATE = /^\d{1,2}[/.]\d{1,2}[/.]\d{2,4}$/;
 /** A column name that reads like a label rather than data. */
 const NAME_LIKE = /name$|^name|title|description|label|subject/i;
 /** A column name that reads like an identifier. */
-const KEY_LIKE = /^(id|key|code|number|no|ref|reference)$|(_|\b)(id|key|code|guid|uuid)$/i;
+/*
+ * A name that claims to identify a row.
+ *
+ * The suffix list has to match the bare list, and it did not: `code` was recognised as a suffix but
+ * `number` was not, so `customer_code` was found to be an identifier and `customer_number` — the most
+ * common business key in a legacy extract, and `accountnumber` in Dataverse — was not, and the file was
+ * reported as having no reliable identifier at all. Uniqueness and never being empty are still required
+ * separately; this only decides whether the name is making the claim.
+ */
+const KEY_LIKE =
+  /^(id|key|code|number|no|ref|reference)$|(_|\b)(id|key|code|guid|uuid|number|no|ref|reference)$/i;
 
 export interface InferredColumn {
   name: string;

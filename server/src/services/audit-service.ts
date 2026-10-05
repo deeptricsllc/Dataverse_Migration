@@ -177,6 +177,7 @@ export type AuditAction =
   | 'SCHEDULE_PAUSED'
   | 'STAGED_SOURCE_IMPORTED'
   | 'STAGED_SOURCE_TABLE_REMOVED'
+  | 'DATASET_RENAMED'
   | 'DEMO_DATA_RESET';
 
 export interface AuditInput {

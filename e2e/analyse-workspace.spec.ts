@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { writeXlsx } from '../server/src/lib/xlsx';
 
 /**
  * The whole Analyse workflow, done the way a consultant does it.
@@ -61,6 +62,33 @@ const FIXTURES = (() => {
       (i) => `SO-${50000 + i},CUST-01000,${45292 + (i % 90)}`,
       150,
     ),
+  );
+  /*
+   * A workbook shaped like the ones that arrive in real engagements: three sheets of data and two that
+   * are notes. Written with the product's own writer so the file is a real .xlsx rather than a fixture
+   * that only this reader understands.
+   */
+  writeFileSync(
+    join(dir, 'CustomerMigration.xlsx'),
+    writeXlsx([
+      {
+        name: 'Customers',
+        columns: [{ header: 'customer_number' }, { header: 'company' }],
+        rows: Array.from({ length: 40 }, (_, i) => [`CUST-${2000 + i}`, `Company ${i}`]),
+      },
+      {
+        name: 'Contacts',
+        columns: [{ header: 'contact_number' }, { header: 'full_name' }],
+        rows: Array.from({ length: 30 }, (_, i) => [`CONT-${3000 + i}`, `Person ${i}`]),
+      },
+      {
+        name: 'Orders',
+        columns: [{ header: 'order_number' }, { header: 'total' }],
+        rows: Array.from({ length: 60 }, (_, i) => [`ORD-${4000 + i}`, `${i * 25}`]),
+      },
+      { name: 'Instructions', columns: [{ header: 'step' }], rows: [['Export monthly']] },
+      { name: 'Lookup Notes', columns: [{ header: 'note' }], rows: [['AU = Australia']] },
+    ]),
   );
   return dir;
 })();
@@ -167,7 +195,12 @@ test('raw files become an assessment without ever leaving the workspace', async 
   for (const file of ['Customers.csv', 'Contacts.csv']) await addDataset(page, file);
 
   await page.getByRole('tab', { name: /Datasets/ }).click();
-  await expect(page.getByTestId('dataset-card')).toHaveCount(3);
+  // Three single-table CSVs are three datasets, listed as themselves rather than as three connections.
+  await expect(page.getByTestId('dataset-row')).toHaveCount(3);
+  // Named after the data, not after the upload: `Customers.csv` is a dataset called Customers.
+  for (const name of ['Orders', 'Customers', 'Contacts']) {
+    await expect(page.getByTestId('dataset-name').filter({ hasText: name })).toHaveCount(1);
+  }
   await expect(page.getByTestId('dataset-state').first()).toHaveText('Not analysed');
 
   await page.getByRole('tab', { name: 'Overview' }).click();
@@ -192,6 +225,60 @@ test('raw files become an assessment without ever leaving the workspace', async 
     await expect(main).not.toContainText(/\bTARGET\b/);
   }
   await expect(page.getByRole('link', { name: 'Change Environments' })).toHaveCount(0);
+
+  /*
+   * --- a workbook is not a table ---------------------------------------------
+   *
+   * The sheets are chosen. Importing all five would put "Instructions" and "Lookup Notes" into the
+   * analysis as datasets, where they would be profiled, produce findings about a column called `step`,
+   * and pull down a readiness score that is supposed to describe customer data.
+   */
+  await page.getByTestId('add-dataset').click();
+  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, 'CustomerMigration.xlsx'));
+  const workbook = page.getByTestId('dataset-preview');
+  await workbook.waitFor({ timeout: 60_000 });
+  await expect(page.getByText('5 sheets detected')).toBeVisible();
+  // The identifier question is answered here, before anything is stored.
+  await expect(workbook).toContainText('customer_number looks like a possible record identifier');
+
+  await page.getByTestId('sheet-Instructions').uncheck();
+  await page.getByTestId('sheet-Lookup Notes').uncheck();
+  await expect(page.getByTestId('confirm-add-dataset')).toHaveText('Add 3 datasets');
+  await page.getByTestId('confirm-add-dataset').click();
+  await page.getByTestId('add-dataset').waitFor({ timeout: 30_000 });
+
+  // --- and each sheet is listed as the dataset it is -------------------------
+  await page.getByRole('tab', { name: /Datasets/ }).click();
+  await expect(page.getByTestId('dataset-row')).toHaveCount(6);
+  for (const sheet of ['Customers', 'Contacts', 'Orders']) {
+    await expect(page.getByTestId('dataset-row').filter({ hasText: `${sheet} sheet` })).toHaveCount(1);
+  }
+  // The two sheets that are not data were never imported, so they are not datasets.
+  await expect(page.getByRole('main')).not.toContainText('Instructions');
+  await expect(page.getByRole('main')).not.toContainText('Lookup Notes');
+
+  // --- a dataset can be renamed and removed ---------------------------------
+  const orders = page.getByTestId('dataset-row').filter({ hasText: 'Orders sheet' });
+  await orders.getByTestId('rename-dataset').click();
+  const renameDialog = page.getByRole('dialog', { name: 'Rename dataset' });
+  await renameDialog.getByLabel('Name').fill('Sales orders');
+  await page.getByTestId('confirm-rename').click();
+  await expect(page.getByTestId('dataset-row').filter({ hasText: 'Sales orders' })).toHaveCount(1);
+
+  // Six datasets is enough for a filter to be worth having, and it filters.
+  await page.getByTestId('dataset-filter').fill('Sales');
+  await expect(page.getByTestId('dataset-row')).toHaveCount(1);
+  await page.getByTestId('dataset-filter').fill('');
+
+  /*
+   * Removing one says what it costs before it does it: the rows go, and the analyses that profiled them
+   * stay, so an assessment somebody has already read does not quietly change.
+   */
+  const contacts = page.getByTestId('dataset-row').filter({ hasText: 'Contacts sheet' });
+  await contacts.getByTestId('remove-dataset').click();
+  await page.getByTestId('confirm-remove').click();
+  await expect(page.getByTestId('dataset-row')).toHaveCount(5);
 });
 
 test('a decision is recorded beside the evidence, never over it', async ({ page }) => {
@@ -200,6 +287,8 @@ test('a decision is recorded beside the evidence, never over it', async ({ page 
   await addDataset(page, 'Customers.csv');
   await runAnalysis(page);
 
+  // Adding a dataset lands on Datasets, where what you just added is. The verdict is on Overview.
+  await page.getByRole('tab', { name: 'Overview' }).click();
   const before = Number(await page.getByTestId('readiness-score').textContent());
   await page.getByRole('tab', { name: /Findings/ }).click();
 
@@ -230,7 +319,7 @@ test('a dataset added after an analysis is picked up by the next one', async ({ 
 
   await addDataset(page, 'Contacts.csv');
   await page.getByRole('tab', { name: /Datasets/ }).click();
-  await expect(page.getByTestId('dataset-card')).toHaveCount(2);
+  await expect(page.getByTestId('dataset-row')).toHaveCount(2);
 
   await page.getByRole('tab', { name: 'Overview' }).click();
   // The button says what is left to do rather than offering to redo everything.
