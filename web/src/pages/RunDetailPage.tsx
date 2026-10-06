@@ -8,7 +8,7 @@ import type {
 import { TERMINAL_RUN_STATUSES } from '@shared/domain';
 import { METRIC_DEFINITIONS, writtenByRun } from '@shared/run-metrics';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Ban, Pause, Play, RotateCw, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Ban, Pause, Play, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -35,10 +35,12 @@ import {
 } from '../components/ui';
 import { RunFailures, RunOutcome } from '../components/RunOutcome';
 import { RunFailureList } from '../components/RunFailureList';
+import { RetryControl } from '../components/RetryControl';
+import { ReconciliationPanel } from '../components/ReconciliationPanel';
 import { get, post, qs } from '../lib/api';
 import { fmtDate, fmtDuration, fmtNumber, pct } from '../lib/format';
 
-type Tab = 'progress' | 'errors' | 'records' | 'rollback';
+type Tab = 'progress' | 'errors' | 'records' | 'reconciliation' | 'rollback';
 const PAGE = 50;
 
 export function RunDetailPage() {
@@ -126,20 +128,6 @@ export function RunDetailPage() {
                 {r.cancelRequested ? 'Cancelling…' : 'Cancel'}
               </Button>
             )}
-            {['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(r.status) && (
-              <Button
-                icon={<RotateCw className="h-4 w-4" />}
-                loading={control.isPending && control.variables === 'retry'}
-                onClick={() => control.mutate('retry')}
-                // The old label said "Retry failed records", which overstated it: only the failed
-                // records are written, but the source is read again from the start. On a large table
-                // that is the difference between a moment and an hour, and somebody planning a
-                // maintenance window needs to know which.
-                title="Reads the source again and re-processes only the records that failed or were never reached. Records already migrated are skipped, never duplicated."
-              >
-                {r.status === 'CANCELLED' ? 'Resume remaining work' : 'Re-run, writing only what failed'}
-              </Button>
-            )}
             {terminal && (
               <Button
                 variant="primary"
@@ -197,6 +185,11 @@ export function RunDetailPage() {
         it still going" — a question nobody asks about a run that finished an hour ago.
       */}
       <RunOutcome run={r} onReviewFailures={() => setTab('errors')} />
+      {/*
+        Below the outcome, because the question it answers comes after "what happened". One control, whose
+        wording and whose existence both come from the server's own assessment.
+      */}
+      <RetryControl run={r} />
 
       <Card className="mb-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -330,6 +323,13 @@ export function RunDetailPage() {
             { value: 'progress', label: 'Tables' },
             { value: 'errors', label: `Errors (${r.errorCount + r.warningCount})` },
             { value: 'records', label: 'Record inventory' },
+            /*
+             * Offered only when there is something to settle. A permanent tab that is empty on every clean
+             * run teaches people to ignore it, and this is the one tab that must be noticed.
+             */
+            ...(r.unresolved > 0
+              ? [{ value: 'reconciliation' as const, label: `Reconcile (${r.unresolved})` }]
+              : []),
             { value: 'rollback', label: 'Rollback preview' },
           ]}
         />
@@ -417,6 +417,7 @@ export function RunDetailPage() {
       )}
       {tab === 'errors' && <FailuresTab run={r} />}
       {tab === 'records' && <RecordsPanel run={r} />}
+      {tab === 'reconciliation' && <ReconciliationPanel run={r} />}
       {tab === 'rollback' && <RollbackPanel runId={r.id} />}
 
       <Modal

@@ -185,3 +185,64 @@ export const EVIDENCE_LABELS: Record<ReconciliationEvidence, string> = {
   RECORDED_TARGET_ID: 'the target identifier captured before the failure',
   NONE: 'nothing that identifies this record uniquely',
 };
+
+/**
+ * What a person found when they opened the target and looked.
+ *
+ * Four answers, not two. `PRESENT` and `ABSENT` settle the record; the other two do not, and exist because
+ * a person who looked and could not tell has to be able to say that. Forcing uncertain evidence into
+ * success or failure is the same mistake as a run reporting a clean result because nothing failed: it
+ * produces a confident record of something nobody established.
+ */
+export type ReconcileFinding =
+  /** The record is in the target, and its identifier there is known. */
+  | 'PRESENT'
+  /** The record is not in the target, so the write never committed. A plain failure from here on. */
+  | 'ABSENT'
+  /** Somebody looked and could not tell. The record stays unresolved and the retry stays refused. */
+  | 'UNCLEAR'
+  /**
+   * More than one record in the target matches.
+   *
+   * A finding in its own right: a duplicate is already there. Settling it means deciding which record is
+   * the right one, or removing the others, which is work in the target rather than an answer to record here.
+   */
+  | 'MULTIPLE';
+
+export const RECONCILE_FINDINGS: readonly ReconcileFinding[] = ['PRESENT', 'ABSENT', 'UNCLEAR', 'MULTIPLE'];
+
+/** How each finding reads in the evidence the reconciliation leaves behind. */
+export const RECONCILE_FINDING_NOTES: Record<ReconcileFinding, string> = {
+  PRESENT: 'Found in the target',
+  ABSENT: 'Not in the target',
+  UNCLEAR: 'Looked in the target; could not tell',
+  MULTIPLE: 'More than one matching record in the target',
+};
+
+/** What each finding settles, and what it leaves outstanding. */
+export const RECONCILE_FINDING_LABELS: Record<
+  ReconcileFinding,
+  { label: string; consequence: string; settles: boolean }
+> = {
+  PRESENT: {
+    label: 'It is in the target',
+    consequence: 'The record counts as written by this run. Another attempt will not write it again.',
+    settles: true,
+  },
+  ABSENT: {
+    label: 'It is not in the target',
+    consequence: 'The write never happened. Another attempt will write this record.',
+    settles: true,
+  },
+  UNCLEAR: {
+    label: 'I cannot tell',
+    consequence: 'The record stays unresolved. A retry stays refused, because it could write a second copy.',
+    settles: false,
+  },
+  MULTIPLE: {
+    label: 'More than one record matches',
+    consequence:
+      'The record stays unresolved. Decide which target record is correct, or remove the others, then look again.',
+    settles: false,
+  },
+};

@@ -793,6 +793,16 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return s.runs.errors(req.ctx, id, { ...q, includeResolved: q.includeResolved === 'true' });
   });
   /**
+   * Whether another attempt is safe, and what it would act on.
+   *
+   * Read before the retry control is offered. The server refuses an unsafe retry regardless of what the
+   * page shows, and this is the same decision reported rather than a second one.
+   */
+  app.get('/api/runs/:id/retry-safety', async (req) => {
+    const { id } = idParams.parse(req.params);
+    return s.runs.retrySafety(req.ctx, id);
+  });
+  /**
    * One record: what it is, what went wrong, and which attempt recorded it.
    *
    * The end of the drilldown that starts at the run. The table is in the path because a source identifier
@@ -927,7 +937,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
             z.object({
               logicalName: tableName,
               sourceId: z.string().min(1).max(400),
-              found: z.enum(['PRESENT', 'ABSENT']),
+              found: z.enum(['PRESENT', 'ABSENT', 'UNCLEAR', 'MULTIPLE']),
               targetId: z.string().max(400).nullable().optional(),
               note: z.string().min(5).max(1000),
             }),

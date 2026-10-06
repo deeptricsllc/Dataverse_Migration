@@ -1,5 +1,11 @@
 import { and, asc, count, countDistinct, desc, eq, gt, inArray, sql } from 'drizzle-orm';
-import { isUnresolved, needsHumanReconciliation, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
+import {
+  isUnresolved,
+  needsHumanReconciliation,
+  RECONCILE_FINDING_NOTES,
+  UNRESOLVED_WRITE_STATES,
+  type ReconcileFinding,
+} from '../../../shared/write-state';
 import { refreshRunCounters } from './run-counters';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
@@ -14,6 +20,7 @@ import {
   type RecordMapDto,
   type RecordOutcome,
   type RollbackPreviewDto,
+  type RetrySafetyDto,
   type RunRecordDetailDto,
   type RunFailureSummaryDto,
   type RunTrigger,
@@ -47,6 +54,25 @@ import type { RunPlanSnapshot } from './run-snapshot';
 import { envRef } from './env-ref';
 
 const ACTIVE = ['QUEUED', 'RUNNING', 'PAUSED'];
+
+/**
+ * Run states a further attempt applies to.
+ *
+ * `COMPLETED_WITH_WARNINGS` is here, and that is the point of the status existing. A run that dropped
+ * three hundred references because the referenced table was not in the plan is fixed by adding the table
+ * and running again; the second pass picks up every record it left incomplete. Refusing a retry would
+ * leave a fresh migration over data already in the target as the only way forward.
+ *
+ * Read by the retry gate and by the assessment the UI shows, so the button and the server cannot disagree
+ * about what is permitted.
+ */
+const RETRYABLE_STATUSES: readonly string[] = [
+  'COMPLETED_WITH_WARNINGS',
+  'COMPLETED_WITH_ERRORS',
+  'FAILED',
+  'CANCELLED',
+  'NEEDS_RECONCILIATION',
+];
 
 export class MigrationRunService {
   constructor(
@@ -411,22 +437,7 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
       await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RETRY');
-      /*
-       * `COMPLETED_WITH_WARNINGS` is retryable, and that is the point of the status existing.
-       *
-       * A run that dropped three hundred references because the referenced table was not in the plan is
-       * fixed by adding the table and running again. The second pass picks up every record it left
-       * incomplete. A retry that was refused here would leave the only way forward as a fresh migration
-       * over data that is already in the target.
-       */
-      const retryable = [
-        'COMPLETED_WITH_WARNINGS',
-        'COMPLETED_WITH_ERRORS',
-        'FAILED',
-        'CANCELLED',
-        'NEEDS_RECONCILIATION',
-      ];
-      if (!retryable.includes(run.status)) {
+      if (!RETRYABLE_STATUSES.includes(run.status)) {
         throw conflict(
           `Retry is available for failed, cancelled or incomplete runs (current: ${run.status})`,
         );
@@ -499,8 +510,17 @@ export class MigrationRunService {
     resolutions: {
       logicalName: string;
       sourceId: string;
-      /** PRESENT: it is in the target. ABSENT: it is not, so the write never happened. */
-      found: 'PRESENT' | 'ABSENT';
+      /**
+       * What the person found when they looked in the target.
+       *
+       * Four answers, because a person who opened the target and could not tell has to be able to say so.
+       * `PRESENT` and `ABSENT` were the only two, and a binary forces uncertain evidence into a claim —
+       * which is the same defect as a run reporting a clean result because nothing failed.
+       *
+       * `UNCLEAR` and `MULTIPLE` leave the record unresolved on purpose. The note is kept, so the next
+       * person starts from what the last one saw rather than from nothing.
+       */
+      found: ReconcileFinding;
       /** The target's identifier, required when the record is present. */
       targetId?: string | null;
       /** How they determined it, in their words, for the evidence package. */
@@ -530,19 +550,34 @@ export class MigrationRunService {
         );
       if (!row) throw badRequest(`${r.logicalName} ${r.sourceId} is not a record of this run`);
       if (!isUnresolved(row.writeState)) continue; // already settled; saying so twice changes nothing
+
+      /*
+       * Only an answer that settles the record changes its state.
+       *
+       * PRESENT means the write did happen, so the record was created by this run and is now known.
+       * ABSENT means it did not, so the record is a plain failure the next attempt will try again.
+       *
+       * UNCLEAR and MULTIPLE settle nothing, and must not pretend to. The record keeps its write state,
+       * the run stays in reconciliation, and the retry stays refused — which is right, because the thing
+       * that made a retry dangerous is still true. What is recorded is that somebody looked, and what
+       * they saw.
+       */
+      const settles = r.found === 'PRESENT' || r.found === 'ABSENT';
       await this.db
         .update(migrationRecordMaps)
         .set({
-          // PRESENT means the write did happen, so the record was created by this run and is now known.
-          // ABSENT means it did not, so the record is a plain failure the next attempt will try again.
-          outcome: r.found === 'PRESENT' ? 'CREATED' : 'FAILED',
-          writeState: r.found === 'PRESENT' ? 'CONFIRMED' : null,
-          targetId: r.found === 'PRESENT' ? (r.targetId ?? null) : null,
-          reconcileNote: `Resolved by ${ctx.displayName}: ${r.found === 'PRESENT' ? 'found in the target' : 'not in the target'}. ${r.note}`,
+          ...(settles
+            ? {
+                outcome: r.found === 'PRESENT' ? ('CREATED' as const) : ('FAILED' as const),
+                writeState: r.found === 'PRESENT' ? ('CONFIRMED' as const) : null,
+                targetId: r.found === 'PRESENT' ? (r.targetId ?? null) : null,
+              }
+            : {}),
+          reconcileNote: `${RECONCILE_FINDING_NOTES[r.found]} by ${ctx.displayName}. ${r.note}`,
           updatedAt: new Date(),
         })
         .where(eq(migrationRecordMaps.id, row.id));
-      resolved++;
+      if (settles) resolved++;
     }
 
     // The counters are derived, so they are rebuilt rather than adjusted.
@@ -560,6 +595,10 @@ export class MigrationRunService {
         resolved,
         present: resolutions.filter((r) => r.found === 'PRESENT').length,
         absent: resolutions.filter((r) => r.found === 'ABSENT').length,
+        // Recorded because an audit trail that counted only the settled ones would show a reconciliation
+        // that achieved nothing as a reconciliation that never happened.
+        unclear: resolutions.filter((r) => r.found === 'UNCLEAR').length,
+        multiple: resolutions.filter((r) => r.found === 'MULTIPLE').length,
       },
     });
 
@@ -994,6 +1033,173 @@ export class MigrationRunService {
       runAttempt: e.runAttempt,
       targetTable: targets.get(e.logicalName) ?? null,
       category: describeFailureCode(e.errorCode),
+    };
+  }
+
+  /**
+   * Whether another attempt of this run is safe, and exactly what it would act on.
+   *
+   * Eight questions decide this, and none of them are shown. A person looking at a failed run is asking
+   * one thing — can I run this again without making it worse — and a screen that answered by listing the
+   * considerations would be making them do the reasoning.
+   *
+   * What is asked, in the order that decides the answer:
+   *
+   *   1. Is the run in a state a further attempt applies to at all?
+   *   2. Is another run holding this target?
+   *   3. Is any record in doubt with nothing in the target that could identify it?
+   *   4. Is any record in doubt with something that could — a preserved id, an alternate key?
+   *   5. Which failures did the engine record as able to succeed on another attempt?
+   *   6. Which did it record as unable to?
+   *   7. Which records are written but carrying less than their source record did?
+   *   8. Is there anything left for an attempt to do?
+   *
+   * Three and four are the ones that matter. A record that may be in the target with nothing to identify
+   * it is re-created by the next attempt, which is the one failure the whole write-state protocol exists
+   * to prevent — so the answer is reconciliation, not a retry, and the server refuses it either way.
+   */
+  async retrySafety(ctx: Pick<RequestContext, 'organizationId'>, runId: string): Promise<RetrySafetyDto> {
+    const run = await this.loadRun(ctx.organizationId, runId);
+
+    // 3 and 4: records in doubt, split by whether anything could settle them without a person.
+    const inDoubt = await this.db
+      .select({
+        writeState: migrationRecordMaps.writeState,
+        evidence: migrationRecordMaps.reconcileEvidence,
+      })
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          inArray(migrationRecordMaps.writeState, [...UNRESOLVED_WRITE_STATES]),
+        ),
+      );
+    const needsPerson = inDoubt.filter((r) => needsHumanReconciliation(r.writeState, r.evidence)).length;
+    const settledByAttempt = inDoubt.length - needsPerson;
+
+    /*
+     * 5 and 6: failures, counted per record rather than per row. One record can carry several errors, and
+     * a retry acts on records — a count of rows would promise to retry more records than exist.
+     */
+    const failureGroups = await this.db
+      .select({
+        retryable: migrationErrors.retryable,
+        records: countDistinct(migrationErrors.sourceRecordId),
+      })
+      .from(migrationErrors)
+      .where(
+        and(
+          eq(migrationErrors.runId, runId),
+          eq(migrationErrors.severity, 'ERROR'),
+          eq(migrationErrors.resolved, false),
+        ),
+      )
+      .groupBy(migrationErrors.retryable);
+    const countOf = (retryable: boolean) =>
+      Number(failureGroups.find((g) => g.retryable === retryable)?.records ?? 0);
+    const retryableFailures = countOf(true);
+    const permanentFailures = countOf(false);
+
+    // 7: records written with a reference omitted. The deferred pass of a further attempt can set these.
+    const [omitted] = await this.db
+      .select({ records: countDistinct(migrationErrors.sourceRecordId) })
+      .from(migrationErrors)
+      .where(
+        and(
+          eq(migrationErrors.runId, runId),
+          eq(migrationErrors.severity, 'WARNING'),
+          eq(migrationErrors.resolved, false),
+          inArray(migrationErrors.errorCode, [...MATERIAL_WARNING_CODES]),
+        ),
+      );
+    const omittedReferences = Number(omitted?.records ?? 0);
+
+    const safe = retryableFailures + omittedReferences + settledByAttempt;
+    const excluded: RetrySafetyDto['excluded'] = [];
+    if (permanentFailures > 0) {
+      excluded.push({
+        reason: 'The engine recorded these failures as unable to succeed on another attempt.',
+        records: permanentFailures,
+      });
+    }
+    if (needsPerson > 0) {
+      excluded.push({
+        reason: 'Nothing in the target can identify these records. Somebody has to look.',
+        records: needsPerson,
+      });
+    }
+
+    const base = { runId, attempt: run.attempt, safe, excluded, needsReconciliation: needsPerson };
+
+    /*
+     * 8 first, for a run that is finished and has nothing waiting.
+     *
+     * Asked before the status, because the two answers read very differently and only one of them is true
+     * of a run that carried everything. `COMPLETED` is not a retryable status, so a check on the status
+     * alone told somebody that a further attempt "does not apply to a run in this state" — which is
+     * accurate and sounds like a refusal. There is nothing to refuse.
+     */
+    if (safe === 0 && needsPerson === 0 && !ACTIVE.includes(run.status)) {
+      return {
+        ...base,
+        state: 'NOTHING_TO_RETRY',
+        reason: 'Nothing in this run is waiting for another attempt.',
+        allowed: false,
+      };
+    }
+
+    // 1: a run that is still going, or one no attempt applies to.
+    if (!RETRYABLE_STATUSES.includes(run.status)) {
+      return {
+        ...base,
+        state: 'RETRY_BLOCKED',
+        reason: ACTIVE.includes(run.status)
+          ? 'This run has not finished. A further attempt starts after it does.'
+          : 'A further attempt does not apply to a run in this state.',
+        allowed: false,
+      };
+    }
+
+    // 2: one migration at a time per target, which the gate enforces and this must not contradict.
+    const [active] = await this.db
+      .select({ id: migrationRuns.id })
+      .from(migrationRuns)
+      .where(
+        and(
+          eq(migrationRuns.targetEnvironmentId, run.targetEnvironmentId),
+          inArray(migrationRuns.status, ACTIVE),
+        ),
+      );
+    if (active) {
+      return {
+        ...base,
+        state: 'RETRY_BLOCKED',
+        reason: 'Another migration is running against this target. One runs at a time.',
+        allowed: false,
+      };
+    }
+
+    // 3: the state that makes a retry dangerous rather than merely useless.
+    if (needsPerson > 0) {
+      return {
+        ...base,
+        state: 'RECONCILE_FIRST',
+        reason:
+          `${needsPerson.toLocaleString()} records may be in the target with nothing that identifies them. ` +
+          'Another attempt would write them again. Reconcile them first.',
+        allowed: false,
+      };
+    }
+
+    return {
+      ...base,
+      state: 'SAFE_TO_RETRY',
+      reason:
+        `Attempt ${run.attempt + 1} would act on ${safe.toLocaleString()} records. ` +
+        (excluded.length
+          ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded.`
+          : 'None are excluded.'),
+      allowed: true,
     };
   }
 

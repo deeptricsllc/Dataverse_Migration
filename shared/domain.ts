@@ -1502,6 +1502,48 @@ export interface MigrationErrorDto {
 }
 
 /**
+ * Whether another attempt of this run is safe, and what it would act on.
+ *
+ * Answered before the button is offered rather than after it is pressed. A retry is the one action in this
+ * product that can create a second copy of a customer's record, so "press it and find out" is not an
+ * acceptable interaction: the assessment is shown, the count is exact, and where it is not safe there is no
+ * button at all.
+ *
+ * Every number here is derived from what the engine recorded. See `docs/MIGRATION_OUTCOME_SEMANTICS.md`
+ * and `shared/write-state.ts`.
+ */
+export interface RetrySafetyDto {
+  runId: string;
+  attempt: number;
+  state: RetrySafetyState;
+  /** State, then evidence, then consequence. One sentence, for the reader who presses the button. */
+  reason: string;
+  /** Records another attempt would act on. Zero means there is nothing to retry, not that it is unsafe. */
+  safe: number;
+  /** Records another attempt would not touch, with the reason for each group. */
+  excluded: { reason: string; records: number }[];
+  /** Records that cannot be settled by any number of attempts, and need a person to look in the target. */
+  needsReconciliation: number;
+  /** True only when the server would accept a retry right now. The button follows this and nothing else. */
+  allowed: boolean;
+}
+
+export type RetrySafetyState =
+  /** Another attempt can act on records, and no record is in a state where repeating could duplicate. */
+  | 'SAFE_TO_RETRY'
+  /**
+   * At least one record may be in the target with nothing to identify it.
+   *
+   * Another attempt would re-create it. The way forward is reconciliation, not a retry, and the server
+   * refuses a retry in this state as well.
+   */
+  | 'RECONCILE_FIRST'
+  /** The run is not in a state a retry applies to — it is still going, or another run holds the target. */
+  | 'RETRY_BLOCKED'
+  /** The run finished and there is nothing a further attempt would do. */
+  | 'NOTHING_TO_RETRY';
+
+/**
  * One record, and everything recorded about what happened to it.
  *
  * The answer to the question a consultant asks about a single row: what is this record, what went wrong,
