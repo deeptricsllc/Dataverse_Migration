@@ -998,6 +998,19 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     return result;
   });
 
+  /**
+   * The failure list as a file, whole, and honouring the filters it was taken from.
+   *
+   * Streamed rather than held, for the reason `streamCsv` sets out: this is one row per failed record, so it
+   * scales with the migration, and a capped export answers a different question from the one somebody asked.
+   * It took the same filters as the list, which is the only way a file and the screen it came from can
+   * describe the same problem — the cause, the attempt and the single-record search were accepted by the
+   * list and silently ignored here, so an export filtered to one record returned every row in the run.
+   *
+   * Columns are the fields the engine records. Nothing is derived into a column that would read as recorded
+   * evidence: an empty cell means the value was not recorded, and the cause's own label is included because
+   * it is this product's definition of the code rather than a guess about it.
+   */
   app.get('/api/runs/:id/errors.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const q = z
@@ -1005,46 +1018,56 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         entity: tableName.optional(),
         kind: z.enum(['all', 'retryable', 'permanent']).optional(),
         severity: z.enum(['ERROR', 'WARNING']).optional(),
+        code: z.string().min(1).max(120).optional(),
+        attempt: z.coerce.number().int().min(1).max(1000).optional(),
+        sourceRecordId: z.string().min(1).max(200).optional(),
         includeResolved: z.enum(['true', 'false']).optional(),
       })
       .parse(req.query);
     const run = await s.runs.get(req.ctx, id);
-    const { items, total } = await s.runs.errors(req.ctx, id, {
-      ...q,
-      includeResolved: q.includeResolved === 'true',
-      limit: 50_000,
-      offset: 0,
-    });
-    return sendCsv(
+    const filter = { ...q, includeResolved: q.includeResolved === 'true' };
+    async function* pages(): AsyncIterable<CsvValue[][]> {
+      for await (const page of s.runs.errorPages(req.ctx, id, filter)) {
+        yield page.map((e) => [
+          e.entity,
+          e.targetTable,
+          e.sourceRecordId,
+          e.operation,
+          e.field,
+          e.severity,
+          e.errorCode,
+          e.category.known ? e.category.label : null,
+          e.message,
+          e.retryable,
+          e.httpStatus,
+          e.runAttempt,
+          e.attempts,
+          e.resolved,
+          e.createdAt,
+        ]);
+      }
+    }
+    return streamCsv(
       reply,
       csvFileName(['migration-errors', run.planName]),
       [
-        'Table',
+        'Dataset',
+        'Target table',
         'Source record id',
         'Operation',
         'Field',
         'Severity',
         'Error code',
-        'Message',
-        'Retryable',
-        'Attempts',
+        'Cause',
+        'Message from the target',
+        'Another attempt could succeed',
+        'Target response',
+        'Attempt',
+        'Attempts on this record',
         'Resolved',
-        'Occurred at',
+        'Recorded at',
       ],
-      items.map((e) => [
-        e.entity,
-        e.sourceRecordId,
-        e.operation,
-        e.field,
-        e.severity,
-        e.errorCode,
-        e.message,
-        e.retryable,
-        e.attempts,
-        e.resolved,
-        e.createdAt,
-      ]),
-      total,
+      pages(),
     );
   });
 

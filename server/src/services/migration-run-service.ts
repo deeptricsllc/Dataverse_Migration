@@ -13,6 +13,7 @@ import {
   DEFAULT_PLAN_OPTIONS,
   needsTypedConfirmation,
   TERMINAL_RUN_STATUSES,
+  type ErrorFilter,
   type MigrationErrorDto,
   type MigrationRunDto,
   type MigrationRunListItemDto,
@@ -954,6 +955,59 @@ export class MigrationRunService {
     };
   }
 
+  /**
+   * The filter for a failure list, built once.
+   *
+   * Shared by the paged list and by the export, because an export that honoured a different set of filters
+   * from the list it was taken from is the most quietly damaging thing this screen could do: the file looks
+   * right and describes a different problem from the one the person was working on.
+   */
+  private errorConditions(runId: string, filter: ErrorFilter) {
+    const conditions = [eq(migrationErrors.runId, runId)];
+    if (filter.entity) conditions.push(eq(migrationErrors.logicalName, filter.entity));
+    if (filter.kind === 'retryable') conditions.push(eq(migrationErrors.retryable, true));
+    if (filter.kind === 'permanent') conditions.push(eq(migrationErrors.retryable, false));
+    if (filter.severity) conditions.push(eq(migrationErrors.severity, filter.severity));
+    if (filter.code) conditions.push(eq(migrationErrors.errorCode, filter.code));
+    if (filter.attempt !== undefined) conditions.push(eq(migrationErrors.runAttempt, filter.attempt));
+    if (filter.sourceRecordId) conditions.push(eq(migrationErrors.sourceRecordId, filter.sourceRecordId));
+    if (!filter.includeResolved) conditions.push(eq(migrationErrors.resolved, false));
+    return conditions;
+  }
+
+  /**
+   * The same failures, as pages, for an export that must not be capped.
+   *
+   * Walked by keyset on the primary key rather than by offset: `OFFSET 2000000` makes the database count two
+   * million rows it then discards, and the last page of a large export is the slowest one exactly when it
+   * matters most. A capped export answers a different question from the one somebody asked, and a TRUNCATED
+   * line at the bottom does not make it the right answer.
+   */
+  async *errorPages(
+    ctx: Pick<RequestContext, 'organizationId'>,
+    runId: string,
+    filter: ErrorFilter,
+    pageSize = 1_000,
+  ): AsyncGenerator<MigrationErrorDto[]> {
+    await this.loadRun(ctx.organizationId, runId);
+    const size = Math.max(1, Math.min(pageSize, 5_000));
+    const scope = and(...this.errorConditions(runId, filter))!;
+    const targets = await this.targetTables(runId);
+    let cursor: string | null = null;
+    for (;;) {
+      const rows = await this.db
+        .select()
+        .from(migrationErrors)
+        .where(cursor === null ? scope : and(scope, gt(migrationErrors.id, cursor)))
+        .orderBy(asc(migrationErrors.id))
+        .limit(size);
+      if (rows.length === 0) return;
+      yield rows.map((e) => this.toErrorDto(e, targets));
+      cursor = rows[rows.length - 1]!.id;
+      if (rows.length < size) return;
+    }
+  }
+
   async errors(
     ctx: RequestContext,
     runId: string,
@@ -973,15 +1027,7 @@ export class MigrationRunService {
     },
   ): Promise<{ items: MigrationErrorDto[]; total: number }> {
     await this.loadRun(ctx.organizationId, runId);
-    const conditions = [eq(migrationErrors.runId, runId)];
-    if (filter.entity) conditions.push(eq(migrationErrors.logicalName, filter.entity));
-    if (filter.kind === 'retryable') conditions.push(eq(migrationErrors.retryable, true));
-    if (filter.kind === 'permanent') conditions.push(eq(migrationErrors.retryable, false));
-    if (filter.severity) conditions.push(eq(migrationErrors.severity, filter.severity));
-    if (filter.code) conditions.push(eq(migrationErrors.errorCode, filter.code));
-    if (filter.attempt !== undefined) conditions.push(eq(migrationErrors.runAttempt, filter.attempt));
-    if (filter.sourceRecordId) conditions.push(eq(migrationErrors.sourceRecordId, filter.sourceRecordId));
-    if (!filter.includeResolved) conditions.push(eq(migrationErrors.resolved, false));
+    const conditions = this.errorConditions(runId, filter);
     const [total] = await this.db
       .select({ n: count() })
       .from(migrationErrors)

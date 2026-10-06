@@ -1502,6 +1502,25 @@ export interface MigrationErrorDto {
 }
 
 /**
+ * Which failures a list or an export is about.
+ *
+ * One shape, used by both, so an export cannot honour a different set of filters from the list it was taken
+ * from.
+ */
+export interface ErrorFilter {
+  entity?: string;
+  kind?: 'all' | 'retryable' | 'permanent';
+  severity?: 'ERROR' | 'WARNING';
+  /** One recorded cause, matched exactly. */
+  code?: string;
+  /** One attempt of this run. Rows with no recorded attempt are excluded, not guessed at. */
+  attempt?: number;
+  /** One source record, matched exactly: a contains-search over millions of rows is a scan. */
+  sourceRecordId?: string;
+  includeResolved?: boolean;
+}
+
+/**
  * Whether another attempt of this run is safe, and what it would act on.
  *
  * Answered before the button is offered rather than after it is pressed. A retry is the one action in this
