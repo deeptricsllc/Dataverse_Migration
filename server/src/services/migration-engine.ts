@@ -86,10 +86,29 @@ interface RecordResult {
   errors: RecordError[];
 }
 
+/**
+ * What the engine was doing when it recorded this issue.
+ *
+ * Every planner issue except a value conversion used to be stamped `RESOLVE_PRINCIPAL`, which made the
+ * operation column say the engine was resolving a record's owner while it was resolving a table reference —
+ * a confident statement about work that did not happen, in a column a reader takes as recorded fact. It also
+ * reached the failure screen, which reads the operation to decide where a correction is made, and offered
+ * "Map the owner" for a missing account.
+ *
+ * Derived from the code, which is the thing that actually knows.
+ */
+function operationOf(code: string): RecordError['operation'] {
+  if (code.startsWith('LOOKUP_')) return 'RESOLVE_LOOKUP';
+  if (code.startsWith('PRINCIPAL_')) return 'RESOLVE_PRINCIPAL';
+  if (code === 'ALREADY_EXISTS') return 'MATCH';
+  // Everything else is something that went wrong while preparing the record for the write.
+  return 'CREATE';
+}
+
 /** Issues the planner found while preparing a record become per-record error rows. */
 function toRecordErrors(prepared: PreparedRecord): RecordError[] {
   return prepared.issues.map((i) => ({
-    operation: i.code === 'VALUE_CONVERSION' ? ('CREATE' as const) : ('RESOLVE_PRINCIPAL' as const),
+    operation: operationOf(i.code),
     severity: i.severity,
     code: i.code,
     field: i.field ?? null,

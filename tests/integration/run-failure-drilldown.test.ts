@@ -69,6 +69,24 @@ describe('a failure can be followed to one record', () => {
     expect(run.projectId).toBeTruthy();
   });
 
+  /**
+   * The operation says what the engine was doing.
+   *
+   * Found on deployed QA: every planner issue except a value conversion was stamped `RESOLVE_PRINCIPAL`, so
+   * the column that records what the engine was doing said it was resolving a record's owner while it was
+   * resolving a table reference. The failure screen reads that column to decide where a correction is made,
+   * and offered "Map the owner" for a missing account.
+   */
+  it('records what the engine was doing, not one label for everything', async () => {
+    const page = await errors('?code=LOOKUP_UNRESOLVED');
+    expect(page.total).toBeGreaterThan(0);
+    for (const e of page.items) {
+      expect(e.operation, 'a lookup failure is a lookup being resolved').toBe('RESOLVE_LOOKUP');
+    }
+    // And the correction follows from it rather than from the code alone.
+    expect(correctionFor(page.items[0]!.errorCode, page.items[0]!.operation)!.target).toBe('SOURCE_DATA');
+  });
+
   /** Step two: the run's datasets and the causes recorded in each. */
   it('groups the causes by dataset', async () => {
     const summary = await api.get<RunFailureSummaryDto>(`/api/runs/${run.id}/failures`);
