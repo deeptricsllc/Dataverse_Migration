@@ -233,7 +233,8 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page.getByTestId('run-entity-account')).toBeVisible();
   await expect(page.getByText('Completed with errors').first()).toBeVisible({ timeout: 180_000 });
   await expect(page.getByTestId('overall-percent')).toContainText('%');
-  await page.getByRole('tab', { name: /Errors/ }).click();
+  // The tab is named for what is in it: failures, warnings, or both.
+  await page.getByRole('tab', { name: /Failures|Warnings/ }).click();
   await expect(page.getByTestId('run-error-row').first()).toBeVisible();
   await expect(page.getByRole('link', { name: 'Export CSV' }).first()).toBeVisible();
   await page.getByRole('tab', { name: 'Rollback preview' }).click();

@@ -226,6 +226,24 @@ describe('a failure can be followed to one record', () => {
   });
 
   /**
+   * The same code, a different problem, a different place.
+   *
+   * Found on deployed QA. `LOOKUP_UNRESOLVED` is recorded both for a record's own reference and for its
+   * owner, and the failure whose operation was `RESOLVE_PRINCIPAL` offered "Add the referenced table" —
+   * sending the reader to the datasets, where nothing would change the owner. A button that leads somewhere
+   * unrelated is the fake action this product is not allowed to show, and the code alone could not tell.
+   */
+  it('sends an unmapped owner to owner mapping, not to the datasets', () => {
+    expect(correctionFor('LOOKUP_UNRESOLVED', 'RESOLVE_PRINCIPAL')).toEqual({
+      target: 'OWNERS',
+      label: 'Map the owner',
+    });
+    expect(correctionFor('LOOKUP_UNRESOLVED', 'CREATE')!.target, 'and the reference case is unchanged').toBe(
+      'SOURCE_DATA',
+    );
+  });
+
+  /**
    * And offers nothing where nothing in the configuration is wrong.
    *
    * A button that leads to an unrelated screen costs the person the trip and teaches them not to trust the

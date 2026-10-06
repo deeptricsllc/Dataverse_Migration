@@ -36,15 +36,24 @@ export function RetryControl({ run }: { run: MigrationRunDto }) {
       </Card>
     );
   const s = safety.data!;
-  // Nothing is waiting for another attempt. No control, and no sentence about safety either: a run that
-  // carried everything is not a run somebody is deciding whether to retry.
-  if (s.state === 'NOTHING_TO_RETRY') return null;
+  /*
+   * Hidden only when there is genuinely nothing to say.
+   *
+   * A run that carried everything is not a run somebody is deciding whether to retry, so it gets no card.
+   * But `NOTHING_TO_RETRY` also covers the run this gate exists for — every record written, two hundred and
+   * thirty-five references dropped, and no further attempt that can set them — and there the exclusions
+   * carry the only sentence on the page that says what would actually fix it. Hiding the card there hid the
+   * correction.
+   */
+  if (s.state === 'NOTHING_TO_RETRY' && s.excluded.length === 0) return null;
 
   return (
     <Card className="mb-5" data-testid="retry-control">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Next attempt</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {s.state === 'NOTHING_TO_RETRY' ? 'What another attempt would not fix' : 'Next attempt'}
+          </p>
           <p className="mt-0.5 text-sm text-slate-900" data-testid="retry-reason">
             {s.reason}
           </p>

@@ -269,7 +269,12 @@ function FailureDetail({ run, error }: { run: MigrationRunDto; error: MigrationE
       ),
     enabled: !!error.sourceRecordId,
   });
-  const correction = correctionFor(error.errorCode);
+  /*
+   * The operation matters as much as the code. `LOOKUP_UNRESOLVED` on a record's own reference is fixed in
+   * the datasets; the same code on the record's owner is fixed in owner mapping, and offering the datasets
+   * for it sends somebody to a screen that cannot help.
+   */
+  const correction = correctionFor(error.errorCode, error.operation);
 
   return (
     <div className="space-y-4" data-testid="failure-detail">

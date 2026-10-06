@@ -266,11 +266,34 @@ const CORRECTIONS: Record<string, { target: CorrectionTarget; label: string }> =
 };
 
 /**
+ * Corrections that the operation decides rather than the code.
+ *
+ * `LOOKUP_UNRESOLVED` is recorded for two different problems. On a record's own reference it means a table is
+ * missing from the migration, and the fix is in the datasets. On `RESOLVE_PRINCIPAL` it means the record's
+ * *owner* has no mapping to a user or team in the target, and the fix is in owner mapping — nothing in the
+ * datasets will change it.
+ *
+ * Found on deployed QA: a failure whose operation was `RESOLVE_PRINCIPAL` offered "Add the referenced table"
+ * and sent the reader to a screen that could not fix it. That is the fake action this product is not allowed
+ * to show, and it was fake precisely because the code alone is not enough to decide.
+ */
+const CORRECTIONS_BY_OPERATION: Partial<Record<string, { target: CorrectionTarget; label: string }>> = {
+  RESOLVE_PRINCIPAL: { target: 'OWNERS', label: 'Map the owner' },
+};
+
+/**
  * Where this failure is fixed, or null when this product has no place that fixes it.
  *
  * Null is a real answer, and it is the one for a throttled request, a timeout, a lost connection and a
  * server error: nothing in the configuration is wrong, so there is nothing to open.
+ *
+ * The operation is taken into account where it changes the answer. Passing it is optional only so that a
+ * caller who genuinely has no operation to give is not forced to invent one.
  */
-export function correctionFor(code: string): { target: CorrectionTarget; label: string } | null {
+export function correctionFor(
+  code: string,
+  operation?: string | null,
+): { target: CorrectionTarget; label: string } | null {
+  if (operation && CORRECTIONS_BY_OPERATION[operation]) return CORRECTIONS_BY_OPERATION[operation]!;
   return CORRECTIONS[code.split(':')[0] ?? code] ?? null;
 }

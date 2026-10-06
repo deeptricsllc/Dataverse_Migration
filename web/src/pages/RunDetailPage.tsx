@@ -236,51 +236,58 @@ export function RunDetailPage() {
             {overall}%
           </span>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-          <Stat label="Tables" value={`${entitiesDone}/${r.entities.length}`} />
-          <Stat
-            label={METRIC_DEFINITIONS.processed.label}
-            value={fmtNumber(r.processed)}
-            hint={`of ${fmtNumber(r.total)}`}
-          />
-          {/*
+        {/*
+          While it is still going. Once it has finished, the result card above is the summary, and a second
+          panel restating the same counts in different words — `Warnings 235` beside `References omitted
+          235` — makes a reader distrust both. The per-table breakdown is the tab directly below this.
+        */}
+        {active && (
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <Stat label="Tables" value={`${entitiesDone}/${r.entities.length}`} />
+            <Stat
+              label={METRIC_DEFINITIONS.processed.label}
+              value={fmtNumber(r.processed)}
+              hint={`of ${fmtNumber(r.total)}`}
+            />
+            {/*
             The figure the validation report leads with, led with here too. The two screens used to
             describe the same run with different arithmetic, so the number that answers "did
             anything actually move" now comes from one place and appears on both.
           */}
-          <Stat
-            label={METRIC_DEFINITIONS.written.label}
-            tone={written ? 'green' : 'slate'}
-            value={fmtNumber(written)}
-            hint={written ? 'created + updated' : 'nothing was written to the target'}
-          />
-          <Stat label={METRIC_DEFINITIONS.created.label} tone="green" value={fmtNumber(r.created)} />
-          <Stat label={METRIC_DEFINITIONS.updated.label} tone="blue" value={fmtNumber(r.updated)} />
-          <Stat
-            label={METRIC_DEFINITIONS.unchanged.label}
-            tone="slate"
-            value={fmtNumber(r.unchanged)}
-            hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : 'already matched'}
-          />
-          <Stat
-            label={METRIC_DEFINITIONS.skipped.label}
-            tone="slate"
-            value={fmtNumber(r.skipped)}
-            hint={r.skipped ? 'already in the target, left alone' : undefined}
-          />
-          <Stat
-            label="Failed"
-            tone={r.failed ? 'red' : 'default'}
-            value={fmtNumber(r.failed)}
-            onClick={() => setTab('errors')}
-          />
-          <Stat
-            label="Warnings"
-            tone={r.warningCount ? 'amber' : 'default'}
-            value={fmtNumber(r.warningCount)}
-            onClick={() => setTab('errors')}
-          />
-        </div>
+            <Stat
+              label={METRIC_DEFINITIONS.written.label}
+              tone={written ? 'green' : 'slate'}
+              value={fmtNumber(written)}
+              hint={written ? 'created + updated' : 'nothing was written to the target'}
+            />
+            <Stat label={METRIC_DEFINITIONS.created.label} tone="green" value={fmtNumber(r.created)} />
+            <Stat label={METRIC_DEFINITIONS.updated.label} tone="blue" value={fmtNumber(r.updated)} />
+            <Stat
+              label={METRIC_DEFINITIONS.unchanged.label}
+              tone="slate"
+              value={fmtNumber(r.unchanged)}
+              hint={r.options.conflictStrategy === 'SYNC' ? 'identical in target' : 'already matched'}
+            />
+            <Stat
+              label={METRIC_DEFINITIONS.skipped.label}
+              tone="slate"
+              value={fmtNumber(r.skipped)}
+              hint={r.skipped ? 'already in the target, left alone' : undefined}
+            />
+            <Stat
+              label="Failed"
+              tone={r.failed ? 'red' : 'default'}
+              value={fmtNumber(r.failed)}
+              onClick={() => setTab('errors')}
+            />
+            <Stat
+              label="Warnings"
+              tone={r.warningCount ? 'amber' : 'default'}
+              value={fmtNumber(r.warningCount)}
+              onClick={() => setTab('errors')}
+            />
+          </div>
+        )}
       </Card>
 
       {r.transformationMetrics && r.transformationMetrics.valuesTransformed > 0 && (
@@ -321,7 +328,20 @@ export function RunDetailPage() {
           onChange={setTab}
           tabs={[
             { value: 'progress', label: 'Tables' },
-            { value: 'errors', label: `Errors (${r.errorCount + r.warningCount})` },
+            /*
+              Named for what is in it. It said `Errors (235)` on a run whose result line said `Failed 0`
+              directly above it, because the count has always included warnings — and a reader seeing both
+              numbers has to decide which one to believe.
+            */
+            {
+              value: 'errors',
+              label:
+                r.errorCount > 0 && r.warningCount > 0
+                  ? `Failures and warnings (${r.errorCount + r.warningCount})`
+                  : r.warningCount > 0
+                    ? `Warnings (${r.warningCount})`
+                    : `Failures (${r.errorCount})`,
+            },
             { value: 'records', label: 'Record inventory' },
             /*
              * Offered only when there is something to settle. A permanent tab that is empty on every clean
