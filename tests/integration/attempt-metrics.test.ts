@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { EnvironmentDto, MigrationPlanDto, MigrationRunDto } from '../../shared/domain';
 import { accountedFor } from '../../shared/run-metrics';
 import { DataverseError } from '../../server/src/dataverse/errors';
-import { ApiClient, createTestApp, type TestApp } from '../helpers';
+import { FINISHED_WITH_OMISSIONS, ApiClient, createTestApp, type TestApp } from '../helpers';
 
 /**
  * Two kinds of number, kept apart.
@@ -84,7 +84,7 @@ describe('per-attempt metrics', () => {
     await api.post(`/api/runs/${started.id}/retry`, {});
     await worker.drain(180_000);
     const finished = await api.get<MigrationRunDto>(`/api/runs/${started.id}`);
-    expect(finished.status).toBe('COMPLETED');
+    expect(finished.status).toBe(FINISHED_WITH_OMISSIONS);
     expect(finished.attempt).toBeGreaterThan(1);
 
     const result = await api.get(`/api/runs/${started.id}/attempts`);

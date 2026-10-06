@@ -264,7 +264,12 @@ function projectStatus(input: StatusInput): MigrationProjectStatus {
   if (!source || !plan || plan.datasets === 0) return 'DRAFT';
   if (!target) return 'DRAFT';
   if (lastRun?.status === 'COMPLETED') return 'COMPLETED';
-  if (lastRun && ['COMPLETED_WITH_ERRORS', 'FAILED', 'NEEDS_RECONCILIATION'].includes(lastRun.status)) {
+  if (
+    lastRun &&
+    ['COMPLETED_WITH_WARNINGS', 'COMPLETED_WITH_ERRORS', 'FAILED', 'NEEDS_RECONCILIATION'].includes(
+      lastRun.status,
+    )
+  ) {
     return 'COMPLETED_WITH_ISSUES';
   }
   if (!readiness) return 'PREPARING';
@@ -305,6 +310,17 @@ function nextAction(
       kind: 'REVIEW_FAILURES',
       label: `Review ${lastRun.failed.toLocaleString()} failed records`,
       detail: 'The last run finished with failures. Each failure lists its reason.',
+    };
+  }
+  /*
+   * Nothing failed, and the data is not what the source said. The failure list is empty, so pointing at
+   * it would send somebody to a screen with nothing on it; the work is in the omitted references.
+   */
+  if (lastRun?.status === 'COMPLETED_WITH_WARNINGS') {
+    return {
+      kind: 'REVIEW_OMITTED_REFERENCES',
+      label: 'Review what was not carried across',
+      detail: 'Every record was written. Some references are missing in the target.',
     };
   }
   if (lastRun?.status === 'COMPLETED') {

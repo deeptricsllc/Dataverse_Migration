@@ -6,7 +6,7 @@ import type {
   ProjectDto,
   ValidationRunDto,
 } from '../../shared/domain';
-import { ApiClient, createTestApp, type TestApp } from '../helpers';
+import { ApiClient, createTestApp, FINISHED_WITH_OMISSIONS, type TestApp } from '../helpers';
 
 /**
  * Two people evaluating the product at the same time must not meet each other.
@@ -172,7 +172,7 @@ describe('one evaluator cannot see another', () => {
     }
     // And the first evaluator's work is exactly as it was.
     const run = await first.get<MigrationRunDto>(`/api/runs/${owned.runId}`);
-    expect(run.status).toBe('COMPLETED');
+    expect(run.status).toBe(FINISHED_WITH_OMISSIONS);
   });
 
   it('does not leak the other workspace through any listing', async () => {

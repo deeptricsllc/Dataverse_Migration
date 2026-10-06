@@ -17,6 +17,7 @@ import {
   type ReconciliationEvidence,
   type WriteState,
 } from '../../../shared/write-state';
+import { MATERIAL_WARNING_CODES } from '../../../shared/failure-categories';
 import {
   isLookupValue,
   type AttributeMeta,
@@ -400,13 +401,30 @@ export class MigrationEngine {
           ),
         );
       const stillUnresolved = Number(unresolvedWrites?.n ?? 0);
-      const withErrors = runHadErrors({
-        failedRecords: final.failed,
-        deferredFailed: Number(deferredFailed?.n ?? 0),
-        failedTables,
-        unresolvedErrors: Number(unresolved?.n ?? 0),
-        unresolvedWrites: stillUnresolved,
-      });
+      /**
+       * Records written with a reference omitted, and warnings that mean the data differs.
+       *
+       * Counted because a run whose every write succeeded can still have failed to carry the data
+       * across, and the outcome has to say so. Neither of these is a failure and neither is counted as
+       * one; they decide between `COMPLETED` and `COMPLETED_WITH_WARNINGS`, nothing further.
+       */
+      const [incomplete] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(migrationRecordMaps)
+        .where(
+          and(eq(migrationRecordMaps.runId, runId), eq(migrationRecordMaps.deferredStatus, 'INCOMPLETE')),
+        );
+      const [materialWarnings] = await this.db
+        .select({ n: sql<number>`count(*)` })
+        .from(migrationErrors)
+        .where(
+          and(
+            eq(migrationErrors.runId, runId),
+            eq(migrationErrors.severity, 'WARNING'),
+            eq(migrationErrors.resolved, false),
+            inArray(migrationErrors.errorCode, [...MATERIAL_WARNING_CODES]),
+          ),
+        );
       /**
        * Neither completed nor failed, when something is still in doubt.
        *
@@ -415,11 +433,26 @@ export class MigrationEngine {
        * a retry is allowed, and that lives in the retry gate rather than in the status — one word for one
        * state, and the gate reads the records to decide what to permit.
        */
-      const status = canCompleteRun({ unresolvedWrites: stillUnresolved })
-        ? withErrors
-          ? 'COMPLETED_WITH_ERRORS'
-          : 'COMPLETED'
-        : 'NEEDS_RECONCILIATION';
+      const status = decideRunStatus({
+        failedRecords: final.failed,
+        deferredFailed: Number(deferredFailed?.n ?? 0),
+        failedTables,
+        unresolvedErrors: Number(unresolved?.n ?? 0),
+        unresolvedWrites: stillUnresolved,
+        deferredIncomplete: Number(incomplete?.n ?? 0),
+        materialWarnings: Number(materialWarnings?.n ?? 0),
+      });
+      /*
+       * Three different questions, which one boolean used to answer for all of them.
+       *
+       * Whether the plan is done, whether somebody must be told, and whether the audit trail records a
+       * failure are not the same question, and a run that wrote every record while dropping every
+       * reference answers them differently: the plan is not done, somebody must be told, and the
+       * operation did not fail.
+       */
+      const carriedEverything = status === 'COMPLETED';
+      const hadErrors = status === 'COMPLETED_WITH_ERRORS' || status === 'NEEDS_RECONCILIATION';
+      const omittedReferences = Number(incomplete?.n ?? 0) + Number(materialWarnings?.n ?? 0);
       if (stillUnresolved > 0) {
         log.error(
           { unresolvedWrites: stillUnresolved },
@@ -448,12 +481,13 @@ export class MigrationEngine {
       // executed after a table was lost tells the next person the work is done.
       await this.db
         .update(migrationPlans)
-        .set({ status: withErrors ? 'PLANNED' : 'EXECUTED' })
+        .set({ status: carriedEverything ? 'EXECUTED' : 'PLANNED' })
         .where(eq(migrationPlans.id, run.planId));
       this.metadata.invalidateCounts(target.id);
       // A run that lost records or tables is exactly what somebody needs to hear about, and the
       // person who started it may have gone home. A clean run announces nothing.
-      if (withErrors) {
+      // A run that omitted references is exactly what somebody needs to hear about, failure or not.
+      if (!carriedEverything) {
         await this.alerts.notify({
           kind: 'RUN_ENDED_BADLY',
           runId,
@@ -467,12 +501,18 @@ export class MigrationEngine {
         organizationId: run.organizationId,
         userId: run.executedByUserId,
         action: 'MIGRATION_COMPLETED',
-        outcome: withErrors ? 'FAILURE' : 'SUCCESS',
+        /*
+         * The operation, not the data quality. A run with omitted references did what it was asked to do
+         * and did not fail; `details.status` below carries which outcome it reached, and
+         * `omittedReferences` carries how much was left behind, so the audit row stands on its own.
+         */
+        outcome: hadErrors ? 'FAILURE' : 'SUCCESS',
         sourceEnvironmentId: run.sourceEnvironmentId,
         targetEnvironmentId: run.targetEnvironmentId,
         runId,
         details: {
           status,
+          omittedReferences,
           created: final.created,
           updated: final.updated,
           skipped: final.skipped,
@@ -1473,7 +1513,12 @@ export class MigrationEngine {
     const where = and(
       eq(migrationRecordMaps.runId, run.id),
       eq(migrationRecordMaps.logicalName, entity.logicalName),
-      inArray(migrationRecordMaps.deferredStatus, ['PENDING', 'FAILED']),
+      /*
+       * A later pass, or a later attempt, retries everything that is not settled. `INCOMPLETE` belongs
+       * here: the reference was omitted because the referenced record was not in the target yet, and the
+       * whole point of adding that table and running again is that this time it is.
+       */
+      inArray(migrationRecordMaps.deferredStatus, ['PENDING', 'INCOMPLETE', 'FAILED']),
       isNotNull(migrationRecordMaps.targetId),
     )!;
     const tAttrs = new Map(t.attributes.map((a) => [a.logicalName, a]));
@@ -1513,9 +1558,7 @@ export class MigrationEngine {
             });
           }
         }
-        let status: 'RESOLVED' | 'FAILED' = errors.some((e) => e.severity === 'ERROR')
-          ? 'FAILED'
-          : 'RESOLVED';
+        let status = deferredOutcome(errors);
         if (Object.keys(values).length) {
           try {
             await ctx.tConn.updateRecord(t, map.targetId!, { values }, ctx.writeOptions);
@@ -1530,6 +1573,8 @@ export class MigrationEngine {
           .set({ deferredStatus: status, updatedAt: new Date() })
           .where(eq(migrationRecordMaps.id, map.id));
         if (errors.length) await this.persistErrors(run.id, entity.logicalName, map.sourceId, errors);
+        // Only a genuinely resolved record clears its earlier errors. An incomplete one has not settled
+        // anything, and marking its rows resolved would erase the evidence that the reference is missing.
         if (status === 'RESOLVED') {
           await this.db
             .update(migrationErrors)
@@ -1744,6 +1789,7 @@ export class MigrationEngine {
         deferredPending: get('PENDING'),
         deferredResolved: get('RESOLVED'),
         deferredFailed: get('FAILED'),
+        deferredIncomplete: get('INCOMPLETE'),
       })
       .where(and(eq(migrationRunEntities.runId, runId), eq(migrationRunEntities.logicalName, logicalName)));
   }
@@ -1811,6 +1857,65 @@ export function runHadErrors(counts: {
  */
 export function canCompleteRun(counts: { unresolvedWrites: number }): boolean {
   return counts.unresolvedWrites === 0;
+}
+
+/**
+ * What the second pass achieved for one record.
+ *
+ * `RESOLVED` used to be the answer for anything the target did not refuse, which made a record whose
+ * optional reference was dropped indistinguishable from one that carried everything across. Both counted
+ * as resolved, the run saw no failure, and the result read `Completed`.
+ *
+ * The target's own metadata decides the severity before this is called: a required reference that cannot
+ * be set is an `ERROR`, an optional one is a `WARNING`. This turns that into what happened to the record.
+ *
+ * Exported for its own sake. The three states are the difference between a migration that carried the
+ * data and one that did not, and that belongs in a test rather than inside a closure.
+ */
+export function deferredOutcome(
+  errors: readonly { severity: 'ERROR' | 'WARNING' }[],
+): 'RESOLVED' | 'INCOMPLETE' | 'FAILED' {
+  // A required reference is missing, or the target refused the update. The record is not valid.
+  if (errors.some((e) => e.severity === 'ERROR')) return 'FAILED';
+  // The write succeeded and something the source record had is not on the target record.
+  if (errors.length > 0) return 'INCOMPLETE';
+  return 'RESOLVED';
+}
+
+/**
+ * The whole outcome model, as one function.
+ *
+ * Every question about how a run went is answered here, from counts the engine recorded while it ran, and
+ * the order of the checks is the order of how bad the news is. It lives in one place because the thing it
+ * decides is the sentence the product puts in front of somebody who is about to sign a migration off, and
+ * a second copy of this reasoning somewhere else is how a screen comes to claim a better result than the
+ * evidence supports.
+ *
+ * The rule, which `docs/MIGRATION_OUTCOME_SEMANTICS.md` sets out in full:
+ *
+ * > A run reports the worst outcome its own recorded evidence supports.
+ *
+ * `failedRecords === 0` is one input to that and has never been enough on its own. A run can write every
+ * record it was given, receive a success from the target for each one, and still have dropped a reference
+ * from every single one of them.
+ */
+export function decideRunStatus(counts: {
+  failedRecords: number;
+  deferredFailed: number;
+  failedTables: number;
+  unresolvedErrors: number;
+  unresolvedWrites: number;
+  /** Records written with a reference omitted. Not a failure: the record is there and is valid. */
+  deferredIncomplete: number;
+  /** Recorded warnings whose meaning is that the target's data differs. See `MATERIAL_WARNING_CODES`. */
+  materialWarnings: number;
+}): 'COMPLETED' | 'COMPLETED_WITH_WARNINGS' | 'COMPLETED_WITH_ERRORS' | 'NEEDS_RECONCILIATION' {
+  // Nothing may be claimed at all while the outcome of a write is unknown. This outranks everything.
+  if (!canCompleteRun({ unresolvedWrites: counts.unresolvedWrites })) return 'NEEDS_RECONCILIATION';
+  if (runHadErrors(counts)) return 'COMPLETED_WITH_ERRORS';
+  // Every write succeeded. Whether the data arrived intact is a separate question.
+  if (counts.deferredIncomplete > 0 || counts.materialWarnings > 0) return 'COMPLETED_WITH_WARNINGS';
+  return 'COMPLETED';
 }
 
 export function observeWatermark(into: { value: string | null }, page: DvRecord[], field: string): void {

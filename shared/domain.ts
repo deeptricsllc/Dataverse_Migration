@@ -1193,6 +1193,18 @@ export type MigrationRunStatus =
   | 'RUNNING'
   | 'PAUSED'
   | 'COMPLETED'
+  /**
+   * Every record was written, nothing failed, nothing is in doubt, and the data in the target is not
+   * what the source said.
+   *
+   * A distinct outcome rather than a softer label for `COMPLETED`, because it is a different claim. The
+   * run that forced it into existence wrote three hundred contacts and dropped the account each one
+   * belonged to: every write succeeded, the engine recorded every omitted reference, and the run
+   * reported a clean result. See `docs/MIGRATION_OUTCOME_SEMANTICS.md`.
+   *
+   * A plan whose last run ended here has work left.
+   */
+  | 'COMPLETED_WITH_WARNINGS'
   | 'COMPLETED_WITH_ERRORS'
   /**
    * The work stopped and something has to be settled by a person before it can go on.
@@ -1208,6 +1220,7 @@ export type MigrationRunStatus =
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<MigrationRunStatus> = new Set([
   'COMPLETED',
+  'COMPLETED_WITH_WARNINGS',
   'COMPLETED_WITH_ERRORS',
   'NEEDS_RECONCILIATION',
   'FAILED',
@@ -1327,6 +1340,15 @@ export interface MigrationRunEntityDto extends RunCounters {
   deferredPending: number;
   deferredResolved: number;
   deferredFailed: number;
+  /**
+   * Records whose deferred references could not all be set.
+   *
+   * The second pass only, and only the records that reached it. A reference dropped when the record was
+   * first prepared never enters the deferred pass, so this is not the count of everything this dataset
+   * failed to carry across — `MigrationRunDto.omittedReferences` is. Zero for datasets that ran before
+   * this column existed.
+   */
+  deferredIncomplete: number;
   startedAt: string | null;
   completedAt: string | null;
 }
@@ -1346,6 +1368,15 @@ export interface MigrationRunDto extends RunCounters {
   entities: MigrationRunEntityDto[];
   errorCount: number;
   warningCount: number;
+  /**
+   * Records written into the target carrying less than the source record did.
+   *
+   * Counted per record, from the warnings the engine recorded while it ran, so it is available for every
+   * run including those that finished before the outcome model distinguished this. This is the number that
+   * turns a run's outcome into `COMPLETED_WITH_WARNINGS`, and the reason a run can report no failures and
+   * still not have carried the data across. See `docs/MIGRATION_OUTCOME_SEMANTICS.md`.
+   */
+  omittedReferences: number;
   errorMessage: string | null;
   cancelRequested: boolean;
   pauseRequested: boolean;
@@ -2053,6 +2084,9 @@ export interface MigrationWorkspaceDto {
       | 'PREPARE'
       | 'EXECUTE'
       | 'REVIEW_FAILURES'
+      /** Nothing failed and the data is not complete. A distinct action, because there is nothing to fix
+       * in the failure list — the work is to add the missing dataset and run again. */
+      | 'REVIEW_OMITTED_REFERENCES'
       | 'VALIDATE'
       | 'WATCH_RUN';
     label: string;

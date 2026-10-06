@@ -5,7 +5,7 @@ import { accountedFor, writtenByRun } from '../../shared/run-metrics';
 import { isUnresolved } from '../../shared/write-state';
 import { DataverseError } from '../../server/src/dataverse/errors';
 import { demoRecords, migrationRecordMaps } from '../../server/src/db/schema';
-import { ApiClient, createTestApp, type TestApp } from '../helpers';
+import { FINISHED_WITH_OMISSIONS, ApiClient, createTestApp, type TestApp } from '../helpers';
 
 /**
  * A crash at every persistence boundary, and what the platform says afterwards.
@@ -231,7 +231,7 @@ describe('crash matrix', () => {
     expect(committed.length, 'one record short: the one whose connection was lost').toBe(sources - 1);
 
     const resumed = await retry(run.id);
-    expect(resumed.status).toBe('COMPLETED');
+    expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
     expect(resumed.unresolved).toBe(0);
     const final = await accountForEveryRecord(resumed, 'dtx_region');
     expect(final.targetRecords).toBe(final.sources);
@@ -253,7 +253,7 @@ describe('crash matrix', () => {
     expect(before.length).toBe((await sourceCount('dtx_region')) - 1);
 
     const resumed = await retry(run.id);
-    expect(resumed.status).toBe('COMPLETED');
+    expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
     const final = await accountForEveryRecord(resumed, 'dtx_region');
     expect(final.targetRecords, 'exactly one record per source record').toBe(final.sources);
     expect(final.distinctTargets).toBe(final.identityRows);
@@ -276,7 +276,7 @@ describe('crash matrix', () => {
     expect(unknown[0]!.outcome, 'counted as neither written nor failed').toBe('UNRESOLVED');
 
     const resumed = await retry(run.id);
-    expect(resumed.status, 'reconciliation settled it').toBe('COMPLETED');
+    expect(resumed.status, 'reconciliation settled it').toBe(FINISHED_WITH_OMISSIONS);
     expect(resumed.unresolved).toBe(0);
 
     const final = await accountForEveryRecord(resumed, 'dtx_region');
@@ -313,7 +313,7 @@ describe('crash matrix', () => {
   // =========================================================================
   it('E — counters are rebuilt from the identity map, so losing them costs nothing', async () => {
     const run = await migrate(['dtx_region']);
-    expect(run.status).toBe('COMPLETED');
+    expect(run.status).toBe(FINISHED_WITH_OMISSIONS);
 
     // Corrupt the counters the way a crash between the identity-map write and the counter update would.
     const { migrationRuns } = await import('../../server/src/db/schema');
@@ -417,7 +417,7 @@ describe('crash matrix', () => {
   it('H — with no key and no evidence it stops, and does not insert again', async () => {
     // Regions first so an office's lookup resolves; offices have no alternate key.
     const regions = await migrate(['dtx_region']);
-    expect(regions.status).toBe('COMPLETED');
+    expect(regions.status).toBe(FINISHED_WITH_OMISSIONS);
 
     const factory = t.services.connections as unknown as {
       connectorFor: (...args: unknown[]) => Promise<Record<string, unknown>>;
@@ -531,7 +531,7 @@ describe('crash matrix', () => {
     expect(run.unresolved, 'something was left in doubt').toBeGreaterThan(0);
 
     const resumed = await retry(run.id);
-    expect(resumed.status).toBe('COMPLETED');
+    expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
     expect(resumed.unresolved).toBe(0);
 
     const final = await accountForEveryRecord(resumed, 'account');

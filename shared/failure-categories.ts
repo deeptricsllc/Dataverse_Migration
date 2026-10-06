@@ -150,6 +150,59 @@ const KNOWN: Record<string, { label: string; meaning: string; action: string }> 
   },
 };
 
+/**
+ * The warning codes that mean the target's data is not what the source said.
+ *
+ * A warning does not fail a record, and most warnings do not change the data either: a record skipped
+ * under a conflict strategy is the engine doing what it was told, and a lookup waiting for a later table
+ * is resolved by the pass that follows it. Reporting those as a degraded run would teach people that the
+ * run outcome is noise, which is worse than not reporting it at all.
+ *
+ * These three are different. Each one means a record is in the target carrying less than the source
+ * record did, and each one changes the run's outcome to `COMPLETED_WITH_WARNINGS`. The list is a list
+ * rather than a rule because the decision belongs to what each code means.
+ *
+ * See `docs/MIGRATION_OUTCOME_SEMANTICS.md` §5.3.
+ */
+export const MATERIAL_WARNING_CODES: readonly string[] = [
+  // A relationship the source record had is not in the target record.
+  'LOOKUP_UNRESOLVED',
+  // The owner was not carried across, and no replacement was chosen.
+  'PRINCIPAL_UNRESOLVED',
+];
+
+/**
+ * Warnings that mean the data differs *because somebody asked for it to*.
+ *
+ * `PRINCIPAL_FALLBACK_APPLIED` is the clearest case and the reason this distinction is written down. The
+ * owner on the target record is not the owner on the source record — a real difference — but the identity
+ * that replaced it was named in the plan, raised as a plan issue, and acknowledged before the run started.
+ * Reporting that as a degraded outcome would mark every run into a tenant with no user mapping as
+ * incomplete, for the rest of the project, for doing exactly what it was configured to do.
+ *
+ * The test is not "is the data different". It is "was this asked for". Nobody asks for a relationship to
+ * be dropped; somebody does ask for unmapped owners to fall back to a named identity.
+ *
+ * Kept as a named list rather than left as an absence, so the next person adding a warning code has to
+ * decide which of the two it is.
+ */
+export const CONFIGURED_WARNING_CODES: readonly string[] = [
+  // An identity the plan names, after the plan raised it and the person acknowledged it.
+  'PRINCIPAL_FALLBACK_APPLIED',
+  // A match was found and the conflict strategy is to leave it alone.
+  'ALREADY_EXISTS',
+];
+
+/**
+ * Whether a recorded warning code means the migrated data differs from the source.
+ *
+ * Takes the code as recorded, including any `CODE:platformCode` suffix, because that is the form the
+ * error rows hold.
+ */
+export function isMaterialWarning(code: string): boolean {
+  return MATERIAL_WARNING_CODES.includes(code.split(':')[0] ?? code);
+}
+
 /** The category of one recorded code. Unknown codes are returned as themselves, never guessed at. */
 export function describeFailureCode(code: string): FailureCategory {
   // `CODE:platformCode` — the prefix is the category, the rest is the target's own code.

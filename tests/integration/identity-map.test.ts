@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { EnvironmentDto, MigrationPlanDto, MigrationRunDto } from '../../shared/domain';
 import { demoRecords } from '../../server/src/db/schema';
-import { ApiClient, createTestApp, type TestApp } from '../helpers';
+import { ApiClient, createTestApp, FINISHED_WITH_OMISSIONS, type TestApp } from '../helpers';
 
 /**
  * Record identity: lookups in a later run resolve through earlier runs' identity maps, and maps
@@ -47,7 +47,7 @@ describe('record identity mapping across runs', () => {
 
   it('resolves required lookups to records created by an earlier run', async () => {
     const regions = await migrate(['dtx_region']);
-    expect(regions.status).toBe('COMPLETED');
+    expect(regions.status).toBe(FINISHED_WITH_OMISSIONS);
     // Offices require a region; regions are not part of this plan.
     const offices = await migrate(['dtx_office']);
     expect(offices.entities[0]).toMatchObject({ created: 15, failed: 0 });

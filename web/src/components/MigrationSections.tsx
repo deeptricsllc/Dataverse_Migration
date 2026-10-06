@@ -7,6 +7,8 @@ import type {
   MigrationWorkspaceDto,
 } from '@shared/domain';
 import { Card, EmptyState, ErrorState, Pill, Spinner } from './ui';
+// One set of words for one set of states, so two screens cannot name the same run differently.
+import { RUN_STATUS_LABELS } from './RunOutcome';
 import { DependenciesStep, MappingStep } from '../pages/PlanPage';
 import { api } from '../lib/api';
 import { describeCount, fmtRelative } from '../lib/format';
@@ -214,7 +216,7 @@ export function MigrationRuns({ w }: { w: MigrationWorkspaceDto }) {
           <li key={run.id} className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="run-row">
             <span className="w-16 flex-none text-sm font-semibold text-slate-900">#{rows.length - i}</span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-slate-900">{RUN_LABELS[run.status]}</p>
+              <p className="text-sm font-medium text-slate-900">{RUN_STATUS_LABELS[run.status]}</p>
               <p className="text-xs text-slate-500">
                 {run.startedAt ? fmtRelative(run.startedAt) : 'not started'}
                 {/* The attempt, so a retry never looks like the first run changed its mind. */}
@@ -239,16 +241,3 @@ export function MigrationRuns({ w }: { w: MigrationWorkspaceDto }) {
     </Card>
   );
 }
-
-const RUN_LABELS: Record<MigrationRunStatus, string> = {
-  DRAFT: 'Draft',
-  PLANNED: 'Planned',
-  QUEUED: 'Queued',
-  RUNNING: 'Running',
-  PAUSED: 'Paused',
-  COMPLETED: 'Completed',
-  COMPLETED_WITH_ERRORS: 'Completed with issues',
-  FAILED: 'Failed',
-  CANCELLED: 'Cancelled',
-  NEEDS_RECONCILIATION: 'Needs reconciliation',
-};

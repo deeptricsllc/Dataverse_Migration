@@ -7,11 +7,11 @@ import type {
   MigrationProjectStatus,
   MigrationWorkspaceDto,
   ProjectDto,
-  MigrationRunStatus,
 } from '@shared/domain';
 import { MIGRATION_PROJECT_STATUS_LABELS } from '@shared/domain';
 import type { ReadinessFinding } from '@shared/readiness';
 import { Button, Card, EmptyState, ErrorState, PageHeader, Pill, Spinner, Tabs, cx } from '../components/ui';
+import { RUN_STATUS_LABELS } from '../components/RunOutcome';
 import { ExecuteModal } from './PlanPage';
 import { MigrationData } from '../components/MigrationData';
 import {
@@ -256,7 +256,7 @@ function Overview({ w, onSection }: { w: MigrationWorkspaceDto; onSection: (s: S
         <Card title="Last run" data-testid="migration-last-run">
           {w.lastRun ? (
             <>
-              <p className="text-2xl font-semibold text-slate-900">{runLabel(w.lastRun.status)}</p>
+              <p className="text-2xl font-semibold text-slate-900">{RUN_STATUS_LABELS[w.lastRun.status]}</p>
               <dl className="mt-1 text-sm">
                 <div className="flex gap-2">
                   <dt className="text-slate-500">Succeeded</dt>
@@ -325,6 +325,13 @@ function NextActionControls({ w, onSection }: { w: MigrationWorkspaceDto; onSect
     return (
       <Button variant="secondary" onClick={() => onSection('mapping')}>
         Open mapping
+      </Button>
+    );
+  }
+  if (kind === 'REVIEW_OMITTED_REFERENCES' && w.lastRun) {
+    return (
+      <Button variant="primary" onClick={() => navigate(`/runs/${w.lastRun!.id}`)}>
+        Open the run
       </Button>
     );
   }
@@ -477,20 +484,3 @@ function Step({
     </div>
   );
 }
-
-const runLabel = (status: MigrationRunStatus): string =>
-  status === 'COMPLETED'
-    ? 'Completed'
-    : status === 'COMPLETED_WITH_ERRORS'
-      ? 'Completed with issues'
-      : status === 'RUNNING'
-        ? 'Running'
-        : status === 'QUEUED'
-          ? 'Queued'
-          : status === 'FAILED'
-            ? 'Failed'
-            : status === 'CANCELLED'
-              ? 'Cancelled'
-              : status === 'PAUSED'
-                ? 'Paused'
-                : 'Needs reconciliation';

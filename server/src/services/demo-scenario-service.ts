@@ -29,7 +29,7 @@ import type { ValidationService } from './validation-service';
 export const DEMO_SUCCESS_PROJECT = 'Customer Migration — Successful';
 export const DEMO_PROBLEM_PROJECT = 'Customer Migration — Data Quality Issues';
 
-const TERMINAL = ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'];
+const TERMINAL = ['COMPLETED', 'COMPLETED_WITH_WARNINGS', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'];
 
 export class DemoScenarioService {
   /** One build at a time per process: two sign-ins at once must not both seed. */

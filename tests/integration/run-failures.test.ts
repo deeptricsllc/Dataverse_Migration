@@ -175,6 +175,17 @@ describe('failures the engine actually produces', () => {
     expect(region.succeeded).toBe(region.attempted);
     // Counting the run as complete requires that nothing is in doubt.
     expect(summary.unresolved).toBe(0);
+
+    /*
+     * And it is still reported as clean.
+     *
+     * The failure mode of an outcome model that counts omitted references is a product that calls every
+     * run degraded, which teaches people the result line is noise. A dataset with no outbound lookups has
+     * nothing to omit, and says so.
+     */
+    expect(run.omittedReferences).toBe(0);
+    expect(run.status).toBe('COMPLETED');
+    expect(run.entities.find((e) => e.logicalName === 'dtx_applicationconfig')!.deferredIncomplete).toBe(0);
   });
 
   /**

@@ -191,6 +191,9 @@ const STATUS_TONES: Record<string, string> = {
   DIFFERENT: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   WARNING: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   COMPLETED_WITH_ERRORS: 'bg-amber-50 text-amber-800 ring-amber-600/20',
+  // Every write succeeded and the data is not complete. Amber, because a slate badge beside a green one
+  // reads as a quieter kind of success, and this is not one.
+  COMPLETED_WITH_WARNINGS: 'bg-amber-50 text-amber-800 ring-amber-600/20',
   UNMAPPED: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   SOURCE_ONLY: 'bg-violet-50 text-violet-700 ring-violet-600/20',
   TARGET_ONLY: 'bg-teal-50 text-teal-700 ring-teal-600/20',
@@ -206,6 +209,7 @@ const STATUS_LABELS: Record<string, string> = {
   SOURCE_ONLY: 'Missing in target',
   TARGET_ONLY: 'Target only',
   COMPLETED_WITH_ERRORS: 'Completed with errors',
+  COMPLETED_WITH_WARNINGS: 'Completed with warnings',
   AUTO_MAPPED: 'Auto-mapped',
   /**
    * `NEEDS_RECONCILIATION` would read as "Needs reconciliation", and in this product that sentence

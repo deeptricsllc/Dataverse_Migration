@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, countDistinct, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { isUnresolved, needsHumanReconciliation, UNRESOLVED_WRITE_STATES } from '../../../shared/write-state';
 import { refreshRunCounters } from './run-counters';
 import { alias } from 'drizzle-orm/pg-core';
@@ -6,15 +6,17 @@ import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
   needsTypedConfirmation,
+  TERMINAL_RUN_STATUSES,
   type MigrationErrorDto,
   type MigrationRunDto,
   type MigrationRunListItemDto,
+  type MigrationRunStatus,
   type RecordMapDto,
   type RollbackPreviewDto,
   type RunFailureSummaryDto,
   type RunTrigger,
 } from '../../../shared/domain';
-import { describeFailureCode } from '../../../shared/failure-categories';
+import { describeFailureCode, MATERIAL_WARNING_CODES } from '../../../shared/failure-categories';
 import type { AppDb } from '../db/client';
 import { decideWriteScope } from '../write-scope';
 import {
@@ -407,9 +409,24 @@ export class MigrationRunService {
       await this.audit.record({ ...auditBase, action: 'MIGRATION_RESUMED', outcome: 'REQUESTED' });
     } else {
       await this.assertWritesAllowed(ctx, run.targetEnvironmentId, 'RETRY');
-      if (!['COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED', 'NEEDS_RECONCILIATION'].includes(run.status)) {
+      /*
+       * `COMPLETED_WITH_WARNINGS` is retryable, and that is the point of the status existing.
+       *
+       * A run that dropped three hundred references because the referenced table was not in the plan is
+       * fixed by adding the table and running again. The second pass picks up every record it left
+       * incomplete. A retry that was refused here would leave the only way forward as a fresh migration
+       * over data that is already in the target.
+       */
+      const retryable = [
+        'COMPLETED_WITH_WARNINGS',
+        'COMPLETED_WITH_ERRORS',
+        'FAILED',
+        'CANCELLED',
+        'NEEDS_RECONCILIATION',
+      ];
+      if (!retryable.includes(run.status)) {
         throw conflict(
-          `Retry is available for failed, cancelled or partially failed runs (current: ${run.status})`,
+          `Retry is available for failed, cancelled or incomplete runs (current: ${run.status})`,
         );
       }
       /**
@@ -631,6 +648,26 @@ export class MigrationRunService {
       .from(migrationErrors)
       .where(and(eq(migrationErrors.runId, runId), eq(migrationErrors.resolved, false)))
       .groupBy(migrationErrors.severity);
+    /**
+     * Records per dataset that lost something, read from the error rows the engine wrote at the time.
+     *
+     * Read here, and not taken from the dataset's own `deferredIncomplete` counter, because that counter
+     * does not exist for runs that finished before it was added. Those runs recorded the same warnings —
+     * the rows are there — so this is the number that is true for every run, old or new, and it is also
+     * what decides whether a zero in the counter means `none` or `not recorded`.
+     */
+    const omittedPerDataset = await this.db
+      .select({ logicalName: migrationErrors.logicalName, n: countDistinct(migrationErrors.sourceRecordId) })
+      .from(migrationErrors)
+      .where(
+        and(
+          eq(migrationErrors.runId, runId),
+          eq(migrationErrors.severity, 'WARNING'),
+          eq(migrationErrors.resolved, false),
+          inArray(migrationErrors.errorCode, [...MATERIAL_WARNING_CODES]),
+        ),
+      )
+      .groupBy(migrationErrors.logicalName);
     const [latestValidation] = await this.db
       .select({ id: validationRuns.id })
       .from(validationRuns)
@@ -674,11 +711,14 @@ export class MigrationRunService {
         deferredPending: e.deferredPending,
         deferredResolved: e.deferredResolved,
         deferredFailed: e.deferredFailed,
+        deferredIncomplete: e.deferredIncomplete,
         startedAt: e.startedAt?.toISOString() ?? null,
         completedAt: e.completedAt?.toISOString() ?? null,
       })),
       errorCount: Number(severityCounts.find((s) => s.severity === 'ERROR')?.n ?? 0),
       warningCount: Number(severityCounts.find((s) => s.severity === 'WARNING')?.n ?? 0),
+      // Summed from the same per-dataset evidence the datasets report, so the two can never disagree.
+      omittedReferences: omittedPerDataset.reduce((n, o) => n + Number(o.n), 0),
       errorMessage: r.errorMessage,
       cancelRequested: r.cancelRequested,
       pauseRequested: r.pauseRequested,
@@ -1029,7 +1069,7 @@ export class MigrationRunService {
       'Created records may have been modified or referenced by other records in the target since the run.',
     );
     warnings.push('Deleting records can trigger cascade deletes and plug-ins in the target environment.');
-    if (!['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'].includes(run.status)) {
+    if (!TERMINAL_RUN_STATUSES.has(run.status as MigrationRunStatus)) {
       warnings.push('The run is still active; the inventory is incomplete.');
     }
     return {

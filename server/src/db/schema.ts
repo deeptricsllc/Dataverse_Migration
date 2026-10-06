@@ -596,6 +596,11 @@ export const migrationRunEntities = pgTable(
     deferredPending: integer('deferred_pending').notNull().default(0),
     deferredResolved: integer('deferred_resolved').notNull().default(0),
     deferredFailed: integer('deferred_failed').notNull().default(0),
+    /**
+     * Records written with a reference omitted. Zero for datasets that ran before this was recorded,
+     * which is not the same as none, so the UI reads the error rows for historical runs.
+     */
+    deferredIncomplete: integer('deferred_incomplete').notNull().default(0),
     startedAt: ts('started_at'),
     completedAt: ts('completed_at'),
   },
@@ -638,7 +643,15 @@ export const migrationRecordMaps = pgTable(
       string,
       { id: string; logicalName: string }
     > | null>(),
-    deferredStatus: text('deferred_status').$type<'PENDING' | 'RESOLVED' | 'FAILED' | null>(),
+    /**
+     * The second pass that sets references, per record.
+     *
+     * `INCOMPLETE` is the state that was missing: the pass ran, the record is written, and a reference
+     * the source had was omitted because the target had nothing to point at. It is not `RESOLVED` — the
+     * reference was not resolved — and it is not `FAILED`, because the write succeeded and the record is
+     * valid. See `docs/MIGRATION_OUTCOME_SEMANTICS.md`.
+     */
+    deferredStatus: text('deferred_status').$type<'PENDING' | 'RESOLVED' | 'INCOMPLETE' | 'FAILED' | null>(),
     /** Ownership/audit fields where the configured fallback identity was substituted. */
     principalFallbacks: jsonb('principal_fallbacks').$type<string[] | null>(),
     /** Pass 3: re-stamp modifiedby as the mapped source user (impersonated update). */

@@ -86,3 +86,20 @@ export class ApiClient {
   patch = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('PATCH', url, body, expect);
   del = <T = any>(url: string, body?: unknown, expect = 200) => this.request<T>('DELETE', url, body, expect);
 }
+
+/**
+ * The outcome of a run whose plan does not include every dataset its records point at.
+ *
+ * Used at assertion sites that are not about the outcome model — crash recovery, attempt accounting,
+ * tenant isolation — but which have to state what the run reported.
+ *
+ * Those tests migrate `dtx_region` on its own, and a region points at its head office in `dtx_office`.
+ * With `dtx_office` out of scope that reference cannot be set, so every region is written without it. The
+ * engine always recorded this; the product used to report the run as `Completed` because its outcome model
+ * read only the failure count, and these assertions were written against that. Nothing in them has been
+ * weakened: `failed` and `unresolved` are still asserted where they were, and the status is still exact.
+ *
+ * A test that wants a genuinely clean run either migrates a dataset with no outbound references, or
+ * includes the referenced datasets. See `docs/MIGRATION_OUTCOME_SEMANTICS.md`.
+ */
+export const FINISHED_WITH_OMISSIONS = 'COMPLETED_WITH_WARNINGS';

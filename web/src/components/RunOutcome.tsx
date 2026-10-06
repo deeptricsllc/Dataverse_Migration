@@ -19,9 +19,21 @@ export function RunOutcome({
   run: MigrationRunDto;
   onReviewFailures: () => void;
 }) {
-  const succeeded = run.created + run.updated + run.unchanged;
+  /*
+   * `Succeeded` is gone, and that is the point.
+   *
+   * It was `created + updated + unchanged`, which put a record the engine wrote beside a record it only
+   * compared, under one word that implied both had been migrated. It also sat beside `Skipped`, so a run
+   * that matched every record and changed none of them read `Succeeded 0 · Skipped 300` — three hundred
+   * records, nothing stated about whether the target holds the right data.
+   *
+   * Each number below is one thing the engine recorded, named as what it is. See
+   * `docs/MIGRATION_OUTCOME_SEMANTICS.md` section 7.
+   */
+  const written = run.created + run.updated;
   const active = run.status === 'RUNNING' || run.status === 'QUEUED' || run.status === 'PAUSED';
   const next = nextAction(run);
+  const reason = resultReason(run);
 
   return (
     <Card className="mb-5" data-testid="run-outcome">
@@ -33,7 +45,9 @@ export function RunOutcome({
               'text-2xl font-semibold',
               run.status === 'FAILED'
                 ? 'text-red-700'
-                : run.status === 'COMPLETED_WITH_ERRORS' || run.status === 'NEEDS_RECONCILIATION'
+                : run.status === 'COMPLETED_WITH_ERRORS' ||
+                    run.status === 'NEEDS_RECONCILIATION' ||
+                    run.status === 'COMPLETED_WITH_WARNINGS'
                   ? 'text-amber-800'
                   : run.status === 'COMPLETED'
                     ? 'text-emerald-700'
@@ -43,6 +57,16 @@ export function RunOutcome({
           >
             {RUN_STATUS_LABELS[run.status]}
           </p>
+          {/*
+            Why, beside the result, because a status is a label and a label is not an explanation. A run
+            that reads `Completed with warnings` and nothing else sends somebody looking for the warnings;
+            this sentence is what they would have gone looking for.
+          */}
+          {reason && (
+            <p className="mt-1 max-w-xl text-sm text-slate-700" data-testid="run-result-reason">
+              {reason}
+            </p>
+          )}
           {/* Attempt is part of the result: a retry is a further attempt of this run, not a new one. */}
           <p className="mt-0.5 text-sm text-slate-500">
             Attempt {run.attempt} · started {fmtDate(run.startedAt)} · {active ? 'elapsed' : 'duration'}{' '}
@@ -52,16 +76,25 @@ export function RunOutcome({
 
         <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm" data-testid="run-counts">
           <Count label="Attempted" value={run.total} />
-          <Count label="Succeeded" value={succeeded} />
+          <Count label="Written" value={written} />
+          {/* Compared against the target and identical. The engine looked; it is not a guess. */}
+          {run.unchanged > 0 && <Count label="Already current" value={run.unchanged} />}
+          {/* Matched in the target, and the conflict strategy leaves a match alone. Not "already correct":
+              nothing compared the values. */}
+          {run.skipped > 0 && <Count label="Not changed" value={run.skipped} />}
           <Count label="Failed" value={run.failed} tone={run.failed > 0 ? 'red' : undefined} />
-          <Count label="Skipped" value={run.skipped} />
           {/*
             Unresolved is not failed. The engine could not confirm what the target did with these records,
             and saying either "succeeded" or "failed" would assert something unknown.
           */}
           <Count label="Unresolved" value={run.unresolved} tone={run.unresolved > 0 ? 'amber' : undefined} />
-          {run.warningCount > 0 && (
-            <Count label="Written with warnings" value={run.warningCount} tone="amber" />
+          {/*
+            The number this gate exists for. A record that is in the target without the reference the
+            source gave it is not a success, and it is not a failure either — so it has its own column
+            rather than being left to the warning total, where it reads as a note.
+          */}
+          {run.omittedReferences > 0 && (
+            <Count label="References omitted" value={run.omittedReferences} tone="amber" />
           )}
         </dl>
       </div>
@@ -72,9 +105,9 @@ export function RunOutcome({
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Next action</p>
             <p className="text-sm text-slate-900">{next.label}</p>
           </div>
-          {next.kind === 'REVIEW_FAILURES' && (
+          {(next.kind === 'REVIEW_FAILURES' || next.kind === 'REVIEW_OMITTED') && (
             <Button variant="primary" onClick={onReviewFailures} data-testid="review-failures">
-              Review failures
+              {next.kind === 'REVIEW_OMITTED' ? 'Review omitted references' : 'Review failures'}
             </Button>
           )}
           {next.kind === 'RECONCILE' && (
@@ -124,10 +157,45 @@ function nextAction(run: MigrationRunDto): { kind: string; label: string } | nul
       label: `Reconcile ${run.unresolved.toLocaleString()} records with an unconfirmed result.`,
     };
   }
+  if (run.omittedReferences > 0) {
+    return {
+      kind: 'REVIEW_OMITTED',
+      label: `${run.omittedReferences.toLocaleString()} records are in the target without a reference the source gave them.`,
+    };
+  }
   if (run.status === 'COMPLETED') {
     return { kind: 'VALIDATE', label: 'Validate the run against the source.' };
   }
   return null;
+}
+
+/**
+ * Why the run reached the result it did, in one sentence.
+ *
+ * State, then consequence, as `docs/PRODUCT_LANGUAGE_STANDARD.md` requires. Derived from the same counts
+ * the card shows, so it cannot describe a different run from the one beside it.
+ */
+function resultReason(run: MigrationRunDto): string | null {
+  switch (run.status) {
+    case 'COMPLETED':
+      return 'Every record was written and every reference was set.';
+    case 'COMPLETED_WITH_WARNINGS':
+      return run.omittedReferences > 0
+        ? `No record failed. ${run.omittedReferences.toLocaleString()} records are in the target without a reference the source gave them.`
+        : 'No record failed. Some records carry less than the source record did.';
+    case 'COMPLETED_WITH_ERRORS':
+      return run.failed > 0
+        ? `${run.failed.toLocaleString()} records are not in the target.`
+        : 'A dataset did not complete. The failures are listed below.';
+    case 'NEEDS_RECONCILIATION':
+      return `The result of ${run.unresolved.toLocaleString()} writes is unknown. Nothing can be claimed about those records until they are reconciled.`;
+    case 'FAILED':
+      return 'The run stopped before it finished.';
+    case 'CANCELLED':
+      return 'The run was stopped.';
+    default:
+      return null;
+  }
 }
 
 export const RUN_STATUS_LABELS: Record<MigrationRunDto['status'], string> = {
@@ -137,6 +205,7 @@ export const RUN_STATUS_LABELS: Record<MigrationRunDto['status'], string> = {
   RUNNING: 'Running',
   PAUSED: 'Paused',
   COMPLETED: 'Completed',
+  COMPLETED_WITH_WARNINGS: 'Completed with warnings',
   COMPLETED_WITH_ERRORS: 'Completed with issues',
   NEEDS_RECONCILIATION: 'Reconciliation required',
   FAILED: 'Failed',

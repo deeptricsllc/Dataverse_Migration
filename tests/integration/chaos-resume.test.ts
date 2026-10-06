@@ -9,7 +9,7 @@ import type {
 import { accountedFor, writtenByRun } from '../../shared/run-metrics';
 import { DataverseError } from '../../server/src/dataverse/errors';
 import { migrationRecordMaps } from '../../server/src/db/schema';
-import { ApiClient, createTestApp, type TestApp } from '../helpers';
+import { FINISHED_WITH_OMISSIONS, ApiClient, createTestApp, type TestApp } from '../helpers';
 
 /**
  * What happens when a migration stops in the middle, and what happens when it starts again.
@@ -211,7 +211,7 @@ describe('chaos: failure and resume', () => {
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
 
-      expect(resumed.status, 'the resumed attempt finished').toBe('COMPLETED');
+      expect(resumed.status, 'the resumed attempt finished').toBe(FINISHED_WITH_OMISSIONS);
       expect(resumed.attempt, 'as a second attempt of the same run').toBe(2);
       expect(resumed.unresolved, 'with nothing left unresolved').toBe(0);
 
@@ -239,7 +239,7 @@ describe('chaos: failure and resume', () => {
        * is NEEDS_RECONCILIATION, and the target is left exactly as the failure left it.
        */
       const regions = await startMigration(['dtx_region'], 100);
-      expect(regions.status).toBe('COMPLETED');
+      expect(regions.status).toBe(FINISHED_WITH_OMISSIONS);
 
       const factory = t.services.connections as unknown as {
         connectorFor: (...args: unknown[]) => Promise<Record<string, unknown>>;
@@ -437,7 +437,7 @@ describe('chaos: failure and resume', () => {
       await api.post(`/api/runs/${first.id}/retry`, {});
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${first.id}`);
-      expect(resumed.status).toBe('COMPLETED');
+      expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
 
       const maps = await identityRows(first.id, 'account');
       // Resume did not touch a single record attempt one had already claimed. Orphans it may
@@ -486,7 +486,7 @@ describe('chaos: failure and resume', () => {
     it('does not turn unchanged records into updates, or update them twice', async () => {
       // First migration: clean, so the target holds records this run wrote.
       const first = await startMigration(['dtx_region'], 100, undefined, 'SYNC');
-      expect(first.status).toBe('COMPLETED');
+      expect(first.status).toBe(FINISHED_WITH_OMISSIONS);
       expect(first.created).toBeGreaterThan(0);
 
       // Change one source record so a second run has something real to update.
@@ -532,7 +532,7 @@ describe('chaos: failure and resume', () => {
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${second.id}`);
 
-      expect(resumed.status).toBe('COMPLETED');
+      expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
       // Exactly one record changed, so exactly one update: the rest are unchanged, not re-written.
       expect(written.filter((w) => w.operation === 'updateRecord').length).toBe(1);
       expect(resumed.updated, 'one update').toBe(1);
@@ -687,7 +687,7 @@ describe('chaos: failure and resume', () => {
       await worker.drain(300_000);
       const resumed = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
 
-      expect(resumed.status).toBe('COMPLETED');
+      expect(resumed.status).toBe(FINISHED_WITH_OMISSIONS);
       expect(resumed.failed, 'nothing is still failed').toBe(0);
       expect(written.filter((w) => succeeded.has(w.id)).length, 'the successes were left alone').toBe(0);
       const after = await identityRows(run.id, 'dtx_region');
@@ -702,7 +702,7 @@ describe('chaos: failure and resume', () => {
   describe('interrupted validation', () => {
     it('cannot report PASS for a validation that did not finish', async () => {
       const run = await startMigration(['dtx_region'], 100);
-      expect(run.status).toBe('COMPLETED');
+      expect(run.status).toBe(FINISHED_WITH_OMISSIONS);
 
       // Fail the target read the comparison depends on, so validation cannot finish.
       const factory = t.services.connections as unknown as {
