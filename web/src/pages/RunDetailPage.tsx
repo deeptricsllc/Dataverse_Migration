@@ -191,57 +191,64 @@ export function RunDetailPage() {
       */}
       <RetryControl run={r} />
 
-      <Card className="mb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <StatusBadge status={r.status} className="text-sm" />
-            <span className="text-sm text-slate-600">
-              {r.phase === 'PASS_2_DEFERRED_LOOKUPS'
-                ? 'Pass 2: setting deferred lookups'
-                : r.phase === 'PASS_1'
-                  ? 'Pass 1: creating records'
-                  : r.phase === 'DONE'
-                    ? 'Finished'
-                    : 'Waiting for worker'}
-              {r.currentEntity && active && (
-                <>
-                  {' '}
-                  · current table <strong>{r.currentEntity}</strong>
-                </>
-              )}
+      {/*
+        While it is going, and not afterwards.
+
+        This is the live view: which pass, which table, how far through. Once the run has finished every line
+        of it is somewhere better — the result and the attempt are in the card above, and the per-table
+        progress is the tab below, where it is a real breakdown rather than one bar at 100%. Leaving it up
+        gave a finished run three cards that each restated the attempt and the counts, which is how a reader
+        comes to distrust all three.
+      */}
+      {active && (
+        <Card className="mb-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <StatusBadge status={r.status} className="text-sm" />
+              <span className="text-sm text-slate-600">
+                {r.phase === 'PASS_2_DEFERRED_LOOKUPS'
+                  ? 'Pass 2: setting deferred lookups'
+                  : r.phase === 'PASS_1'
+                    ? 'Pass 1: creating records'
+                    : r.phase === 'DONE'
+                      ? 'Finished'
+                      : 'Waiting for worker'}
+                {r.currentEntity && active && (
+                  <>
+                    {' '}
+                    · current table <strong>{r.currentEntity}</strong>
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="text-sm text-slate-500">
+              Attempt {r.attempt} · started {fmtDate(r.startedAt)} · elapsed{' '}
+              {fmtDuration(r.startedAt, r.completedAt)}
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="flex-1">
+              <ProgressBar
+                value={overall}
+                tone={
+                  r.status === 'FAILED'
+                    ? 'red'
+                    : r.failed > 0
+                      ? 'amber'
+                      : r.status === 'COMPLETED'
+                        ? 'green'
+                        : 'brand'
+                }
+                label="Overall progress"
+              />
+            </div>
+            <span
+              className="w-14 text-right text-lg font-semibold tabular-nums"
+              data-testid="overall-percent"
+            >
+              {overall}%
             </span>
           </div>
-          <div className="text-sm text-slate-500">
-            Attempt {r.attempt} · started {fmtDate(r.startedAt)} · elapsed{' '}
-            {fmtDuration(r.startedAt, r.completedAt)}
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-3">
-          <div className="flex-1">
-            <ProgressBar
-              value={overall}
-              tone={
-                r.status === 'FAILED'
-                  ? 'red'
-                  : r.failed > 0
-                    ? 'amber'
-                    : r.status === 'COMPLETED'
-                      ? 'green'
-                      : 'brand'
-              }
-              label="Overall progress"
-            />
-          </div>
-          <span className="w-14 text-right text-lg font-semibold tabular-nums" data-testid="overall-percent">
-            {overall}%
-          </span>
-        </div>
-        {/*
-          While it is still going. Once it has finished, the result card above is the summary, and a second
-          panel restating the same counts in different words — `Warnings 235` beside `References omitted
-          235` — makes a reader distrust both. The per-table breakdown is the tab directly below this.
-        */}
-        {active && (
           <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
             <Stat label="Tables" value={`${entitiesDone}/${r.entities.length}`} />
             <Stat
@@ -287,8 +294,8 @@ export function RunDetailPage() {
               onClick={() => setTab('errors')}
             />
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       {r.transformationMetrics && r.transformationMetrics.valuesTransformed > 0 && (
         <Card

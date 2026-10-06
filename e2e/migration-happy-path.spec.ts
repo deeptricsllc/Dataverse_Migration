@@ -232,7 +232,13 @@ test('demo happy path: plan, migrate and validate', async ({ page }) => {
   await expect(page).toHaveURL(/\/runs\//);
   await expect(page.getByTestId('run-entity-account')).toBeVisible();
   await expect(page.getByText('Completed with errors').first()).toBeVisible({ timeout: 180_000 });
-  await expect(page.getByTestId('overall-percent')).toContainText('%');
+  /*
+   * The result, not the progress bar. The live progress card stops once a run finishes — every line of it
+   * is in the result card or in the tables tab by then — so what this asserts is the summary a reader
+   * actually gets: the counts, in the first viewport.
+   */
+  await expect(page.getByTestId('run-counts')).toContainText('Attempted');
+  await expect(page.getByTestId('run-result-reason')).toBeVisible();
   // The tab is named for what is in it: failures, warnings, or both.
   await page.getByRole('tab', { name: /Failures|Warnings/ }).click();
   await expect(page.getByTestId('run-error-row').first()).toBeVisible();
