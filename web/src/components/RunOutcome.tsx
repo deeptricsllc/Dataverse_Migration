@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { describeCount } from '@shared/format';
 import { useQuery } from '@tanstack/react-query';
 import type { MigrationRunDto, RunFailureSummaryDto } from '@shared/domain';
 import { Button, Callout, Card, ErrorState, Pill, Spinner, cx } from './ui';
@@ -149,18 +150,18 @@ function Count({ label, value, tone }: { label: string; value: number; tone?: 'r
 function nextAction(run: MigrationRunDto): { kind: string; label: string } | null {
   if (run.status === 'RUNNING' || run.status === 'QUEUED') return null;
   if (run.failed > 0) {
-    return { kind: 'REVIEW_FAILURES', label: `Review ${run.failed.toLocaleString()} failed records.` };
+    return { kind: 'REVIEW_FAILURES', label: `Review ${describeCount(run.failed, 'failed record')}.` };
   }
   if (run.unresolved > 0) {
     return {
       kind: 'RECONCILE',
-      label: `Reconcile ${run.unresolved.toLocaleString()} records with an unconfirmed result.`,
+      label: `Reconcile ${describeCount(run.unresolved, 'record')} with an unconfirmed result.`,
     };
   }
   if (run.omittedReferences > 0) {
     return {
       kind: 'REVIEW_OMITTED',
-      label: `${run.omittedReferences.toLocaleString()} records are in the target without a reference the source gave them.`,
+      label: `${describeCount(run.omittedReferences, 'record is', 'records are')} in the target without a reference the source gave them.`,
     };
   }
   if (run.status === 'COMPLETED') {
@@ -191,14 +192,14 @@ function resultReason(run: MigrationRunDto): string | null {
       return 'Every record was written and every reference was set.';
     case 'COMPLETED_WITH_WARNINGS':
       return run.omittedReferences > 0
-        ? `No record failed. ${run.omittedReferences.toLocaleString()} records are in the target without a reference the source gave them.`
+        ? `No record failed. ${describeCount(run.omittedReferences, 'record is', 'records are')} in the target without a reference the source gave them.`
         : 'No record failed. Some records carry less than the source record did.';
     case 'COMPLETED_WITH_ERRORS':
       return run.failed > 0
-        ? `${run.failed.toLocaleString()} records are not in the target.`
+        ? `${describeCount(run.failed, 'record is', 'records are')} not in the target.`
         : 'A dataset did not complete. The failures are listed below.';
     case 'NEEDS_RECONCILIATION':
-      return `The result of ${run.unresolved.toLocaleString()} writes is unknown. Nothing can be claimed about those records until they are reconciled.`;
+      return `The result of ${describeCount(run.unresolved, 'write')} is unknown. Nothing can be claimed about ${run.unresolved === 1 ? 'that record' : 'those records'} until ${run.unresolved === 1 ? 'it is' : 'they are'} reconciled.`;
     case 'FAILED':
       return 'The run stopped before it finished.';
     case 'CANCELLED':
@@ -308,7 +309,7 @@ export function RunFailures({
           <div className="flex flex-wrap gap-2 text-xs">
             <Pill tone="slate">{data.retryable.toLocaleString()} retryable</Pill>
             {data.warnings > 0 && (
-              <Pill tone="amber">{data.warnings.toLocaleString()} recorded warnings</Pill>
+              <Pill tone="amber">{describeCount(data.warnings, 'recorded warning')}</Pill>
             )}
             <Pill tone="slate">{data.permanent.toLocaleString()} permanent</Pill>
           </div>
@@ -333,7 +334,7 @@ export function RunFailures({
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <p className="text-sm font-medium text-slate-900">{c.label}</p>
                       <p className="text-sm tabular-nums text-slate-700">
-                        {c.records.toLocaleString()} records
+                        {describeCount(c.records, 'record')}
                       </p>
                     </div>
                     {c.meaning && <p className="mt-0.5 text-sm text-slate-600">{c.meaning}</p>}
@@ -368,7 +369,7 @@ export function RunFailures({
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="text-sm font-medium text-amber-900">{w.label}</p>
                         <p className="text-sm tabular-nums text-amber-900">
-                          {w.records.toLocaleString()} records
+                          {describeCount(w.records, 'record')}
                         </p>
                       </div>
                       {w.meaning && <p className="mt-0.5 text-sm text-amber-900">{w.meaning}</p>}
@@ -386,7 +387,10 @@ export function RunFailures({
                 </ul>
               )}
               {d.unresolved > 0 && (
-                <Callout tone="warning" title={`${d.unresolved.toLocaleString()} records are unresolved`}>
+                <Callout
+                  tone="warning"
+                  title={`${describeCount(d.unresolved, 'record is', 'records are')} unresolved`}
+                >
                   The target accepted the request. The final write result is not confirmed. These records are
                   not failures, and retrying them without reconciliation can create duplicates.
                 </Callout>

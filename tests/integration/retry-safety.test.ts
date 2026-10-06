@@ -219,7 +219,7 @@ describe('whether another attempt is safe', () => {
     expect(blocked.state).toBe('RECONCILE_FIRST');
     expect(blocked.allowed, 'no control is offered').toBe(false);
     expect(blocked.needsReconciliation).toBeGreaterThan(0);
-    expect(blocked.reason).toContain('Another attempt would write them again');
+    expect(blocked.reason).toMatch(/Another attempt would write (it|them) again/);
     expect(blocked.excluded.some((e) => e.reason.includes('Somebody has to look'))).toBe(true);
 
     // 4. And the server refuses it, whatever a page might show.

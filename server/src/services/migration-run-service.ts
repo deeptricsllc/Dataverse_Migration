@@ -1,4 +1,5 @@
 import { and, asc, count, countDistinct, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { describeCount } from '../../../shared/format';
 import {
   isUnresolved,
   needsHumanReconciliation,
@@ -1323,8 +1324,9 @@ export class MigrationRunService {
         ...base,
         state: 'RECONCILE_FIRST',
         reason:
-          `${needsPerson.toLocaleString()} records may be in the target with nothing that identifies them. ` +
-          'Another attempt would write them again. Reconcile them first.',
+          `${describeCount(needsPerson, 'record', 'records')} may be in the target with nothing that ` +
+          `identifies ${needsPerson === 1 ? 'it' : 'them'}. Another attempt would write ` +
+          `${needsPerson === 1 ? 'it' : 'them'} again. Reconcile first.`,
         allowed: false,
       };
     }
@@ -1334,7 +1336,7 @@ export class MigrationRunService {
       state: 'SAFE_TO_RETRY',
       reason: neverStarted
         ? `This run was stopped before it read any records. Attempt ${run.attempt + 1} starts from the beginning.`
-        : `Attempt ${run.attempt + 1} would act on ${safe.toLocaleString()} records. ` +
+        : `Attempt ${run.attempt + 1} would act on ${describeCount(safe, 'record')}. ` +
           (excluded.length
             ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded. `
             : 'None are excluded. ') +

@@ -39,5 +39,5 @@ export const humanize = (s: string) =>
     .join(' ');
 
 /** "1 dataset", "12 datasets". Used wherever a count is read as a sentence rather than as a number. */
-export const describeCount = (n: number, noun: string) =>
-  `${n.toLocaleString()} ${n === 1 ? noun : `${noun}s`}`;
+// One copy, in shared, because the server writes some of these sentences and this writes the rest.
+export { describeCount } from '@shared/format';

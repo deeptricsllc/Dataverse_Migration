@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { describeCount } from '@shared/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MigrationRunDto } from '@shared/domain';
 import {
@@ -92,7 +93,10 @@ export function ReconciliationPanel({ run }: { run: MigrationRunDto }) {
 
   return (
     <div className="space-y-4" data-testid="reconciliation-panel">
-      <Callout tone="warning" title={`${q.data.total.toLocaleString()} records cannot be accounted for`}>
+      <Callout
+        tone="warning"
+        title={`${describeCount(q.data.total, 'record', 'records')} cannot be accounted for`}
+      >
         A write was started for each of these and the answer was lost. Each one may or may not be in the
         target. Until that is settled, another attempt is refused: writing a record that is already there
         would create a second copy.

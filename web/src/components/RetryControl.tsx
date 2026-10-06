@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { describeCount } from '@shared/format';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RotateCw } from 'lucide-react';
 import type { MigrationRunDto, RetrySafetyDto } from '@shared/domain';
@@ -107,7 +108,7 @@ export function RetryControl({ run }: { run: MigrationRunDto }) {
               onClick={() => retry.mutate()}
               data-testid="retry-run"
             >
-              {`Run attempt ${s.attempt + 1} on ${s.safe.toLocaleString()} records`}
+              {`Run attempt ${s.attempt + 1} on ${describeCount(s.safe, 'record')}`}
             </Button>
           ) : s.state === 'RECONCILE_FIRST' ? (
             <Link
@@ -115,7 +116,7 @@ export function RetryControl({ run }: { run: MigrationRunDto }) {
               className="inline-block rounded-md bg-brand-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-800"
               data-testid="open-reconciliation"
             >
-              {`Reconcile ${s.needsReconciliation.toLocaleString()} records`}
+              {`Reconcile ${describeCount(s.needsReconciliation, 'record')}`}
             </Link>
           ) : null}
         </div>
