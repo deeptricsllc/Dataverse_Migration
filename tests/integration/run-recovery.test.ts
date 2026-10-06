@@ -249,6 +249,16 @@ describe('a failure can be fixed, and the fix can be proved', () => {
     expect(one!.recordsWithProblems, 'and what it found at the time').toBeGreaterThan(0);
 
     /*
+     * And the run counts records where the result line counts records.
+     *
+     * Error rows are inserted per attempt and never replaced, so a run retried once holds roughly twice the
+     * rows for the same records. Both numbers are true; only one of them can sit beside `Failed` without
+     * asking the reader which to believe.
+     */
+    const current = await api.get<MigrationRunDto>(`/api/runs/${first.id}`);
+    expect(current.recordsWithProblems).toBeLessThanOrEqual(current.errorCount + current.warningCount);
+
+    /*
      * The failures of the first attempt are still attributed to it, which is what the recorded attempt on
      * each error row is for. A history that attributed everything to the current attempt would describe
      * the second attempt's state as though it had always been true.

@@ -342,12 +342,18 @@ export function RunDetailPage() {
             */
             {
               value: 'errors',
+              /*
+               * Records, not rows. A retry records its own failures without replacing the earlier ones, so a
+               * run of nine records retried once holds eighteen rows — and `Failures (18)` above `Failed 9`
+               * asks the reader to decide which number to believe. The rows are all still in the list, each
+               * with the attempt that recorded it.
+               */
               label:
                 r.errorCount > 0 && r.warningCount > 0
-                  ? `Failures and warnings (${r.errorCount + r.warningCount})`
+                  ? `Failures and warnings (${r.recordsWithProblems})`
                   : r.warningCount > 0
-                    ? `Warnings (${r.warningCount})`
-                    : `Failures (${r.errorCount})`,
+                    ? `Warnings (${r.recordsWithProblems})`
+                    : `Failures (${r.recordsWithProblems})`,
             },
             { value: 'records', label: 'Record inventory' },
             /*

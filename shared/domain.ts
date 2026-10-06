@@ -1373,8 +1373,19 @@ export interface MigrationRunDto extends RunCounters {
   options: PlanOptions;
   currentEntity: string | null;
   entities: MigrationRunEntityDto[];
+  /** Unresolved error rows. One record can carry several, and a retry adds its own. */
   errorCount: number;
+  /** Unresolved warning rows, counted the same way. */
   warningCount: number;
+  /**
+   * Records with something unresolved against them, however many rows that is.
+   *
+   * The number that can be compared with `failed`. A run of nine records retried once holds eighteen error
+   * rows — nine from each attempt, because error rows are inserted per attempt and never replaced — and a
+   * tab reading `Failures (18)` above a result line reading `Failed 9` asks the reader to decide which one
+   * to believe. Both are true; only one of them counts the same things the result line counts.
+   */
+  recordsWithProblems: number;
   /**
    * Records written into the target carrying less than the source record did.
    *

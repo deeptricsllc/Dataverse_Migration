@@ -74,7 +74,11 @@ export function RunFailureList({ run, codes }: { run: MigrationRunDto; codes: st
   return (
     <Card
       title="Failures and warnings"
-      subtitle="Each row is one record and one cause. A failure is isolated to its record; the run continues."
+      subtitle={
+        run.attempt > 1
+          ? 'Each row is one record, one cause and one attempt. A later attempt records its own result without replacing the earlier one, so a record retried once appears for each attempt that found something.'
+          : 'Each row is one record and one cause. A failure is isolated to its record; the run continues.'
+      }
       actions={
         <>
           <Select

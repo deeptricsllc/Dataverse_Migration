@@ -721,6 +721,10 @@ export class MigrationRunService {
      * the rows are there — so this is the number that is true for every run, old or new, and it is also
      * what decides whether a zero in the counter means `none` or `not recorded`.
      */
+    const [problemRecords] = await this.db
+      .select({ n: countDistinct(migrationErrors.sourceRecordId) })
+      .from(migrationErrors)
+      .where(and(eq(migrationErrors.runId, runId), eq(migrationErrors.resolved, false)));
     const omittedPerDataset = await this.db
       .select({ logicalName: migrationErrors.logicalName, n: countDistinct(migrationErrors.sourceRecordId) })
       .from(migrationErrors)
@@ -783,6 +787,7 @@ export class MigrationRunService {
       })),
       errorCount: Number(severityCounts.find((s) => s.severity === 'ERROR')?.n ?? 0),
       warningCount: Number(severityCounts.find((s) => s.severity === 'WARNING')?.n ?? 0),
+      recordsWithProblems: Number(problemRecords?.n ?? 0),
       // Summed from the same per-dataset evidence the datasets report, so the two can never disagree.
       omittedReferences: omittedPerDataset.reduce((n, o) => n + Number(o.n), 0),
       errorMessage: r.errorMessage,
