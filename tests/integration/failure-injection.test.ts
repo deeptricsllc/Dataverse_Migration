@@ -229,11 +229,23 @@ describe('the failure classes a migration produces', () => {
     expect(detail.outcome).toBe('FAILED');
     expect(detail.targetId, 'and it is not in the target').toBeNull();
 
-    // A permanent failure is excluded from a further attempt, with the reason given.
+    /*
+     * And the retry assessment says what another attempt would do about it.
+     *
+     * Not "excluded": the attempt does read this record again and write it again, and gets the same refusal
+     * unless the source data or the key changed in between — which is exactly what somebody does between
+     * attempts. Listing it as excluded produced a card that said it would act on three records directly
+     * above three excluded, which was the same three records in contradictory sentences.
+     */
     const safety = await api.get<RetrySafetyDto>(`/api/runs/${run.id}/retry-safety`);
-    const excluded = safety.excluded.find((e) => e.reason.includes('unable to succeed'))!;
-    expect(excluded, 'the records are named as excluded rather than quietly included').toBeTruthy();
-    expect(excluded.records).toBeGreaterThan(0);
+    expect(safety.safe, 'the record is one an attempt acts on').toBeGreaterThan(0);
+    expect(safety.reason, 'with the caution that it will be refused again').toMatch(
+      /another attempt repeats unless the source or the configuration has changed/,
+    );
+    expect(
+      safety.excluded.some((e) => e.reason.includes('unable to succeed')),
+      'and it is not also counted as untouched',
+    ).toBe(false);
   }, 900_000);
 
   /**

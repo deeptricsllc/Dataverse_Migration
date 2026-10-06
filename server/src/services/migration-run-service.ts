@@ -1241,13 +1241,16 @@ export class MigrationRunService {
     // The ones a person has to settle are in `run.unresolved` already, and an attempt must not act on them.
     const safe = Math.max(0, waiting - needsPerson);
     const workWaiting = waiting > 0 || neverStarted;
+    /*
+     * Excluded means the attempt will not touch it, and nothing else.
+     *
+     * A permanently failed record does not belong here, and listing it produced a card that said "Attempt 2
+     * would act on 3 records" directly above "3 excluded: unable to succeed on another attempt" — the same
+     * three records, counted twice, in contradictory sentences. The attempt does act on them: it reads them
+     * again and writes them again, and gets the same refusal unless something changed in the meantime.
+     * That is a caution about the outcome, which the reason carries, not an exclusion.
+     */
     const excluded: RetrySafetyDto['excluded'] = [];
-    if (permanentFailures > 0) {
-      excluded.push({
-        reason: 'The engine recorded these failures as unable to succeed on another attempt.',
-        records: permanentFailures,
-      });
-    }
     if (omittedPermanent > 0) {
       excluded.push({
         reason:
@@ -1333,8 +1336,16 @@ export class MigrationRunService {
         ? `This run was stopped before it read any records. Attempt ${run.attempt + 1} starts from the beginning.`
         : `Attempt ${run.attempt + 1} would act on ${safe.toLocaleString()} records. ` +
           (excluded.length
-            ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded.`
-            : 'None are excluded.'),
+            ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded. `
+            : 'None are excluded. ') +
+          /*
+           * The caution, where it applies. A record the engine recorded as unable to succeed will be read
+           * and written again and refused again, unless the source or the configuration changed since —
+           * which is exactly what somebody does between attempts, so this is a caution rather than a bar.
+           */
+          (permanentFailures > 0
+            ? `${permanentFailures.toLocaleString()} of them failed for a reason another attempt repeats unless the source or the configuration has changed.`
+            : ''),
       allowed: true,
     };
   }
