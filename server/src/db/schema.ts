@@ -709,6 +709,14 @@ export const migrationErrors = pgTable(
     retryable: boolean('retryable').notNull().default(false),
     httpStatus: integer('http_status'),
     attempts: integer('attempts').notNull().default(1),
+    /**
+     * Which attempt of the run recorded this failure.
+     *
+     * Nullable, and null for every row written before it existed: a retry history that claimed every old
+     * failure belonged to attempt 1 would be inventing the lineage it is there to show. Those rows read
+     * `Not recorded`.
+     */
+    runAttempt: integer('run_attempt'),
     resolved: boolean('resolved').notNull().default(false),
     createdAt: createdAt(),
   },

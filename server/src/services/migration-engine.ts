@@ -629,17 +629,23 @@ export class MigrationEngine {
     elog.info('Entity migration started');
 
     if (!s || !t) {
-      await this.persistErrors(run.id, entity.logicalName, null, [
-        {
-          operation: 'READ',
-          severity: 'ERROR',
-          code: 'TABLE_UNAVAILABLE',
-          message: !s
-            ? `Table ${entity.logicalName} is not available in the source connection`
-            : `Target table ${entity.targetLogicalName} is not available in the target connection`,
-          retryable: false,
-        },
-      ]);
+      await this.persistErrors(
+        run.id,
+        entity.logicalName,
+        null,
+        [
+          {
+            operation: 'READ',
+            severity: 'ERROR',
+            code: 'TABLE_UNAVAILABLE',
+            message: !s
+              ? `Table ${entity.logicalName} is not available in the source connection`
+              : `Target table ${entity.targetLogicalName} is not available in the target connection`,
+            retryable: false,
+          },
+        ],
+        run.attempt,
+      );
       await this.db
         .update(migrationRunEntities)
         .set({ status: 'FAILED', completedAt: new Date() })
@@ -764,7 +770,7 @@ export class MigrationEngine {
       // Failure reading the source: record it and continue with other tables.
       const re = toRecordError(err, 'READ');
       elog.error({ errorCode: re.code }, 'Entity read failed');
-      await this.persistErrors(run.id, entity.logicalName, null, [re]);
+      await this.persistErrors(run.id, entity.logicalName, null, [re], run.attempt);
       await this.refreshCounters(run.id, runEntity.id);
       await this.db
         .update(migrationRunEntities)
@@ -1572,7 +1578,8 @@ export class MigrationEngine {
           .update(migrationRecordMaps)
           .set({ deferredStatus: status, updatedAt: new Date() })
           .where(eq(migrationRecordMaps.id, map.id));
-        if (errors.length) await this.persistErrors(run.id, entity.logicalName, map.sourceId, errors);
+        if (errors.length)
+          await this.persistErrors(run.id, entity.logicalName, map.sourceId, errors, run.attempt);
         // Only a genuinely resolved record clears its earlier errors. An incomplete one has not settled
         // anything, and marking its rows resolved would erase the evidence that the reference is missing.
         if (status === 'RESOLVED') {
@@ -1647,7 +1654,7 @@ export class MigrationEngine {
             .update(migrationRecordMaps)
             .set({ auditStatus: 'FAILED', updatedAt: new Date() })
             .where(eq(migrationRecordMaps.id, map.id));
-          await this.persistErrors(run.id, entity.logicalName, map.sourceId, [e]);
+          await this.persistErrors(run.id, entity.logicalName, map.sourceId, [e], run.attempt);
         }
       });
       await ctx.heartbeat();
@@ -1742,7 +1749,7 @@ export class MigrationEngine {
       }
       // Warnings computed for records that were skipped (not written) are not actionable.
       const errors = r.outcome === 'SKIPPED' ? r.errors.filter((e) => e.severity === 'ERROR') : r.errors;
-      if (errors.length) await this.persistErrors(run.id, logicalName, r.sourceId, errors);
+      if (errors.length) await this.persistErrors(run.id, logicalName, r.sourceId, errors, run.attempt);
     }
   }
 
@@ -1751,11 +1758,14 @@ export class MigrationEngine {
     logicalName: string,
     sourceRecordId: string | null,
     errors: RecordError[],
+    /** Which attempt this is. Recorded per row so a retry's history can be read without inferring it. */
+    runAttempt?: number,
   ) {
     if (!errors.length) return;
     await this.db.insert(migrationErrors).values(
       errors.map((e) => ({
         runId,
+        runAttempt: runAttempt ?? null,
         logicalName,
         sourceRecordId,
         operation: e.operation,

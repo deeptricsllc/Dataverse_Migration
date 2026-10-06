@@ -12,7 +12,9 @@ import {
   type MigrationRunListItemDto,
   type MigrationRunStatus,
   type RecordMapDto,
+  type RecordOutcome,
   type RollbackPreviewDto,
+  type RunRecordDetailDto,
   type RunFailureSummaryDto,
   type RunTrigger,
 } from '../../../shared/domain';
@@ -630,7 +632,14 @@ export class MigrationRunService {
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
     const [row] = await this.db
-      .select({ run: migrationRuns, src, tgt, planName: migrationPlans.name, user: users.displayName })
+      .select({
+        run: migrationRuns,
+        src,
+        tgt,
+        planName: migrationPlans.name,
+        projectId: migrationPlans.projectId,
+        user: users.displayName,
+      })
       .from(migrationRuns)
       .innerJoin(src, eq(src.id, migrationRuns.sourceEnvironmentId))
       .innerJoin(tgt, eq(tgt.id, migrationRuns.targetEnvironmentId))
@@ -678,6 +687,7 @@ export class MigrationRunService {
     return {
       id: r.id,
       planId: r.planId,
+      projectId: row.projectId,
       planName: row.planName,
       status: r.status as MigrationRunDto['status'],
       phase: r.phase,
@@ -735,7 +745,14 @@ export class MigrationRunService {
     const src = alias(environments, 'src');
     const tgt = alias(environments, 'tgt');
     const rows = await this.db
-      .select({ run: migrationRuns, src, tgt, planName: migrationPlans.name, user: users.displayName })
+      .select({
+        run: migrationRuns,
+        src,
+        tgt,
+        planName: migrationPlans.name,
+        projectId: migrationPlans.projectId,
+        user: users.displayName,
+      })
       .from(migrationRuns)
       .innerJoin(src, eq(src.id, migrationRuns.sourceEnvironmentId))
       .innerJoin(tgt, eq(tgt.id, migrationRuns.targetEnvironmentId))
@@ -889,6 +906,12 @@ export class MigrationRunService {
       entity?: string;
       kind?: 'all' | 'retryable' | 'permanent';
       severity?: 'ERROR' | 'WARNING';
+      /** One recorded cause, as the summary's categories name it. */
+      code?: string;
+      /** One attempt of this run. Rows with no recorded attempt are excluded, not guessed at. */
+      attempt?: number;
+      /** A source record identifier. Matched exactly: a prefix search over millions of rows is a scan. */
+      sourceRecordId?: string;
       includeResolved?: boolean;
       limit: number;
       offset: number;
@@ -900,6 +923,9 @@ export class MigrationRunService {
     if (filter.kind === 'retryable') conditions.push(eq(migrationErrors.retryable, true));
     if (filter.kind === 'permanent') conditions.push(eq(migrationErrors.retryable, false));
     if (filter.severity) conditions.push(eq(migrationErrors.severity, filter.severity));
+    if (filter.code) conditions.push(eq(migrationErrors.errorCode, filter.code));
+    if (filter.attempt !== undefined) conditions.push(eq(migrationErrors.runAttempt, filter.attempt));
+    if (filter.sourceRecordId) conditions.push(eq(migrationErrors.sourceRecordId, filter.sourceRecordId));
     if (!filter.includeResolved) conditions.push(eq(migrationErrors.resolved, false));
     const [total] = await this.db
       .select({ n: count() })
@@ -909,25 +935,159 @@ export class MigrationRunService {
       .select()
       .from(migrationErrors)
       .where(and(...conditions))
-      .orderBy(desc(migrationErrors.createdAt))
+      /*
+       * Stable, which `createdAt` alone is not. Rows written in the same batch share a timestamp to the
+       * millisecond, so an ordering on it alone lets the database return them in any order it likes — and
+       * a paged list whose order changes between pages shows some rows twice and others not at all.
+       */
+      .orderBy(desc(migrationErrors.createdAt), asc(migrationErrors.id))
       .limit(filter.limit)
       .offset(filter.offset);
+    const targets = await this.targetTables(runId);
     return {
       total: Number(total?.n ?? 0),
-      items: rows.map((e) => ({
-        id: e.id,
-        entity: e.logicalName,
-        sourceRecordId: e.sourceRecordId,
-        operation: e.operation as MigrationErrorDto['operation'],
-        severity: e.severity,
-        errorCode: e.errorCode,
-        message: e.message,
-        retryable: e.retryable,
-        field: e.field,
-        attempts: e.attempts,
-        resolved: e.resolved,
-        createdAt: e.createdAt.toISOString(),
-      })),
+      items: rows.map((e) => this.toErrorDto(e, targets)),
+    };
+  }
+
+  /**
+   * Source table -> target table for this run's plan.
+   *
+   * Read once per page rather than per row. Null where the plan maps a table onto one of the same name,
+   * which is every Dataverse-to-Dataverse pair, and the UI then shows the one name it has.
+   */
+  private async targetTables(runId: string): Promise<Map<string, string | null>> {
+    const rows = await this.db
+      .select({
+        logicalName: migrationPlanEntities.logicalName,
+        targetLogicalName: migrationPlanEntities.targetLogicalName,
+      })
+      .from(migrationPlanEntities)
+      .innerJoin(migrationRuns, eq(migrationRuns.planId, migrationPlanEntities.planId))
+      .where(eq(migrationRuns.id, runId));
+    return new Map(
+      rows.map((r) => [
+        r.logicalName,
+        r.targetLogicalName && r.targetLogicalName !== r.logicalName ? r.targetLogicalName : null,
+      ]),
+    );
+  }
+
+  private toErrorDto(
+    e: typeof migrationErrors.$inferSelect,
+    targets: Map<string, string | null>,
+  ): MigrationErrorDto {
+    return {
+      id: e.id,
+      entity: e.logicalName,
+      sourceRecordId: e.sourceRecordId,
+      operation: e.operation as MigrationErrorDto['operation'],
+      severity: e.severity,
+      errorCode: e.errorCode,
+      message: e.message,
+      retryable: e.retryable,
+      field: e.field,
+      attempts: e.attempts,
+      resolved: e.resolved,
+      createdAt: e.createdAt.toISOString(),
+      httpStatus: e.httpStatus,
+      runAttempt: e.runAttempt,
+      targetTable: targets.get(e.logicalName) ?? null,
+      category: describeFailureCode(e.errorCode),
+    };
+  }
+
+  /**
+   * One record, and everything recorded about what happened to it.
+   *
+   * Assembled from the identity map and the error rows, and from nothing else. There is no live read of
+   * the source record here, deliberately: a failure screen that opens a connection to the source to
+   * decorate a row would fail exactly when the source is the thing that is broken, would read records the
+   * person may not be entitled to see, and would make a list of a thousand failures a thousand calls.
+   *
+   * So the evidence is what the engine wrote down while it ran. Where that does not include a value, the
+   * value is absent and the UI says `Not recorded`. It is a smaller answer than a source read would give
+   * and it is one that is always true.
+   */
+  async recordDetail(
+    ctx: Pick<RequestContext, 'organizationId'>,
+    runId: string,
+    entity: string,
+    sourceId: string,
+  ): Promise<RunRecordDetailDto> {
+    // Authorization, and a 404 for a run in another organization before anything else is read.
+    await this.loadRun(ctx.organizationId, runId);
+    const [map] = await this.db
+      .select()
+      .from(migrationRecordMaps)
+      .where(
+        and(
+          eq(migrationRecordMaps.runId, runId),
+          eq(migrationRecordMaps.logicalName, entity),
+          eq(migrationRecordMaps.sourceId, sourceId),
+        ),
+      );
+    const errorRows = await this.db
+      .select()
+      .from(migrationErrors)
+      .where(
+        and(
+          eq(migrationErrors.runId, runId),
+          eq(migrationErrors.logicalName, entity),
+          eq(migrationErrors.sourceRecordId, sourceId),
+        ),
+      )
+      .orderBy(desc(migrationErrors.createdAt), asc(migrationErrors.id));
+    /*
+     * A record with errors and no identity-map row is a real state, not a missing one: the engine refused
+     * it before it wrote anything, so there is nothing in the map to find. Reporting that as "not found"
+     * would hide the failure the person came here to read.
+     */
+    if (!map && errorRows.length === 0) throw notFound('Record');
+    const targets = await this.targetTables(runId);
+    const [dataset] = await this.db
+      .select({ displayName: migrationRunEntities.displayName })
+      .from(migrationRunEntities)
+      .where(and(eq(migrationRunEntities.runId, runId), eq(migrationRunEntities.logicalName, entity)));
+
+    /*
+     * The evidence a person needs to recognise the record and see what the failure names — not every
+     * column. A failure screen that dumped the whole record would put source data on a page about an
+     * error, which is both more than the question needs and more than the reader may be entitled to.
+     */
+    const evidence: RunRecordDetailDto['evidence'] = [
+      { label: 'Source record', value: sourceId, field: null },
+      { label: 'Record in target', value: map?.targetId ?? null, field: null },
+      { label: 'Matched by', value: map?.matchMethod ?? null, field: null },
+    ];
+    const deferred = map?.deferredLookups ?? {};
+    for (const [field, lookup] of Object.entries(deferred)) {
+      evidence.push({
+        label: `Reference in ${field}`,
+        value: `${lookup.logicalName} ${lookup.id}`,
+        field,
+      });
+    }
+    // A field a failure names, where the record map holds no value for it. The field is evidence itself.
+    for (const field of new Set(errorRows.map((e) => e.field).filter((f): f is string => !!f))) {
+      if (!(field in deferred)) evidence.push({ label: `Value in ${field}`, value: null, field });
+    }
+
+    return {
+      runId,
+      runAttempt: map?.runAttempt ?? null,
+      entity,
+      displayName: dataset?.displayName ?? entity,
+      targetTable: targets.get(entity) ?? null,
+      sourceId,
+      targetId: map?.targetId ?? null,
+      outcome: (map?.outcome ?? 'FAILED') as RecordOutcome,
+      matchMethod: map?.matchMethod ?? null,
+      writeState: map?.writeState ?? null,
+      deferredStatus: map?.deferredStatus ?? null,
+      evidence,
+      errors: errorRows.map((e) => this.toErrorDto(e, targets)),
+      updatedAt: map?.updatedAt.toISOString() ?? null,
     };
   }
 

@@ -736,3 +736,39 @@ export const Td = ({
 export function Mono({ children, className }: { children: ReactNode; className?: string }) {
   return <code className={cx('font-mono text-[12px] text-slate-600', className)}>{children}</code>;
 }
+
+/**
+ * Page controls for a server-paged list.
+ *
+ * `pageSize` has to match what the caller asked the server for, or the range it prints describes a
+ * different page from the one on screen. Fifty is the default because every list here uses it.
+ */
+export function Pager({
+  page,
+  total,
+  onPage,
+  pageSize = 50,
+}: {
+  page: number;
+  total: number;
+  onPage: (p: number) => void;
+  pageSize?: number;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const fmt = (n: number) => n.toLocaleString();
+  return (
+    <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2 text-xs text-slate-600">
+      <span>
+        {fmt(page * pageSize + 1)}–{fmt(Math.min(total, (page + 1) * pageSize))} of {fmt(total)}
+      </span>
+      <span className="flex gap-2">
+        <Button size="sm" disabled={page === 0} onClick={() => onPage(page - 1)}>
+          Previous
+        </Button>
+        <Button size="sm" disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}>
+          Next
+        </Button>
+      </span>
+    </div>
+  );
+}

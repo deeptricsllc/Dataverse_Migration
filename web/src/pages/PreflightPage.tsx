@@ -12,6 +12,7 @@ import {
   ExportButton,
   Mono,
   PageHeader,
+  Pager,
   Pill,
   Select,
   Spinner,
@@ -23,7 +24,6 @@ import {
 } from '../components/ui';
 import { get, post, qs } from '../lib/api';
 import { fmtDate, fmtNumber } from '../lib/format';
-import { Pager } from './RunDetailPage';
 
 const PAGE = 50;
 

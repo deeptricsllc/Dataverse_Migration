@@ -1,8 +1,8 @@
 import type {
-  MigrationErrorDto,
   MigrationRunDto,
   RecordMapDto,
   RollbackPreviewDto,
+  RunFailureSummaryDto,
   ValidationRunDto,
 } from '@shared/domain';
 import { TERMINAL_RUN_STATUSES } from '@shared/domain';
@@ -17,13 +17,14 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   Modal,
   Mono,
   PageHeader,
+  Pager,
   Pill,
   ProgressBar,
   Select,
-  ExportButton,
   Spinner,
   Stat,
   StatusBadge,
@@ -33,6 +34,7 @@ import {
   Th,
 } from '../components/ui';
 import { RunFailures, RunOutcome } from '../components/RunOutcome';
+import { RunFailureList } from '../components/RunFailureList';
 import { get, post, qs } from '../lib/api';
 import { fmtDate, fmtDuration, fmtNumber, pct } from '../lib/format';
 
@@ -413,7 +415,7 @@ export function RunDetailPage() {
           <RunFailures run={r} onOpenRecords={() => setTab('records')} />
         </div>
       )}
-      {tab === 'errors' && <ErrorsPanel run={r} />}
+      {tab === 'errors' && <FailuresTab run={r} />}
       {tab === 'records' && <RecordsPanel run={r} />}
       {tab === 'rollback' && <RollbackPanel runId={r.id} />}
 
@@ -547,124 +549,23 @@ function AttemptsPanel({ run }: { run: MigrationRunDto }) {
   );
 }
 
-function ErrorsPanel({ run }: { run: MigrationRunDto }) {
-  const [kind, setKind] = useState<'all' | 'retryable' | 'permanent'>('all');
-  const [entity, setEntity] = useState('');
-  const [severity, setSeverity] = useState<'' | 'ERROR' | 'WARNING'>('');
-  const [page, setPage] = useState(0);
-  const q = useQuery({
-    queryKey: ['run-errors', run.id, kind, entity, severity, page, run.processed, run.status],
-    queryFn: () =>
-      get<{ items: MigrationErrorDto[]; total: number }>(
-        `/api/runs/${run.id}/errors${qs({ kind, entity: entity || undefined, severity: severity || undefined, limit: PAGE, offset: page * PAGE })}`,
-      ),
+/**
+ * The failure list, with the causes this run recorded.
+ *
+ * The cause filter offers what the summary found rather than every code the product knows, so the list
+ * cannot offer a filter that matches nothing.
+ */
+function FailuresTab({ run }: { run: MigrationRunDto }) {
+  const summary = useQuery({
+    queryKey: ['run-failures', run.id, run.processed, run.status],
+    queryFn: () => get<RunFailureSummaryDto>(`/api/runs/${run.id}/failures`),
   });
-  return (
-    <Card
-      title="Record errors and warnings"
-      subtitle="Failures are isolated per record; the run continues. Retryable errors (throttling, transient or unresolved references) may succeed on retry."
-      actions={
-        <>
-          <Select
-            label="Error kind"
-            value={kind}
-            onChange={(v) => {
-              setKind(v as typeof kind);
-              setPage(0);
-            }}
-            options={[
-              { value: 'all', label: 'All' },
-              { value: 'retryable', label: 'Retryable' },
-              { value: 'permanent', label: 'Permanent' },
-            ]}
-          />
-          <Select
-            label="Severity"
-            value={severity}
-            onChange={(v) => {
-              setSeverity(v as typeof severity);
-              setPage(0);
-            }}
-            options={[
-              { value: '', label: 'Errors & warnings' },
-              { value: 'ERROR', label: 'Errors' },
-              { value: 'WARNING', label: 'Warnings' },
-            ]}
-          />
-          <Select
-            label="Table"
-            value={entity}
-            onChange={(v) => {
-              setEntity(v);
-              setPage(0);
-            }}
-            options={[
-              { value: '', label: 'All tables' },
-              ...run.entities.map((e) => ({ value: e.logicalName, label: e.displayName })),
-            ]}
-          />
-          <ExportButton
-            href={`/api/runs/${run.id}/errors.csv${qs({ kind, entity: entity || undefined, severity: severity || undefined })}`}
-          />
-        </>
-      }
-      bodyClassName="p-0"
-    >
-      {q.isLoading && <Spinner />}
-      {q.error && (
-        <div className="p-4">
-          <ErrorState error={q.error} />
-        </div>
-      )}
-      {q.data && q.data.total === 0 && (
-        <EmptyState title="No errors" description="Nothing matches these filters." />
-      )}
-      {q.data && q.data.total > 0 && (
-        <>
-          <Table>
-            <thead className="bg-slate-50">
-              <tr>
-                <Th>Table</Th>
-                <Th>Source record</Th>
-                <Th>Operation</Th>
-                <Th>Code</Th>
-                <Th>Message</Th>
-                <Th>Type</Th>
-                <Th>Time</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {q.data.items.map((e) => (
-                <tr key={e.id} data-testid="run-error-row">
-                  <Td>{e.entity}</Td>
-                  <Td>
-                    <Mono>{e.sourceRecordId ?? '—'}</Mono>
-                  </Td>
-                  <Td className="text-xs">
-                    {e.operation}
-                    {e.field && <div className="text-slate-500">field {e.field}</div>}
-                  </Td>
-                  <Td>
-                    <Mono>{e.errorCode}</Mono>
-                  </Td>
-                  <Td className="max-w-md text-xs">{e.message}</Td>
-                  <Td className="space-y-1">
-                    <StatusBadge status={e.severity} />
-                    <div>{e.retryable ? <Pill tone="blue">retryable</Pill> : <Pill>permanent</Pill>}</div>
-                    {e.attempts > 1 && (
-                      <div className="text-[11px] text-slate-500">{e.attempts} attempts</div>
-                    )}
-                  </Td>
-                  <Td className="whitespace-nowrap text-xs text-slate-500">{fmtDate(e.createdAt)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-          <Pager page={page} total={q.data.total} onPage={setPage} />
-        </>
-      )}
-    </Card>
-  );
+  const codes = [
+    ...new Set(
+      (summary.data?.datasets ?? []).flatMap((d) => [...d.categories, ...d.warnings].map((c) => c.code)),
+    ),
+  ].sort();
+  return <RunFailureList run={run} codes={codes} />;
 }
 
 function RecordsPanel({ run }: { run: MigrationRunDto }) {
@@ -819,24 +720,5 @@ function RollbackPanel({ runId }: { runId: string }) {
         </ul>
       </div>
     </Card>
-  );
-}
-
-export function Pager({ page, total, onPage }: { page: number; total: number; onPage: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / PAGE));
-  return (
-    <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2 text-xs text-slate-600">
-      <span>
-        {fmtNumber(page * PAGE + 1)}–{fmtNumber(Math.min(total, (page + 1) * PAGE))} of {fmtNumber(total)}
-      </span>
-      <span className="flex gap-2">
-        <Button size="sm" disabled={page === 0} onClick={() => onPage(page - 1)}>
-          Previous
-        </Button>
-        <Button size="sm" disabled={page + 1 >= pages} onClick={() => onPage(page + 1)}>
-          Next
-        </Button>
-      </span>
-    </div>
   );
 }

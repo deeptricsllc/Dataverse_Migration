@@ -779,10 +779,30 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         entity: tableName.optional(),
         kind: z.enum(['all', 'retryable', 'permanent']).optional(),
         severity: z.enum(['ERROR', 'WARNING']).optional(),
+        /* One recorded cause, as the summary's categories name it. Bounded: it is matched exactly. */
+        code: z.string().min(1).max(120).optional(),
+        attempt: z.coerce.number().int().min(1).max(1000).optional(),
+        /*
+         * One record, by its source identifier. Matched exactly rather than as a prefix, because a
+         * contains-search over a run with millions of error rows is a table scan with a filter box on it.
+         */
+        sourceRecordId: z.string().min(1).max(200).optional(),
         includeResolved: z.enum(['true', 'false']).optional(),
       })
       .parse(req.query);
     return s.runs.errors(req.ctx, id, { ...q, includeResolved: q.includeResolved === 'true' });
+  });
+  /**
+   * One record: what it is, what went wrong, and which attempt recorded it.
+   *
+   * The end of the drilldown that starts at the run. The table is in the path because a source identifier
+   * is only unique within its table.
+   */
+  app.get('/api/runs/:id/records/:entity/:sourceId', async (req) => {
+    const { id, entity, sourceId } = z
+      .object({ id: uuid, entity: tableName, sourceId: z.string().min(1).max(200) })
+      .parse(req.params);
+    return s.runs.recordDetail(req.ctx, id, entity, sourceId);
   });
   app.get('/api/runs/:id/records', async (req) => {
     const { id } = idParams.parse(req.params);

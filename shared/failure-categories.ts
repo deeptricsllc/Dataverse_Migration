@@ -211,3 +211,60 @@ export function describeFailureCode(code: string): FailureCategory {
   if (!known) return { code, label: code, meaning: null, action: null, known: false };
   return { code, label: known.label, meaning: known.meaning, action: known.action, known: true };
 }
+
+/**
+ * Where a failure is fixed.
+ *
+ * Not advice — a destination. `action` on a category says what to do; this says where to do it, and only
+ * for the codes where a place in this product actually changes the outcome. A code that is not here gets
+ * no button, because an action that leads somewhere unrelated is worse than no action: it costs the person
+ * the trip and teaches them not to trust the next one.
+ *
+ * Retrying is deliberately absent. A throttled or timed-out record is fixed by running it again, which the
+ * run page already offers, and a second retry control on the same screen is a second thing to reason about.
+ */
+export type CorrectionTarget =
+  /** The datasets in this migration: add the table the reference points at. */
+  | 'SOURCE_DATA'
+  /** Field mapping for this dataset. */
+  | 'MAPPING'
+  /** How records are matched in the target: identity strategy, keys, conflict strategy. */
+  | 'MATCHING'
+  /** Which target user or team each source owner becomes. */
+  | 'OWNERS'
+  /** The connection itself: permission, authentication, read-only. */
+  | 'CONNECTION'
+  /** The load order and which references are deferred. */
+  | 'DEPENDENCIES';
+
+const CORRECTIONS: Record<string, { target: CorrectionTarget; label: string }> = {
+  LOOKUP_UNRESOLVED: { target: 'SOURCE_DATA', label: 'Add the referenced table' },
+  REFERENCE_NOT_FOUND: { target: 'SOURCE_DATA', label: 'Add the referenced table' },
+  LOOKUP_PENDING_MIGRATION: { target: 'DEPENDENCIES', label: 'Review the load order' },
+  MAPPING_INVALID: { target: 'MAPPING', label: 'Open the mapping' },
+  VALIDATION: { target: 'MAPPING', label: 'Open the mapping' },
+  NOT_FOUND: { target: 'MAPPING', label: 'Check the table mapping' },
+  AMBIGUOUS_TARGET_MATCH: { target: 'MATCHING', label: 'Change how records are matched' },
+  DUPLICATE_SOURCE_KEY: { target: 'MATCHING', label: 'Change how records are matched' },
+  ALTERNATE_KEY_MISSING: { target: 'MATCHING', label: 'Change how records are matched' },
+  BUSINESS_KEY_NOT_CONFIGURED: { target: 'MATCHING', label: 'Select the identifying fields' },
+  BUSINESS_KEY_INCOMPLETE: { target: 'MATCHING', label: 'Select the identifying fields' },
+  ALREADY_EXISTS: { target: 'MATCHING', label: 'Change the conflict strategy' },
+  DUPLICATE_RECORD: { target: 'MATCHING', label: 'Change the conflict strategy' },
+  PRINCIPAL_UNRESOLVED: { target: 'OWNERS', label: 'Map the owner' },
+  PRINCIPAL_FALLBACK_APPLIED: { target: 'OWNERS', label: 'Map the owner' },
+  FORBIDDEN: { target: 'CONNECTION', label: 'Open the connection' },
+  AUTH_REQUIRED: { target: 'CONNECTION', label: 'Open the connection' },
+  READ_ONLY_MODE: { target: 'CONNECTION', label: 'Open the connection' },
+  TABLE_UNAVAILABLE: { target: 'CONNECTION', label: 'Open the connection' },
+};
+
+/**
+ * Where this failure is fixed, or null when this product has no place that fixes it.
+ *
+ * Null is a real answer, and it is the one for a throttled request, a timeout, a lost connection and a
+ * server error: nothing in the configuration is wrong, so there is nothing to open.
+ */
+export function correctionFor(code: string): { target: CorrectionTarget; label: string } | null {
+  return CORRECTIONS[code.split(':')[0] ?? code] ?? null;
+}

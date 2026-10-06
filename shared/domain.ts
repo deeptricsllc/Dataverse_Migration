@@ -1358,6 +1358,13 @@ export interface MigrationRunDto extends RunCounters {
   transformationMetrics?: TransformationMetricsDto | null;
   id: string;
   planId: string;
+  /**
+   * The project this run belongs to.
+   *
+   * Carried so a failure can link to the place that fixes it. Null for runs made before projects owned
+   * migrations; a failure in one of those names the correction without offering to navigate to it.
+   */
+  projectId: string | null;
   planName: string;
   status: MigrationRunStatus;
   phase: string | null;
@@ -1464,6 +1471,8 @@ export interface MigrationRunListItemDto {
   createdBy: string | null;
 }
 
+import type { FailureCategory } from './failure-categories';
+
 export interface MigrationErrorDto {
   id: string;
   entity: string;
@@ -1477,6 +1486,47 @@ export interface MigrationErrorDto {
   attempts: number;
   resolved: boolean;
   createdAt: string;
+  /**
+   * What the target answered with, where the failure came from the target at all.
+   *
+   * Null for a failure the engine decided by itself — an unresolvable reference, an incomplete business
+   * key — because no request was made. Shown as `Not recorded` rather than as a zero.
+   */
+  httpStatus: number | null;
+  /** Which attempt recorded this. Null for rows written before the product recorded it. */
+  runAttempt: number | null;
+  /** The target table this dataset writes to. Null where the plan maps it to a table of the same name. */
+  targetTable: string | null;
+  /** What this code means and what to do about it, where this product defines the code. */
+  category: FailureCategory;
+}
+
+/**
+ * One record, and everything recorded about what happened to it.
+ *
+ * The answer to the question a consultant asks about a single row: what is this record, what went wrong,
+ * and what do I do. Assembled from the identity map and the error rows, and from nothing else — a field
+ * that was not recorded is reported as not recorded.
+ */
+export interface RunRecordDetailDto {
+  runId: string;
+  /** Which attempt this record was last touched by. Null for runs that predate the column. */
+  runAttempt: number | null;
+  entity: string;
+  displayName: string;
+  targetTable: string | null;
+  sourceId: string;
+  targetId: string | null;
+  outcome: RecordOutcome;
+  /** How the engine matched this record in the target, where it matched one. */
+  matchMethod: string | null;
+  writeState: string | null;
+  deferredStatus: string | null;
+  /** The source values that identify this record, and the values the failures name. Never every column. */
+  evidence: { label: string; value: string | null; field: string | null }[];
+  /** Every failure and warning recorded against this record, newest first. */
+  errors: MigrationErrorDto[];
+  updatedAt: string | null;
 }
 
 /**
