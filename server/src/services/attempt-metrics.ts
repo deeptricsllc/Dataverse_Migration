@@ -1,6 +1,6 @@
-import { and, asc, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, countDistinct, eq, isNotNull, sql } from 'drizzle-orm';
 import type { AppDb } from '../db/client';
-import { migrationRecordMaps } from '../db/schema';
+import { migrationErrors, migrationRecordMaps } from '../db/schema';
 import type { RunAttemptSummary } from '../../../shared/domain';
 
 /**
@@ -27,6 +27,12 @@ import type { RunAttemptSummary } from '../../../shared/domain';
  * updated in attempt 2 appears under attempt 2 only. The run total stays right; attempt 1's history of
  * that one record does not survive. Recording it would mean a row per record per attempt, which is a
  * different and much larger thing than a column.
+ *
+ * Which had a worse consequence than the limit itself: an attempt every one of whose records was re-done by
+ * the next attempt had no row at all. A run at attempt 2 showed a history containing only attempt 2, as
+ * though the first had never happened — and the first attempt is what somebody auditing the migration is
+ * looking for. So `recordsWithProblems` is read from the error rows, which are inserted per attempt and
+ * never replaced, and an attempt that recorded anything appears whatever a later attempt did afterwards.
  */
 export async function attemptMetrics(db: AppDb, runId: string): Promise<RunAttemptSummary[]> {
   const grouped = await db
@@ -42,22 +48,37 @@ export async function attemptMetrics(db: AppDb, runId: string): Promise<RunAttem
     .groupBy(migrationRecordMaps.runAttempt, migrationRecordMaps.outcome)
     .orderBy(asc(migrationRecordMaps.runAttempt));
 
+  /*
+   * Failures and warnings per attempt, counted per record, from rows that are never overwritten. This is
+   * what keeps an earlier attempt in the history after a later one has re-done its records.
+   */
+  const problems = await db
+    .select({
+      attempt: migrationErrors.runAttempt,
+      records: countDistinct(migrationErrors.sourceRecordId),
+    })
+    .from(migrationErrors)
+    .where(eq(migrationErrors.runId, runId))
+    .groupBy(migrationErrors.runAttempt);
+
   const byAttempt = new Map<number | null, RunAttemptSummary>();
+  const blank = (key: number | null, firstAt: string, lastAt: string): RunAttemptSummary => ({
+    attempt: key,
+    recordsWithProblems: null,
+    created: 0,
+    updated: 0,
+    unchanged: 0,
+    skipped: 0,
+    failed: 0,
+    unresolved: 0,
+    firstRecordAt: firstAt,
+    lastRecordAt: lastAt,
+  });
   for (const row of grouped) {
     const key = row.attempt ?? null;
     let summary = byAttempt.get(key);
     if (!summary) {
-      summary = {
-        attempt: key,
-        created: 0,
-        updated: 0,
-        unchanged: 0,
-        skipped: 0,
-        failed: 0,
-        unresolved: 0,
-        firstRecordAt: row.firstAt,
-        lastRecordAt: row.lastAt,
-      };
+      summary = blank(key, row.firstAt, row.lastAt);
       byAttempt.set(key, summary);
     }
     const n = Number(row.n);
@@ -83,6 +104,21 @@ export async function attemptMetrics(db: AppDb, runId: string): Promise<RunAttem
     }
     if (row.firstAt < summary.firstRecordAt) summary.firstRecordAt = row.firstAt;
     if (row.lastAt > summary.lastRecordAt) summary.lastRecordAt = row.lastAt;
+  }
+
+  /*
+   * And the attempts that recorded problems, including any whose records a later attempt has since taken
+   * over. Without this an attempt that failed every record and was then entirely re-done would not appear.
+   */
+  for (const row of problems) {
+    const key = row.attempt ?? null;
+    let summary = byAttempt.get(key);
+    if (!summary) {
+      // No outcome rows left under this attempt: every record it touched belongs to a later one now.
+      summary = blank(key, '', '');
+      byAttempt.set(key, summary);
+    }
+    summary.recordsWithProblems = Number(row.records);
   }
 
   // Null last: rows from before the attempt was recorded are "not known", not attempt zero.

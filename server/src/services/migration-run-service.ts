@@ -481,6 +481,22 @@ export class MigrationRunService {
           ),
         );
       if (active) throw conflict('Another migration is already active against this target environment');
+      /*
+       * And refused when there is nothing for an attempt to do.
+       *
+       * Last, so that the specific refusals above keep their own wording: a run blocked on records nobody
+       * can account for needs to be told that, with the records named, rather than told there is nothing to
+       * do. This is the remaining case — a run whose records are all written, carrying references no further
+       * attempt can set. Without it a retry would re-read the whole source, match every record, change
+       * nothing, and report a second attempt that achieved nothing.
+       *
+       * The page reads `retrySafety` to decide whether to offer the control. A rule enforced in one of the
+       * two places is not enforced, so both read the same assessment.
+       */
+      const assessment = await this.retrySafety(ctx, runId);
+      if (assessment.safe === 0 && assessment.state === 'NOTHING_TO_RETRY') {
+        throw conflict(assessment.reason, { excluded: assessment.excluded } as never);
+      }
       await this.requeue(ctx, runId, true);
       await this.audit.record({
         ...auditBase,
@@ -1075,11 +1091,14 @@ export class MigrationRunService {
         ),
       );
     const needsPerson = inDoubt.filter((r) => needsHumanReconciliation(r.writeState, r.evidence)).length;
-    const settledByAttempt = inDoubt.length - needsPerson;
 
     /*
      * 5 and 6: failures, counted per record rather than per row. One record can carry several errors, and
      * a retry acts on records — a count of rows would promise to retry more records than exist.
+     *
+     * These two split the exclusions. What an attempt would *act on* is counted from the run's own counters
+     * below, not from here: an error row can be marked resolved while its record is still outstanding, and a
+     * prediction built on the error rows refused resumes the engine would have completed.
      */
     const failureGroups = await this.db
       .select({
@@ -1097,12 +1116,25 @@ export class MigrationRunService {
       .groupBy(migrationErrors.retryable);
     const countOf = (retryable: boolean) =>
       Number(failureGroups.find((g) => g.retryable === retryable)?.records ?? 0);
-    const retryableFailures = countOf(true);
+    // Recorded for the wording of the exclusions. `waiting` above is what decides whether an attempt runs.
+    void countOf(true);
     const permanentFailures = countOf(false);
 
-    // 7: records written with a reference omitted. The deferred pass of a further attempt can set these.
-    const [omitted] = await this.db
-      .select({ records: countDistinct(migrationErrors.sourceRecordId) })
+    /*
+     * 7: records written with a reference omitted, split by whether a further attempt would do anything
+     * about it.
+     *
+     * The engine's own classification decides, not the fact that a reference is missing. A reference the
+     * plan deferred is set by the next attempt's second pass. A reference dropped when the record was first
+     * prepared is not: the record is written, so the next attempt matches it and leaves it alone, and the
+     * reference stays empty however many attempts are made. Counting those as safe would promise work that
+     * will not happen.
+     */
+    const omittedGroups = await this.db
+      .select({
+        retryable: migrationErrors.retryable,
+        records: countDistinct(migrationErrors.sourceRecordId),
+      })
       .from(migrationErrors)
       .where(
         and(
@@ -1111,15 +1143,67 @@ export class MigrationRunService {
           eq(migrationErrors.resolved, false),
           inArray(migrationErrors.errorCode, [...MATERIAL_WARNING_CODES]),
         ),
-      );
-    const omittedReferences = Number(omitted?.records ?? 0);
+      )
+      .groupBy(migrationErrors.retryable);
+    const omittedOf = (retryable: boolean) =>
+      Number(omittedGroups.find((g) => g.retryable === retryable)?.records ?? 0);
+    const omittedRetryable = omittedOf(true);
+    const omittedPermanent = omittedOf(false);
 
-    const safe = retryableFailures + omittedReferences + settledByAttempt;
+    /*
+     * 8: records the run never reached.
+     *
+     * A cancelled run's remaining work is not a failure and not in doubt — those records simply have no row
+     * yet. They are the whole point of resuming a cancelled run, so leaving them out would make the
+     * assessment refuse the one thing somebody cancels a run in order to do later.
+     *
+     * A run cancelled before it read anything is the case that cannot be counted: its totals are zero
+     * because nothing was counted, not because there is nothing to do. So the work waiting is unknown
+     * rather than none, which is a different answer and leads to a different one here.
+     */
+    const neverStarted = run.processed === 0 && run.total === 0;
+    const unreached = Math.max(0, run.total - run.processed);
+
+    /*
+     * References the next attempt's second pass would set, from the per-dataset counters.
+     *
+     * A deferred reference that is still pending, incomplete or failed is work the second pass of a further
+     * attempt does. This is read from the counters rather than from the error rows for the same reason as
+     * the failures above.
+     */
+    const [deferred] = await this.db
+      .select({
+        outstanding: sql<number>`coalesce(sum(${migrationRunEntities.deferredPending} + ${migrationRunEntities.deferredIncomplete} + ${migrationRunEntities.deferredFailed}), 0)`,
+      })
+      .from(migrationRunEntities)
+      .where(eq(migrationRunEntities.runId, runId));
+
+    /*
+     * What a further attempt would act on, from the counters the engine maintains.
+     *
+     * Every record it would touch is in one of these: lost, in doubt, never reached, or carrying a deferred
+     * reference that is not set. Records written with a reference dropped before the write are deliberately
+     * not here — an attempt matches them and leaves them alone — and they appear under `excluded` instead.
+     */
+    const waiting =
+      run.failed + run.unresolved + unreached + Number(deferred?.outstanding ?? 0) + omittedRetryable;
+    // The ones a person has to settle are in `run.unresolved` already, and an attempt must not act on them.
+    const safe = Math.max(0, waiting - needsPerson);
+    const workWaiting = waiting > 0 || neverStarted;
     const excluded: RetrySafetyDto['excluded'] = [];
     if (permanentFailures > 0) {
       excluded.push({
         reason: 'The engine recorded these failures as unable to succeed on another attempt.',
         records: permanentFailures,
+      });
+    }
+    if (omittedPermanent > 0) {
+      excluded.push({
+        reason:
+          'These records are in the target without a reference the source gave them. A further attempt ' +
+          'matches them and leaves them alone. Migrate the referenced dataset, then run a migration that ' +
+          'updates records that already match.',
+        records: omittedPermanent,
       });
     }
     if (needsPerson > 0) {
@@ -1139,7 +1223,7 @@ export class MigrationRunService {
      * alone told somebody that a further attempt "does not apply to a run in this state" — which is
      * accurate and sounds like a refusal. There is nothing to refuse.
      */
-    if (safe === 0 && needsPerson === 0 && !ACTIVE.includes(run.status)) {
+    if (!workWaiting && needsPerson === 0 && !ACTIVE.includes(run.status)) {
       return {
         ...base,
         state: 'NOTHING_TO_RETRY',
@@ -1194,11 +1278,12 @@ export class MigrationRunService {
     return {
       ...base,
       state: 'SAFE_TO_RETRY',
-      reason:
-        `Attempt ${run.attempt + 1} would act on ${safe.toLocaleString()} records. ` +
-        (excluded.length
-          ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded.`
-          : 'None are excluded.'),
+      reason: neverStarted
+        ? `This run was stopped before it read any records. Attempt ${run.attempt + 1} starts from the beginning.`
+        : `Attempt ${run.attempt + 1} would act on ${safe.toLocaleString()} records. ` +
+          (excluded.length
+            ? `${excluded.reduce((n, e) => n + e.records, 0).toLocaleString()} are excluded.`
+            : 'None are excluded.'),
       allowed: true,
     };
   }

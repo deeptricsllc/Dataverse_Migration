@@ -171,7 +171,20 @@ export function prepareRecord(input: PrepareInput): PreparedRecord {
           code: 'LOOKUP_UNRESOLVED',
           field: m.sourceField,
           message: `Lookup ${m.sourceField} references ${raw.logicalName} ${raw.id}, which does not exist in the target; the value is left empty`,
-          retryable: true,
+          /**
+           * Not retryable, and this said otherwise for as long as it existed.
+           *
+           * The record is written, without this reference. Another attempt of the same run reads the source
+           * again, matches the record it already created, and leaves it alone — so the reference stays
+           * empty however many attempts are made. `retryable: true` here was a promise the engine could not
+           * keep, and it reached the retry assessment, which told somebody a further attempt would act on
+           * records it was going to skip.
+           *
+           * What does set it: migrating the referenced dataset, then a run whose conflict strategy updates
+           * records that already match. The required-lookup case a few lines above is genuinely retryable,
+           * because there the record is not in the target at all; so is the deferred pass, which re-runs.
+           */
+          retryable: false,
         });
       }
       continue;

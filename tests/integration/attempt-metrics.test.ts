@@ -129,7 +129,11 @@ describe('per-attempt metrics', () => {
     // And the distinction is stated rather than left for the reader to infer.
     expect(result.means).toMatch(/final accountability/i);
     expect(result.means).toMatch(/execution history/i);
-    expect(result.means, 'including what it cannot show').toMatch(/not separately visible/i);
+    expect(result.means, 'including what an outcome column cannot show').toMatch(
+      /shows nothing for work a later attempt has since redone/i,
+    );
+    // And where that history is kept instead, which is the part a reader needs next.
+    expect(result.means, 'and where the history is kept').toMatch(/no later attempt overwrites/i);
   }, 600_000);
 
   it('reports one attempt for a run that needed only one', async () => {

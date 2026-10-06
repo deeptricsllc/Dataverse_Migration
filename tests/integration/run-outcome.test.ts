@@ -98,30 +98,26 @@ describe('a run reports the worst outcome its evidence supports', () => {
     expect(plan.status, 'a plan that lost references is not executed').not.toBe('EXECUTED');
 
     /*
-     * And it is retryable, which is why the status exists rather than being a relabelled `COMPLETED`. The
-     * way out is to add the missing dataset and run again; a refusal here would leave a fresh migration
-     * over data already in the target as the only route forward.
+     * And a further attempt is refused, because a further attempt would do nothing.
+     *
+     * Every contact is written. A retry reads the source again, matches each one and leaves it alone, so the
+     * parent reference stays empty — however many attempts are made. Offering it would cost an hour of
+     * reading a large source and produce a second attempt that changed nothing, and the product would then
+     * report two attempts where it should report one correction left to make.
+     *
+     * What does fix it is named in the refusal: migrate the referenced dataset, then run a migration that
+     * updates records that already match.
      */
-    const retried = await api.post<MigrationRunDto>(`/api/runs/${run.id}/retry`, {});
-    expect(retried.attempt).toBe(run.attempt + 1);
-
-    /*
-     * Attempt 2 runs here rather than being left queued, because one migration at a time per target is
-     * enforced and a queued attempt would block everything after it. That rule is the reason this is
-     * drained and not abandoned.
-     */
-    const second = t.services.createWorker();
-    await second.drain(180_000);
-    await second.stop();
-    const after = await api.get<MigrationRunDto>(`/api/runs/${run.id}`);
-    expect(after.attempt, 'the attempt that ran is the one the retry created').toBe(2);
-    /*
-     * And it is still incomplete, because nothing was fixed between the attempts. A retry of the same
-     * configuration against the same target cannot find the accounts that are still not there, and the
-     * product does not report a better outcome for having tried twice.
-     */
-    expect(after.status).toBe('COMPLETED_WITH_WARNINGS');
-    expect(after.omittedReferences).toBeGreaterThan(0);
+    const refused = await t.app.inject({
+      method: 'POST',
+      url: `/api/runs/${run.id}/retry`,
+      payload: {},
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({
+      error: { message: 'Nothing in this run is waiting for another attempt.' },
+    });
   });
 
   /**

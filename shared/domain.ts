@@ -1588,6 +1588,18 @@ export interface RunRecordDetailDto {
  * only.
  */
 export interface RunAttemptSummary {
+  /**
+   * Failures and warnings this attempt recorded, counted per record.
+   *
+   * The only part of an attempt's history that a later attempt cannot overwrite. The identity map holds one
+   * row per record, so a retry that re-processes a record moves it to the new attempt and the earlier one
+   * stops being visible in the outcome columns. Error rows are inserted, never replaced, so this number
+   * stays true — and it is why an attempt that has had all of its records re-done still appears here
+   * instead of vanishing as though it never ran.
+   *
+   * Null for attempts whose errors predate the attempt being recorded on them.
+   */
+  recordsWithProblems: number | null;
   /** Null for records written before the attempt was recorded. "Not known", not attempt zero. */
   attempt: number | null;
   created: number;

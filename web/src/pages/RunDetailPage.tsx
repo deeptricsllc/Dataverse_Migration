@@ -459,6 +459,7 @@ function AttemptsPanel({ run }: { run: MigrationRunDto }) {
         run: Record<string, number>;
         attempts: {
           attempt: number | null;
+          recordsWithProblems: number | null;
           created: number;
           updated: number;
           unchanged: number;
@@ -492,6 +493,12 @@ function AttemptsPanel({ run }: { run: MigrationRunDto }) {
             <Th className="text-right">Skipped</Th>
             <Th className="text-right">Failed</Th>
             <Th className="text-right">Unresolved</Th>
+            {/*
+              What this attempt recorded at the time, which no later attempt overwrites. It is how an
+              attempt whose records have all been redone still appears here rather than reading as though it
+              never ran.
+            */}
+            <Th className="text-right">Problems found</Th>
             <Th>Touched records</Th>
           </tr>
         </thead>
@@ -520,8 +527,25 @@ function AttemptsPanel({ run }: { run: MigrationRunDto }) {
               <Td className={`text-right tabular-nums ${a.unresolved ? 'text-amber-700' : ''}`}>
                 {fmtNumber(a.unresolved)}
               </Td>
+              <Td className="text-right tabular-nums">
+                {a.recordsWithProblems === null ? (
+                  <span className="text-slate-400">Not recorded</span>
+                ) : (
+                  fmtNumber(a.recordsWithProblems)
+                )}
+              </Td>
               <Td className="text-xs text-slate-500">
-                {fmtDate(a.firstRecordAt)} → {fmtDate(a.lastRecordAt)}
+                {/*
+                  Empty for an attempt whose records a later attempt has taken over. Saying so is the point:
+                  a date range invented for it would claim the attempt touched nothing.
+                */}
+                {a.firstRecordAt && a.lastRecordAt ? (
+                  <>
+                    {fmtDate(a.firstRecordAt)} → {fmtDate(a.lastRecordAt)}
+                  </>
+                ) : (
+                  <span className="text-slate-400">A later attempt redid these records</span>
+                )}
               </Td>
             </tr>
           ))}

@@ -176,8 +176,18 @@ function nextAction(run: MigrationRunDto): { kind: string; label: string } | nul
  * the card shows, so it cannot describe a different run from the one beside it.
  */
 function resultReason(run: MigrationRunDto): string | null {
+  const written = run.created + run.updated;
   switch (run.status) {
     case 'COMPLETED':
+      /*
+       * A run that wrote nothing established something narrower than a run that wrote everything, and must
+       * not borrow the stronger sentence. Every record was already in the target, so nothing was carried
+       * across and nothing could be omitted — which is why this run has no warnings, and is not the same as
+       * evidence that the target holds the right values.
+       */
+      if (written === 0 && run.total > 0) {
+        return 'Every record was already in the target. Nothing was written, so nothing changed.';
+      }
       return 'Every record was written and every reference was set.';
     case 'COMPLETED_WITH_WARNINGS':
       return run.omittedReferences > 0

@@ -69,7 +69,16 @@ export function RetryControl({ run }: { run: MigrationRunDto }) {
           {s.state === 'SAFE_TO_RETRY' && (
             <p className="mt-2 text-xs text-slate-500">
               The source is read again from the start. Records already written are matched, never written a
-              second time.
+              second time.{' '}
+              {/*
+                The thing somebody has to know before choosing between this and a new run. A run keeps the
+                datasets, mapping and options it started with — deliberately, so a migration stays
+                reproducible and a plan edit cannot rewrite what an earlier run did. It also means a
+                further attempt cannot carry a reference whose dataset is not in this run: adding the
+                dataset and starting a new migration is what does that.
+              */}
+              This attempt uses the datasets and mapping this run started with. A dataset added to the
+              migration since then is carried by a new run, not by this one.
             </p>
           )}
         </div>

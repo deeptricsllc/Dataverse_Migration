@@ -36,7 +36,13 @@ const KNOWN: Record<string, { label: string; meaning: string; action: string }> 
   LOOKUP_UNRESOLVED: {
     label: 'Lookup not resolved',
     meaning: 'The referenced record does not exist in the target.',
-    action: 'Migrate the referenced table, or correct the source reference.',
+    /*
+     * Both halves matter. Migrating the referenced table is not enough on its own for a record that is
+     * already in the target without the reference: a run whose strategy skips a match leaves it exactly as
+     * it is. Setting the reference needs a run that updates records that already match.
+     */
+    action:
+      'Add the referenced table to the migration. Records already in the target need a run that updates records that already match.',
   },
   LOOKUP_PENDING_MIGRATION: {
     label: 'Lookup waiting for a later table',

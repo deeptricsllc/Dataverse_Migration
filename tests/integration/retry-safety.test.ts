@@ -137,19 +137,58 @@ describe('whether another attempt is safe', () => {
   });
 
   /**
-   * A run that dropped references is safe to retry, and says how many records the next attempt acts on.
+   * A retry is not offered for records a retry cannot change.
    *
-   * The count is the part that matters. "Re-runs the failures" and then silently skipping a third of them
-   * is the same defect as a run reporting a clean result.
+   * These regions are in the target without their head office, because `dtx_office` is not in the plan. The
+   * records are written, so a further attempt reads the source again, matches each region and leaves it
+   * alone — the reference stays empty however many attempts are made. The engine used to record this warning
+   * as able to succeed on another attempt, which reached this assessment and promised work that would not
+   * happen.
+   *
+   * So the answer is that nothing is waiting, and the records are listed as excluded with the correction
+   * that does work: migrate the referenced dataset, then run a migration that updates records that match.
    */
-  it('states exactly how many records the next attempt would act on', async () => {
+  it('does not offer an attempt that would match every record and change nothing', async () => {
     const run = await migrate(['dtx_region']);
     expect(run.status).toBe(FINISHED_WITH_OMISSIONS);
+    expect(run.omittedReferences).toBeGreaterThan(0);
+
+    const s = await safety(run.id);
+    expect(s.state).toBe('NOTHING_TO_RETRY');
+    expect(s.allowed).toBe(false);
+    expect(s.safe).toBe(0);
+    expect(s.needsReconciliation).toBe(0);
+    const omitted = s.excluded.find((e) => e.reason.includes('without a reference the source gave them'))!;
+    expect(omitted, 'the records are accounted for, not silently dropped from the assessment').toBeTruthy();
+    expect(omitted.records).toBe(run.omittedReferences);
+    expect(omitted.reason, 'and the correction that does work is named').toContain(
+      'updates records that already match',
+    );
+
+    // And the server refuses it, so the two cannot disagree about what is available.
+    const refused = await t.app.inject({
+      method: 'POST',
+      url: `/api/runs/${run.id}/retry`,
+      payload: {},
+      headers: { cookie: api.cookie, 'x-csrf-token': api.csrf },
+    });
+    expect(refused.statusCode).toBe(409);
+  });
+
+  /**
+   * And it is offered, with an exact count, for records an attempt can write.
+   *
+   * Offices without regions fail outright — the reference is required, so nothing is written — and that is
+   * the case another attempt genuinely fixes once the regions are there.
+   */
+  it('states exactly how many records the next attempt would act on', async () => {
+    const run = await migrate(['dtx_office']);
+    expect(run.failed, 'the records are not in the target').toBeGreaterThan(0);
     const s = await safety(run.id);
     expect(s.state).toBe('SAFE_TO_RETRY');
     expect(s.allowed).toBe(true);
     expect(s.attempt).toBe(run.attempt);
-    expect(s.safe, 'the records the next attempt acts on').toBeGreaterThan(0);
+    expect(s.safe, 'the records the next attempt acts on').toBe(run.failed);
     expect(s.reason).toContain(`Attempt ${run.attempt + 1}`);
     expect(s.reason).toContain(s.safe.toLocaleString());
     expect(s.needsReconciliation).toBe(0);
