@@ -9,6 +9,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   Mono,
   Pager,
   Pill,
@@ -153,13 +154,14 @@ export function RunFailureList({ run, codes }: { run: MigrationRunDto; codes: st
               Find
             </Button>
           </form>
-          <a
-            className="self-end rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          {/*
+            The same filters the list is showing, which is the property that makes the file usable: an export
+            taken while looking at one record used to come back with every row in the run.
+          */}
+          <ExportButton
             href={`/api/runs/${run.id}/errors.csv${qs(query)}`}
-            data-testid="export-failures"
-          >
-            Export this list
-          </a>
+            title="Every failure matching the filters above, not only the page on screen."
+          />
         </>
       }
       bodyClassName="p-0"
