@@ -26,6 +26,7 @@ import type {
 import type { AggregateKind } from '../../../../shared/aggregates';
 import type { DuplicateGroup, DuplicateScanOptions } from '../../connectors/types';
 import { DATAVERSE_CAPABILITIES, newerThanWatermark } from '../types';
+import { failIfArmed } from './fault-injection';
 import {
   DEMO_ORGANIZATION_ID,
   DEMO_SIGNED_IN_USER,
@@ -504,7 +505,7 @@ export class DemoConnection implements DataverseConnection {
 
   async createRecord(tableMeta: TableMetadata, record: WriteRecord, options: WriteOptions): Promise<string> {
     const t = this.table(tableMeta.logicalName);
-    return this.write(
+    const id = await this.write(
       async () => {
         this.assertBypassAllowed(options);
         await this.validateValues(t, record.values, true);
@@ -585,6 +586,17 @@ export class DemoConnection implements DataverseConnection {
       },
       { operation: 'create', table: t.logicalName },
     );
+    /*
+     * After the write, and outside the retry.
+     *
+     * The record is in the simulated target; the answer is what goes missing. Both halves of that matter.
+     * Thrown before the insert it would be an ordinary refusal, and the state this exists to reach is the
+     * one where the write landed and nothing can prove it. Thrown inside the retry wrapper the connector
+     * would treat its own timeout as transient and write the record a second time — which is the duplicate
+     * this whole protocol exists to prevent, caused by the thing meant to demonstrate preventing it.
+     */
+    failIfArmed(this.organizationId, this.env.key, t.logicalName);
+    return id;
   }
 
   async updateRecord(

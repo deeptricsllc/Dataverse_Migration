@@ -250,7 +250,36 @@ the engine records which is which, so the number is split on read rather than le
 found no difference. Where the engine skipped without comparing, the product does not claim the record
 was already correct, because it does not know that.
 
-## 8. The rule, in one sentence
+## 8. Causing the states that no configuration produces
+
+Most of this document describes outcomes a person can reach by configuring a migration badly: a child table
+before its parent, a key that is not unique, a column that cannot hold what is mapped into it. Those are
+produced in tests by building that configuration, because that is what they are.
+
+One is different. A write that commits and whose answer never arrives is caused by a network, not by a plan.
+There is no configuration that produces it, and without a way to cause one the screens that handle it could
+only ever be demonstrated by writing the state straight into the database — which proves that the components
+render, not that the product works.
+
+So `server/src/dataverse/demo/fault-injection.ts` causes the real thing, against simulated data. A caller
+arms it, naming the table and which write to break; the record is inserted, every validation and duplicate
+check having run; and then the call throws as though the answer were lost. The engine classifies, records and
+reports it exactly as it would a real timeout, because from the engine's side that is what it is.
+
+Four things keep it from being a liability:
+
+- **It does not exist in production.** The route that arms it is registered only in demo mode, refuses any
+  environment that is not simulated, and needs an administrator. There is no path from it to a tenant.
+- **It is scoped to the caller's own workspace.** One workspace cannot inject a failure into another's run.
+- **It is explicit and fires once.** Nothing is armed by default, and a fault disarms itself after firing.
+- **It bypasses nothing.** The write happens first, through the whole write path.
+
+One detail is load-bearing and was wrong first time: the failure is thrown **outside** the connector's retry
+wrapper. Inside it, the connector treated its own timeout as transient and wrote the record a second time —
+producing the duplicate this entire protocol exists to prevent, caused by the thing built to demonstrate
+preventing it.
+
+## 9. The rule, in one sentence
 
 > A run reports the worst outcome its own recorded evidence supports.
 

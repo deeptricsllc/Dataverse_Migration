@@ -14,6 +14,8 @@ import { seedDemoData } from '../dataverse/factory';
 import { Readable } from 'node:stream';
 import { csvFileName, csvStream, toCsv, type CsvValue } from '../lib/csv';
 import { AppError, forbidden } from '../lib/errors';
+import { armLostAnswer } from '../dataverse/demo/fault-injection';
+import { DEMO_ENVIRONMENTS } from '../dataverse/demo/fixtures';
 import { verifyEvidencePackage } from '../services/evidence-verifier';
 import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
@@ -1604,6 +1606,68 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/demo/status', async (req) => {
     if (!config.DEMO_MODE || !req.ctx.isDemoOrg) return { building: false, ready: true };
     return s.demoScenarios.status(req.ctx);
+  });
+
+  /**
+   * Arms one deliberate failure against simulated data.
+   *
+   * There are states a migration tool has to handle that no configuration can produce: a write that commits
+   * and whose answer never arrives is caused by a network, not by a plan. Without a way to cause one, the
+   * reconciliation screens could only ever be shown by writing the state straight into the database, which
+   * proves the components render rather than that the product works.
+   *
+   * So this causes the real thing, and is fenced in four ways: the route exists only in demo mode, it
+   * refuses anything but the caller's own simulated environment, it needs an administrator, and the fault it
+   * arms fires once and disarms itself. The record is written before the failure is thrown, so everything
+   * the connector would have validated, it validated. See `server/src/dataverse/demo/fault-injection.ts`.
+   */
+  app.post('/api/demo/fault-injection', async (req) => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) {
+      throw forbidden('Deliberate failures can only be armed in DEMO MODE');
+    }
+    if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can arm a deliberate failure');
+    const body = z
+      .object({
+        environmentId: uuid,
+        table: tableName,
+        onNthCreate: z.coerce.number().int().min(1).max(10_000).default(1),
+      })
+      .parse(req.body);
+    const env = (await s.environments.list(req.ctx)).find((e) => e.id === body.environmentId);
+    if (!env) throw forbidden('That environment is not in this workspace');
+    // Simulated environments only. There is no path from here to a customer's tenant.
+    if (env.provider !== 'demo') {
+      throw forbidden('A deliberate failure can only be armed against a simulated environment');
+    }
+    /*
+     * The simulated environment behind this connection, matched on its url. A connection whose url is not
+     * one of the simulated ones has no demo data to break, and is refused rather than guessed at.
+     */
+    const environmentKey = DEMO_ENVIRONMENTS.find((d) => d.url === env.url)?.key;
+    if (!environmentKey) throw forbidden('That environment has no simulated data behind it');
+    const fault = armLostAnswer({
+      organizationId: req.ctx.organizationId,
+      environmentKey,
+      logicalName: body.table,
+      onNthCreate: body.onNthCreate,
+    });
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'DEMO_FAULT_ARMED',
+      outcome: 'REQUESTED',
+      requestId: req.ctx.requestId,
+      details: { environment: env.displayName, table: fault.logicalName, onNthCreate: fault.onNthCreate },
+    });
+    return {
+      armed: true,
+      environment: env.displayName,
+      table: fault.logicalName,
+      onNthCreate: fault.onNthCreate,
+      means:
+        'The next migration that writes this table will have one write committed and its answer lost. The ' +
+        'run cannot account for that record, so it finishes needing reconciliation rather than complete.',
+    };
   });
 
   app.post('/api/demo/reset', async (req) => {

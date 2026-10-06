@@ -178,7 +178,9 @@ export type AuditAction =
   | 'STAGED_SOURCE_IMPORTED'
   | 'STAGED_SOURCE_TABLE_REMOVED'
   | 'DATASET_RENAMED'
-  | 'DEMO_DATA_RESET';
+  | 'DEMO_DATA_RESET'
+  /** A deliberate failure armed against simulated data. Recorded because it changes what a run reports. */
+  | 'DEMO_FAULT_ARMED';
 
 export interface AuditInput {
   organizationId: string;
