@@ -262,7 +262,7 @@ test('the validation experience, state by state', async ({ page }) => {
   await shot(page, 'add-comparison-datasets');
 
   // ---------------------------------------------------------------- 5. Ready
-  const runs: { id: string; status: string }[] = await api.get(page, '/api/runs');
+  const runs: { id: string; status: string; total: number | null }[] = await api.get(page, '/api/runs');
   const finished = runs.filter((r) => TERMINAL_RUN_STATUSES.has(r.status as MigrationRunStatus));
   expect(finished.length, 'the worked examples left runs to validate').toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Validate run' })).toBeEnabled();
@@ -292,17 +292,29 @@ test('the validation experience, state by state', async ({ page }) => {
    * when it is reached and reported as not reached when it is not — the one thing it must never do
    * is write a status into the page to make a screenshot.
    */
+  // The longest run available, at FULL depth, so the work lasts as long as this data can make it.
+  const widest = [...finished].sort((a, b) => (b.total ?? 0) - (a.total ?? 0))[0]!;
   const live = await api.post(page, '/api/validations', {
-    migrationRunId: finished[0]!.id,
+    migrationRunId: widest.id,
     depth: 'FULL',
   });
   await page.goto(`/validation/${live.id}`);
-  const stillRunning = await page
-    .getByText(/Running|Queued|Validating/)
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (stillRunning) await shot(page, 'validation-running');
+  /*
+   * Watched for a moment rather than sampled once, and only for as long as the validation is
+   * genuinely still going. No delay is added to the product to make the window wider.
+   */
+  let running = false;
+  for (let i = 0; i < 20 && !running; i++) {
+    const current = await api.get(page, `/api/validations/${live.id}`);
+    if (current.status === 'COMPLETED' || current.status === 'FAILED') break;
+    running = await page
+      .getByText(/Running|Queued|Validating/)
+      .first()
+      .isVisible()
+      .catch(() => false);
+    if (!running) await page.waitForTimeout(100);
+  }
+  if (running) await shot(page, 'validation-running');
   await settled(page, live.id);
 
   // ------------------------------------------------- 8 or 9. Passed, or with warnings
@@ -686,5 +698,47 @@ test('the validation experience, state by state', async ({ page }) => {
 
   // The count the certification report quotes is the number of states this run actually reached.
   console.warn(`[states] ${captured.length} captured: ${captured.join(', ')}`);
-  expect(captured.length, `captured: ${captured.join(', ')}`).toBeGreaterThanOrEqual(24);
+
+  /*
+   * Every state the product can be put into, by name. A count would pass on the wrong twenty-three.
+   *
+   * `validation-running` is not in this list, and it is the only one that is not. It is a state the
+   * product really has, and whether a browser sees it depends on whether the work outlasts the
+   * first paint — which on a small dataset it does not. It is captured when it is reached and
+   * reported as not reached when it is not. Writing a status into the page to produce the
+   * screenshot would make the review say something nobody observed, which is the one thing a
+   * review may never do.
+   */
+  const required = [
+    'validation-project-overview',
+    'add-comparison-datasets',
+    'configure-identity',
+    'configure-comparison-rules',
+    'validation-ready',
+    'validation-blocked',
+    'validation-passed',
+    'validation-passed-with-warnings',
+    'validation-failed',
+    'validation-incomplete',
+    'dataset-results',
+    'missing-records',
+    'unexpected-records',
+    'field-mismatches',
+    'transformation-mismatch',
+    'relationship-mismatch',
+    'duplicate-or-ambiguous-identity',
+    'record-level-finding',
+    'technical-details-expanded',
+    'filters-and-pagination',
+    'evidence-export',
+    'migration-run-validation-handoff',
+    'empty-validation-project',
+  ];
+  const missing = required.filter((name) => !captured.includes(name));
+  expect(missing, `states not reached: ${missing.join(', ')}`).toEqual([]);
+  console.warn(
+    captured.includes('validation-running')
+      ? '[states] validation-running was reached'
+      : '[states] validation-running was not reached: the work finished before the page rendered',
+  );
 });
