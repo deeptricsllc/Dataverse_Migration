@@ -172,7 +172,8 @@ describe('failures the engine actually produces', () => {
     const region = summary.datasets.find((d) => d.logicalName === 'dtx_applicationconfig')!;
     expect(region.categories).toHaveLength(0);
     expect(region.warnings, 'a clean run carried everything across').toHaveLength(0);
-    expect(region.succeeded).toBe(region.attempted);
+    expect(region.written).toBe(region.attempted);
+    expect(region.omittedReferences, 'and nothing was left behind').toBe(0);
     // Counting the run as complete requires that nothing is in doubt.
     expect(summary.unresolved).toBe(0);
 
@@ -200,7 +201,9 @@ describe('failures the engine actually produces', () => {
     const summary = await failures(run.id);
 
     for (const dataset of summary.datasets) {
-      expect(dataset.succeeded + dataset.failed + dataset.skipped).toBeLessThanOrEqual(dataset.attempted);
+      expect(dataset.written + dataset.alreadyCurrent + dataset.failed + dataset.skipped).toBeLessThanOrEqual(
+        dataset.attempted,
+      );
       // A dataset never reports more failures than the records it tried.
       expect(dataset.failed).toBeLessThanOrEqual(dataset.attempted);
     }

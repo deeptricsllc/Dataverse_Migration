@@ -83,6 +83,23 @@ describe('a run reports the worst outcome its evidence supports', () => {
     expect(run.omittedReferences, 'the dropped references are counted').toBeGreaterThan(0);
     expect(run.status).toBe('COMPLETED_WITH_WARNINGS');
 
+    /*
+     * The per-dataset table counts the same things as the result line, in the same words.
+     *
+     * It did not. `succeeded` was `created + updated + unchanged`, so a dataset read `Succeeded 300`
+     * directly under a result reading `235 records are in the target without a reference the source gave
+     * them` — the same conflation that was taken out of the result line, one table lower, visible in a
+     * certification screenshot.
+     */
+    const bySummary = await api.get<RunFailureSummaryDto>(`/api/runs/${run.id}/failures`);
+    const contactRow = bySummary.datasets.find((d) => d.logicalName === 'contact')!;
+    expect(contactRow.written, 'the dataset counts writes, not writes plus comparisons').toBe(
+      run.created + run.updated,
+    );
+    expect(contactRow.omittedReferences, 'and carries the same omissions the run reports').toBe(
+      run.omittedReferences,
+    );
+
     // The failure summary reads different tables and must not disagree with the result line.
     const summary = await api.get<RunFailureSummaryDto>(`/api/runs/${run.id}/failures`);
     expect(summary.failed, 'an omitted reference is not a failure').toBe(0);

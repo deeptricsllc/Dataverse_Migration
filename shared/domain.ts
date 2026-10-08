@@ -1435,10 +1435,22 @@ export interface RunFailureSummaryDto {
     logicalName: string;
     displayName: string;
     attempted: number;
-    succeeded: number;
+    /**
+     * Records this dataset wrote: created plus updated.
+     *
+     * It was `succeeded`, and it was `created + updated + unchanged` — the same word, with the same
+     * conflation, that was taken out of the result line above this table. A dataset reading
+     * `Succeeded 300` sat directly under a result reading `235 records are in the target without a
+     * reference the source gave them`, which is the overstatement this whole gate is about, one table down.
+     */
+    written: number;
+    /** Compared against the target and identical. The engine looked; it is not a guess. */
+    alreadyCurrent: number;
     failed: number;
     skipped: number;
     unresolved: number;
+    /** Records this dataset wrote carrying less than the source record did. */
+    omittedReferences: number;
     categories: {
       code: string;
       label: string;

@@ -264,9 +264,12 @@ export function RunFailures({
           <tr>
             <th className="px-4 py-2 font-medium">Dataset</th>
             <th className="px-4 py-2 text-right font-medium">Attempted</th>
-            <th className="px-4 py-2 text-right font-medium">Succeeded</th>
+            {/* The same words as the result card above, counting the same things. */}
+            <th className="px-4 py-2 text-right font-medium">Written</th>
+            <th className="px-4 py-2 text-right font-medium">Already current</th>
             <th className="px-4 py-2 text-right font-medium">Failed</th>
             <th className="px-4 py-2 text-right font-medium">Unresolved</th>
+            <th className="px-4 py-2 text-right font-medium">References omitted</th>
             <th className="px-4 py-2" />
           </tr>
         </thead>
@@ -275,7 +278,8 @@ export function RunFailures({
             <tr key={d.logicalName} className="border-t border-slate-100" data-testid="dataset-result-row">
               <td className="px-4 py-2 font-medium text-slate-900">{d.displayName}</td>
               <td className="px-4 py-2 text-right tabular-nums">{d.attempted.toLocaleString()}</td>
-              <td className="px-4 py-2 text-right tabular-nums">{d.succeeded.toLocaleString()}</td>
+              <td className="px-4 py-2 text-right tabular-nums">{d.written.toLocaleString()}</td>
+              <td className="px-4 py-2 text-right tabular-nums">{d.alreadyCurrent.toLocaleString()}</td>
               <td
                 className={cx(
                   'px-4 py-2 text-right tabular-nums',
@@ -291,6 +295,14 @@ export function RunFailures({
                 )}
               >
                 {d.unresolved.toLocaleString()}
+              </td>
+              <td
+                className={cx(
+                  'px-4 py-2 text-right tabular-nums',
+                  d.omittedReferences > 0 && 'font-semibold text-amber-800',
+                )}
+              >
+                {d.omittedReferences.toLocaleString()}
               </td>
               <td className="px-4 py-2 text-right">
                 {(d.failed > 0 || d.unresolved > 0) && (

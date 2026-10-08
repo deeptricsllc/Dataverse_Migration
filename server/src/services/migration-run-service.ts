@@ -27,7 +27,11 @@ import {
   type RunFailureSummaryDto,
   type RunTrigger,
 } from '../../../shared/domain';
-import { describeFailureCode, MATERIAL_WARNING_CODES } from '../../../shared/failure-categories';
+import {
+  describeFailureCode,
+  isMaterialWarning,
+  MATERIAL_WARNING_CODES,
+} from '../../../shared/failure-categories';
 import type { AppDb } from '../db/client';
 import { decideWriteScope } from '../write-scope';
 import {
@@ -933,10 +937,18 @@ export class MigrationRunService {
         logicalName: entity.logicalName,
         displayName: entity.displayName,
         attempted: entity.total,
-        succeeded: entity.created + entity.updated + entity.unchanged,
+        written: entity.created + entity.updated,
+        alreadyCurrent: entity.unchanged,
         failed: entity.failed,
         skipped: entity.skipped,
         unresolved: entity.unresolved,
+        /*
+         * Counted per record from the warnings this dataset recorded, the same evidence the run's own
+         * total is summed from, so a dataset row and the result line cannot disagree.
+         */
+        omittedReferences: theirWarnings
+          .filter((w) => isMaterialWarning(w.code))
+          .reduce((n, w) => n + w.records, 0),
         categories,
         warnings: theirWarnings,
       };
