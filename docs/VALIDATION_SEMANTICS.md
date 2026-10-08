@@ -99,6 +99,19 @@ Three numbers sit outside that sum on purpose, and each is reported separately:
 `different` counts **records**, not field differences. One record with four wrong columns is one
 different record and four findings. The two are labelled separately wherever both appear.
 
+### 4.1 Unexpected target records
+
+A target row this migration cannot account for is reported as a **row-count difference**, not as a
+finding against the migration. The comparison scope is the records this run claims, and a shared
+target holds rows from other sources, from earlier runs, and from people working in the system.
+Reporting every unaccounted row as this migration's problem would make a correct migration into a
+shared table read as a failure.
+
+Where the stronger question is the one being asked — is there anything in the target that is not in
+the source at all — the dataset-to-dataset comparison answers it, because there the scope is both
+whole tables and `ONLY_IN_RIGHT` is a finding with a count. A migration validation says what it can
+defend and points at the tool that can defend the rest.
+
 ## 5. Identity
 
 Records are matched by the identity the migration used, read from the run: the preserved primary key, a
@@ -127,6 +140,18 @@ Comparing the raw value would report a false mismatch on every transformed colum
 Where the transformation cannot be evaluated, the comparison does not fall back to the raw value and call
 the result a mismatch: the column is recorded as not compared, with the reason.
 
+## 6.1 Normalisation, and what is allowed to be one
+
+A comparison may normalise a difference away only for a reason a reader can find: a configured rule,
+or a platform semantic recorded in `docs/SEMANTIC_EQUALITY.md`. Convenience is not a reason. Each
+report prints the normalisations it ran under, next to the result rather than next to the plan.
+
+The one that was wrong is **an empty text value against no value at all**. It was treated as the same
+value everywhere, which is right in a Dataverse target — the platform stores one as the other, so
+nothing can tell them apart — and wrong in a SQL target and in a file, where they are two values. A
+column the migration failed to write read as correct. The rule is now decided per column, from the
+column's own platform, and printed with the result.
+
 ## 7. Relationships
 
 A lookup is compared by resolving the source reference to the target record the migration should have
@@ -151,6 +176,45 @@ throw away what is known about its other twenty columns.
 A record the migration deliberately skipped, because the target already held a matching record, is
 compared — but a difference found in it is a `PRE_EXISTING_DIFFERENCE` and a warning, not a failure. The
 migration did not write that record and is not answerable for its contents.
+
+## 9.1 The rules are part of the result
+
+Every dataset result carries the rules its comparison ran under: the identity it paired on, every
+column pair it compared, every source column it did not and why, the normalisations, the numeric
+tolerance, the date and time handling, and how references were matched.
+
+Written from the run's immutable snapshot at the moment the comparison ran — not rendered from the
+plan when somebody opens the report. A report is read when somebody asks what was compared, which is
+usually after the plan has been edited, and today's rules beside an older finding answer a different
+question than the one being asked.
+
+Excluded columns are listed **by name**. A count invites the reader to assume the rest did not
+matter, and a comparison that quietly left out the one column somebody cares about otherwise reads
+exactly like one that compared everything.
+
+Reports written before the rules were recorded say `Comparison rules not recorded`. They are not
+backfilled; see §10.
+
+## 9.2 A finding says what to do about it
+
+Every finding carries, besides the values: its category, its severity, the dataset, the record
+identity, the field, the **rule** that produced it, the **consequence**, and the **next action**.
+
+Those last three come from one table keyed on the category the engine recorded — never from parsing
+the message the engine wrote, which would be a second source of truth that breaks whenever somebody
+improves the wording. The screen and the CSV read the same table, so the action a reader is given on
+screen is the action in the evidence they attach to a change record.
+
+The left-hand value is labelled **Expected**, not _Source_. On a value comparison it is the source
+value after the transformations the run applied, and calling it the source invites a reader to check
+it against the source system by hand and find a difference that is correct.
+
+## 9.3 Findings are read a page at a time
+
+Filtering, counting and ordering happen in the database. The order is `(table, record, column,
+identifier)` — the first three are the order a reader wants, and the identifier last makes the order
+total. Without it, rows that tied could come back in a different order on each query, so a finding
+could appear on two pages or on none.
 
 ## 10. Evidence integrity
 

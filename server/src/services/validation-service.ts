@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type {
   ChoiceMappingDto,
+  ComparisonRulesDto,
   DifferenceType,
   FieldTransformDto,
   RecordOutcome,
@@ -75,7 +76,7 @@ import {
 import type { RunPlanSnapshot } from './run-snapshot';
 import { diffTableDeep } from './schema-diff';
 import { transformField } from './transformation/engine';
-import { compareValues, displayValue } from './values';
+import { compareValues, displayValue, emptyEqualsNull } from './values';
 import { envRef } from './env-ref';
 
 /**
@@ -172,6 +173,122 @@ export function classifyDifference(
   return 'VALUE_MISMATCH';
 }
 
+/**
+ * How this comparison paired a source record with a target record.
+ *
+ * Never by row order, and never by position in a result set. With a run, the pairing is the run's own
+ * identity map — the rows the migration wrote when it wrote the records — so a clean comparison says
+ * the record the run created is right. Without a run, the two sides are paired on the same primary
+ * identifier, which is a weaker claim about a different thing, and the report says which it is.
+ */
+function identityRule(
+  snapshotEntity: RunPlanSnapshot['entities'][number] | null | undefined,
+  hasRun: boolean,
+  target: TableMetadata,
+): ComparisonRulesDto['identity'] {
+  if (hasRun) return { basis: 'MIGRATION_IDENTITY_MAP', fields: [] };
+  if (snapshotEntity?.matchStrategy === 'BUSINESS_KEY')
+    return { basis: 'BUSINESS_KEY', fields: snapshotEntity.businessKeyFields ?? [] };
+  if (snapshotEntity?.matchStrategy === 'ALTERNATE_KEY' && snapshotEntity.alternateKey) {
+    return {
+      basis: 'ALTERNATE_KEY',
+      fields: target.keys.find((k) => k.logicalName === snapshotEntity.alternateKey)?.attributes ?? [],
+    };
+  }
+  const primary = target.attributes.find((a) => a.isPrimaryId);
+  return { basis: 'PRIMARY_KEY', fields: primary ? [primary.logicalName] : [] };
+}
+
+/**
+ * The transformations on one column, named.
+ *
+ * The rule kind, not a rendering of its arguments. A reader asking what happened to a column is
+ * served by `VALUE_MAP, TRIM`; the arguments are in the plan, and a rule's `value` can hold data
+ * somebody put in a column, which has no business being copied into a report.
+ */
+function namedTransformations(
+  m: { sourceField: string } & {
+    transformations?: TransformationRule[] | null;
+    transform?: FieldTransformDto | null;
+    choiceMap?: ChoiceMappingDto | null;
+  },
+): string[] {
+  const names: string[] = (m.transformations ?? []).map((r) => r.kind);
+  // The legacy single-transform field, for a run executed before rules were a list.
+  if (names.length === 0 && m.transform) names.push(m.transform.kind);
+  if (m.choiceMap) names.push('CHOICE_MAP');
+  return names;
+}
+
+/**
+ * Source columns this comparison did not look at, each with the reason.
+ *
+ * Named individually and deliberately. "47 of 52 columns compared" invites a reader to assume the
+ * other five did not matter, and the only way to know whether they did is to see which ones they
+ * are — a comparison that quietly left out the one column somebody cares about would otherwise read
+ * exactly like one that compared everything.
+ */
+function excludedFields(
+  source: TableMetadata,
+  target: TableMetadata,
+  mappings: { sourceField: string }[],
+): ComparisonRulesDto['excludedFields'] {
+  const compared = new Set(mappings.map((m) => m.sourceField));
+  const out: ComparisonRulesDto['excludedFields'] = [];
+  for (const a of source.attributes) {
+    if (compared.has(a.logicalName)) continue;
+    if (a.attributeOf) continue; // a view of another column, not a column of its own
+    const reason = a.isPrimaryId
+      ? 'the primary identifier, which is how the records are paired rather than something compared'
+      : !target.attributes.some((t) => t.logicalName === a.logicalName)
+        ? 'no column of this name in the target'
+        : !a.isValidForCreate
+          ? 'the platform does not accept a value for this column, so the migration did not write one'
+          : 'not in the mapping this run executed';
+    out.push({ field: a.logicalName, reason });
+  }
+  return out;
+}
+
+/**
+ * What is normalised away before two values are called equal.
+ *
+ * Every line is a platform semantic recorded in `docs/SEMANTIC_EQUALITY.md`, which is the only kind
+ * of normalisation this comparison applies without a configured rule. Printed with the result so a
+ * reader can see which differences the report was never going to show them.
+ */
+function normalizationRules(target: TableMetadata): string[] {
+  const rules = [
+    'Line endings in text are compared as the same (CRLF and LF).',
+    'Trailing whitespace in text is ignored, because fixed-width columns pad.',
+    'Identifiers are compared without regard to case.',
+    'Multi-select choices are compared as a set, not in the stored order.',
+  ];
+  const sample = target.attributes.find((a) => a.type === 'String' || a.type === 'Memo');
+  if (sample && emptyEqualsNull(sample))
+    rules.push(
+      'An empty text value and no value are the same, because this platform stores one as the other.',
+    );
+  else rules.push('An empty text value and no value are two different values, and are reported as such.');
+  return rules;
+}
+
+/** The empty-versus-NULL rule for this target, with the reason it holds. See `emptyEqualsNull`. */
+function emptyNullRule(target: TableMetadata): ComparisonRulesDto['emptyEqualsNull'] {
+  const sample = target.attributes.find((a) => a.type === 'String' || a.type === 'Memo');
+  if (sample && emptyEqualsNull(sample)) {
+    return {
+      equal: true,
+      reason:
+        'Dataverse stores an empty text value as no value, so the two cannot be told apart in the target.',
+    };
+  }
+  return {
+    equal: false,
+    reason: 'A column in this target holds an empty value and no value as two different values.',
+  };
+}
+
 export function compareRecords(input: EntityComparisonInput): {
   matched: number;
   missing: number;
@@ -243,7 +360,26 @@ export function compareRecords(input: EntityComparisonInput): {
         choiceMap: m.choiceMap,
         context: { record: pair.source, sourceAttributes: sAttrs },
       });
-      const expectedValue = converted.ok ? converted.value : (sv ?? null);
+      if (!converted.ok) {
+        /**
+         * The expected value cannot be worked out, so this column has no honest answer on this record.
+         *
+         * It used to fall back to the raw source value and compare that, which reported a mismatch on
+         * every record whose transformation the engine could not evaluate — a finding about the
+         * comparison dressed as a finding about the data, and the loudest kind of false failure:
+         * the reader is sent to look at a record that is probably correct.
+         *
+         * A transformation this platform cannot evaluate is reported as not verified, which is what
+         * `docs/VALIDATION_SEMANTICS.md` §6 says and what the brief requires of a transformation that
+         * cannot be independently validated.
+         */
+        const reason = `the expected value could not be worked out: ${converted.error?.message ?? 'the transformation did not evaluate'}`;
+        const seen = uncompared.get(m.targetField);
+        if (seen) seen.records++;
+        else uncompared.set(m.targetField, { reason, records: 1 });
+        continue;
+      }
+      const expectedValue = converted.value;
       const comparison = compareValues(tAttr, expectedValue, tv);
       if (comparison.verdict === 'NOT_COMPARABLE') {
         /**
@@ -586,6 +722,8 @@ export class ValidationService {
       missing: 0,
       different: 0,
       brokenReferences: 0,
+      /** Filled in below, once the mappings the comparison will use are known. */
+      rules: null,
       checks,
     };
 
@@ -691,6 +829,36 @@ export class ValidationService {
       auditChecks.push({ sourceField: 'modifiedby', targetField: 'modifiedby', isLookup: true });
     for (const check of auditChecks)
       if (!mappings.some((m) => m.targetField === check.targetField)) mappings.push(check);
+
+    /**
+     * The rules this comparison is about to run under, recorded with the result.
+     *
+     * Built here, from the run's snapshot, rather than rendered in the browser from the plan. A
+     * report is read when somebody asks what was compared, which is usually after the plan has been
+     * edited, and a screen that showed today's rules beside an older finding would be answering a
+     * different question than the one being asked.
+     *
+     * Every entry is a fact the comparison below actually uses. Nothing here is illustrative.
+     */
+    base.rules = {
+      identity: identityRule(p.snapshotEntity, vr.migrationRunId != null, target),
+      comparedFields: mappings.map((m) => ({
+        source: m.sourceField,
+        target: m.targetField,
+        transformations: namedTransformations(m),
+        isLookup: m.isLookup,
+      })),
+      excludedFields: excludedFields(source, target, mappings),
+      normalization: normalizationRules(target),
+      numericTolerance:
+        'A decimal or money column is compared to the number of places it declares; a float to one part in a thousand million. A column that returns its digits as text is compared exactly.',
+      dateTimeHandling:
+        'Timestamps are compared to the second in UTC, because engines keep different sub-second precision. A date-only column is compared as a date.',
+      lookupMatching: vr.migrationRunId
+        ? 'A reference is resolved through the identity map to the target record the run should have pointed at, then compared to the reference the target holds.'
+        : 'A reference is compared by the identifier it holds, which assumes the two sides use the same identifiers.',
+      emptyEqualsNull: emptyNullRule(target),
+    };
 
     // What the run did, in the one shape the whole product reads. `verifiable` is a different
     // question from "what did this run write": a record the run skipped is in the target and worth
@@ -1534,6 +1702,7 @@ export class ValidationService {
       uniqueness: result.uniqueness,
       uncomparedColumns: result.uncomparedColumns,
       aggregates: result.aggregates,
+      comparisonRules: result.rules,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
       unresolvedInRun: result.unresolvedInRun,
@@ -1605,6 +1774,9 @@ export class ValidationService {
         uniqueness: e.uniqueness ?? null,
         uncomparedColumns: e.uncomparedColumns ?? null,
         aggregates: e.aggregates ?? null,
+        // Null predates the rules being recorded. A report must say that rather than show the rules
+        // as they stand today beside a finding from an earlier comparison.
+        rules: e.comparisonRules ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,
         unresolvedInRun: e.unresolvedInRun ?? 0,
@@ -1717,10 +1889,20 @@ export class ValidationService {
       .select()
       .from(validationDifferences)
       .where(and(...conditions))
+      /**
+       * Ordered so that no two rows can tie, which is what makes paging by offset safe.
+       *
+       * The first three columns are the order a reader wants: by table, then by record, then by
+       * column. They are not unique — a record missing from the target has no field, and two
+       * findings on one record and one column are possible — so rows that tied could come back in a
+       * different order on each query, and a row could appear on two pages or on none. The
+       * identifier last makes the order total without changing what the reader sees.
+       */
       .orderBy(
         asc(validationDifferences.logicalName),
         asc(validationDifferences.sourceRecordId),
         asc(validationDifferences.field),
+        asc(validationDifferences.id),
       )
       .limit(filter.limit)
       .offset(filter.offset);

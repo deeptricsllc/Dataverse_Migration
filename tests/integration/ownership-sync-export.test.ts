@@ -244,7 +244,9 @@ describe('ownership/audit preservation, sync strategy and exports', () => {
     );
     expect(await csv(`/api/plans/${plan.id}/issues.csv`)).toContain('MODIFIED_ON_NOT_PRESERVABLE');
     expect(await csv(`/api/validations/${validation.id}/summary.csv`)).toContain('dtx_office');
-    expect(await csv(`/api/validations/${validation.id}/differences.csv`)).toContain('Source value');
+    // "Expected value", not "Source value": on a value comparison the column holds the source value
+    // after the transformations the run applied, which is what the target was supposed to hold.
+    expect(await csv(`/api/validations/${validation.id}/differences.csv`)).toContain('Expected value');
     expect(
       await csv(`/api/principal-mappings.csv?sourceEnvironmentId=${dev.id}&targetEnvironmentId=${uat.id}`),
     ).toContain('Priya Patel');

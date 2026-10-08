@@ -67,7 +67,7 @@ import type {
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
-import type { DemoSetupStatus, ValidationOutcome } from '../../../shared/domain';
+import type { ComparisonRulesDto, DemoSetupStatus, ValidationOutcome } from '../../../shared/domain';
 import type { AggregateCheck } from '../../../shared/aggregates';
 import type { UniquenessCheck } from '../../../shared/uniqueness';
 import type { ReadinessAssessment } from '../../../shared/readiness';
@@ -974,6 +974,14 @@ export const validationEntityResults = pgTable(
     uncomparedColumns: jsonb('uncompared_columns').$type<UncomparedColumn[]>(),
     /** Totals compared across the two sides, with the scope each comparison covered. */
     aggregates: jsonb('aggregates').$type<AggregateCheck[]>(),
+    /**
+     * The identity, columns, transformations and normalisations this comparison ran under.
+     *
+     * Stored with the result rather than read back from the plan, because the plan can be edited and
+     * the result cannot. Null predates the rules being recorded, which a report prints as "not
+     * recorded" instead of showing today's rules beside an older finding.
+     */
+    comparisonRules: jsonb('comparison_rules').$type<ComparisonRulesDto>(),
     checkedRecords: integer('checked_records').notNull().default(0),
     /** Records the run reported as failed. Kept apart from `missing`, which is our own finding. */
     failedInRun: integer('failed_in_run').notNull().default(0),

@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { explainFinding } from '../../../shared/validation-findings';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
-import type { DemoSetupStatusDto, ValidationOutcome } from '../../../shared/domain';
+import type { DemoSetupStatusDto, DifferenceType, ValidationOutcome } from '../../../shared/domain';
 import type { RequestContext } from '../services/context';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
@@ -30,6 +31,24 @@ const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
 /** A SQL column or Dataverse attribute name. */
 const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 const idParams = z.object({ id: uuid });
+
+/**
+ * The finding categories a filter accepts. One list, used by the JSON endpoint and by the export.
+ *
+ * They were two lists, and they had drifted: `VALUE_LOST` and `VALUE_TRUNCATED` were added to the
+ * engine and to the filter on the screen, but not to the export, so choosing either of those on
+ * screen and then pressing Export answered with a validation error instead of a file. A reader
+ * exporting the thing they are looking at should not have to know which categories are old.
+ */
+const differenceType = z.enum([
+  'MISSING_IN_TARGET',
+  'VALUE_MISMATCH',
+  'VALUE_LOST',
+  'VALUE_TRUNCATED',
+  'LOOKUP_MISMATCH',
+  'BROKEN_REFERENCE',
+  'PRE_EXISTING_DIFFERENCE',
+] as const satisfies readonly DifferenceType[]);
 const page = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -1185,15 +1204,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const q = z
       .object({
         entity: tableName.optional(),
-        type: z
-          .enum([
-            'MISSING_IN_TARGET',
-            'VALUE_MISMATCH',
-            'LOOKUP_MISMATCH',
-            'BROKEN_REFERENCE',
-            'PRE_EXISTING_DIFFERENCE',
-          ])
-          .optional(),
+        type: differenceType.optional(),
         outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
       })
       .parse(req.query);
@@ -1211,21 +1222,37 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Source record id',
         'Target record id',
         'Field',
-        'Source value',
-        'Target value',
-        'Difference',
-        'Outcome',
+        // Not "source value": on a value comparison this is the source value after the
+        // transformations the run applied, which is what the target was supposed to hold.
+        'Expected value',
+        'Value in target',
+        'Finding',
+        'Category',
+        'Severity',
+        // The three columns that make the export usable away from the screen. Somebody reading this
+        // file in a change record has the rule that produced each finding, what it costs, and what to
+        // do — rather than a category they have to look up.
+        'Rule applied',
+        'Why it matters',
+        'Next action',
       ],
-      map(s.validation.differencePages(req.ctx, id, q), (d) => [
-        d.entity,
-        d.sourceRecordId,
-        d.targetRecordId,
-        d.field,
-        d.sourceValue,
-        d.targetValue,
-        d.differenceType,
-        d.outcome,
-      ]),
+      map(s.validation.differencePages(req.ctx, id, q), (d) => {
+        const x = explainFinding(d.differenceType);
+        return [
+          d.entity,
+          d.sourceRecordId,
+          d.targetRecordId,
+          d.field,
+          d.sourceValue,
+          d.targetValue,
+          x.label,
+          d.differenceType,
+          d.outcome,
+          x.rule,
+          x.consequence,
+          x.nextAction,
+        ];
+      }),
     );
   });
 
@@ -1259,6 +1286,17 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Different',
         'Broken references',
         'Checks',
+        // The rules, with the result. An evidence package that says what was found and not what was
+        // compared cannot be read against later: a column nobody compared and a column that agreed
+        // look identical.
+        'Identity',
+        'Fields compared',
+        'Fields not compared',
+        'Transformations applied',
+        'Empty and no value',
+        'Numeric tolerance',
+        'Date and time',
+        'References',
       ],
       run.entities.map((e) => [
         e.logicalName,
@@ -1277,6 +1315,22 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.different,
         e.brokenReferences,
         e.checks.map((c) => `${c.check}: ${c.outcome} - ${c.message}`).join(' | '),
+        e.rules
+          ? e.rules.identity.basis +
+            (e.rules.identity.fields.length ? ` (${e.rules.identity.fields.join(', ')})` : '')
+          : 'Not recorded',
+        e.rules ? e.rules.comparedFields.map((f) => f.target).join(' ') : 'Not recorded',
+        e.rules ? e.rules.excludedFields.map((f) => `${f.field} (${f.reason})`).join(' | ') : 'Not recorded',
+        e.rules
+          ? e.rules.comparedFields
+              .filter((f) => f.transformations.length > 0)
+              .map((f) => `${f.target}: ${f.transformations.join(', ')}`)
+              .join(' | ')
+          : 'Not recorded',
+        e.rules ? (e.rules.emptyEqualsNull.equal ? 'Same value' : 'Two values') : 'Not recorded',
+        e.rules?.numericTolerance ?? 'Not recorded',
+        e.rules?.dateTimeHandling ?? 'Not recorded',
+        e.rules?.lookupMatching ?? 'Not recorded',
       ]),
     );
   });
@@ -1572,15 +1626,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const q = page
       .extend({
         entity: tableName.optional(),
-        type: z
-          .enum([
-            'MISSING_IN_TARGET',
-            'VALUE_MISMATCH',
-            'LOOKUP_MISMATCH',
-            'BROKEN_REFERENCE',
-            'PRE_EXISTING_DIFFERENCE',
-          ])
-          .optional(),
+        type: differenceType.optional(),
         outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
       })
       .parse(req.query);

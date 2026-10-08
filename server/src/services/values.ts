@@ -1,6 +1,6 @@
 import { decimalsEqual } from '../../../shared/aggregates';
 import { compareJsonText } from '../../../shared/json-compare';
-import { isLookupValue, type AttributeMeta, type FieldValue } from '../../../shared/metadata';
+import { familyOf, isLookupValue, type AttributeMeta, type FieldValue } from '../../../shared/metadata';
 
 export type TransformResult = { ok: true; value: FieldValue } | { ok: false; error: string };
 
@@ -120,6 +120,26 @@ export function normalizeForCompare(
 
 /** Types whose values are exact, so two of them are equal or they are not. */
 const EXACT_NUMERIC = new Set(['Integer', 'BigInt', 'Decimal', 'Money']);
+
+/** The types that hold text, and therefore have an empty value distinct from no value. */
+const TEXT_TYPES = new Set(['String', 'Memo']);
+
+/**
+ * Whether an empty string and NULL are the same value in this column.
+ *
+ * They are in Dataverse, which stores one as the other: a record saved with an empty text field comes
+ * back with null, so calling them different would report a mismatch on data the platform itself made
+ * identical. They are two values in a SQL column, and in a file, and treating them as equal there
+ * reported a lost value as a match — a column whose text the migration failed to write read as
+ * correct, which is the direction that matters.
+ *
+ * Stated per column rather than globally, and reported with the result: see `ComparisonRulesDto`.
+ * `docs/SEMANTIC_EQUALITY.md` records it as a platform semantic, which is the only kind of
+ * normalisation a comparison is allowed to apply without a configured rule.
+ */
+export function emptyEqualsNull(attr: AttributeMeta): boolean {
+  return familyOf(attr) === 'DATAVERSE';
+}
 
 /**
  * Three answers, not two.
@@ -294,6 +314,18 @@ function valuesEqualScalar(
    */
   if (EXACT_NUMERIC.has(attr.type) && typeof a === 'string' && typeof b === 'string') {
     return decimalsEqual(a.trim() === '' ? null : a, b.trim() === '' ? null : b);
+  }
+  /**
+   * An empty text value is not the absence of one, except where the platform makes it so.
+   *
+   * Checked before normalising, because normalising is what loses the distinction: it maps `''` to
+   * null so that a padded CHAR column compares equal to an unpadded one. That is right within text
+   * and wrong across the boundary to NULL, so the boundary is decided here. See `emptyEqualsNull`.
+   */
+  if (TEXT_TYPES.has(attr.type) && !emptyEqualsNull(attr)) {
+    const aAbsent = a === null || a === undefined;
+    const bAbsent = b === null || b === undefined;
+    if (aAbsent !== bAbsent) return false;
   }
   const na = normalizeForCompare(attr, a);
   const nb = normalizeForCompare(attr, b);

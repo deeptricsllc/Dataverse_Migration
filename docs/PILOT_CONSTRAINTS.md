@@ -119,8 +119,10 @@ Full envelope, with what is MEASURED, EXTRAPOLATED and UNKNOWN: `docs/SCALE_ENVE
   precision and comparing finer would fail every migration between them.
 - **Trailing whitespace is ignored** in text, deliberately, because `CHAR` columns pad. A genuinely lost
   trailing space reads as equal.
-- **An empty string and a NULL are treated as the same value.** Right for Dataverse, which stores one as
-  the other; a limitation for SQL-to-SQL.
+- **An empty string and a NULL are the same value in a Dataverse target, and two values anywhere else.**
+  Dataverse stores one as the other, so the platform itself cannot tell them apart. A SQL column and a file
+  column hold two distinct values, and a comparison there reports the difference. Which rule a report ran
+  under is printed with it.
 - **The duplicate check needs a business key to be meaningful.** With none configured it groups on the
   primary identifier, which is unique by construction, and reports that nothing repeats. True, and less
   than a reader may take from it.
