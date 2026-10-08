@@ -267,6 +267,11 @@ export function RunFailures({
             {/* The same words as the result card above, counting the same things. */}
             <th className="px-4 py-2 text-right font-medium">Written</th>
             <th className="px-4 py-2 text-right font-medium">Already current</th>
+            {/*
+              Matched in the target, left alone by the conflict strategy. Shown so the row adds up: without
+              it a dataset read "4 attempted, 2 written" with nothing accounting for the other two.
+            */}
+            <th className="px-4 py-2 text-right font-medium">Not changed</th>
             <th className="px-4 py-2 text-right font-medium">Failed</th>
             <th className="px-4 py-2 text-right font-medium">Unresolved</th>
             <th className="px-4 py-2 text-right font-medium">References omitted</th>
@@ -280,6 +285,7 @@ export function RunFailures({
               <td className="px-4 py-2 text-right tabular-nums">{d.attempted.toLocaleString()}</td>
               <td className="px-4 py-2 text-right tabular-nums">{d.written.toLocaleString()}</td>
               <td className="px-4 py-2 text-right tabular-nums">{d.alreadyCurrent.toLocaleString()}</td>
+              <td className="px-4 py-2 text-right tabular-nums">{d.skipped.toLocaleString()}</td>
               <td
                 className={cx(
                   'px-4 py-2 text-right tabular-nums',

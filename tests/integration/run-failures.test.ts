@@ -201,9 +201,14 @@ describe('failures the engine actually produces', () => {
     const summary = await failures(run.id);
 
     for (const dataset of summary.datasets) {
-      expect(dataset.written + dataset.alreadyCurrent + dataset.failed + dataset.skipped).toBeLessThanOrEqual(
-        dataset.attempted,
-      );
+      /*
+       * Every record a dataset attempted is in exactly one of these columns. A table a reader cannot add
+       * up is a table they check against something else, and the row read "4 attempted, 2 written" with
+       * nothing accounting for the other two.
+       */
+      expect(
+        dataset.written + dataset.alreadyCurrent + dataset.failed + dataset.skipped + dataset.unresolved,
+      ).toBe(dataset.attempted);
       // A dataset never reports more failures than the records it tried.
       expect(dataset.failed).toBeLessThanOrEqual(dataset.attempted);
     }
