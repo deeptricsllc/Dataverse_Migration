@@ -14,3 +14,5 @@ evidence/dataverse-driver-selftest.json
 validation-performance.txt
 .capture/
 capture.log
+qa-review.log
+.capture-qa/

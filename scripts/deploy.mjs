@@ -92,9 +92,15 @@ function railway(args, { capture = false } = {}) {
 if (!viaApi) {
   const status = railway(['status', '--json'], { capture: true });
   if (status.status !== 0) {
+    /*
+     * The CLI's own words, not a guess at them. The first time this refused, the reason was that the
+     * CLI reads RAILWAY_ENVIRONMENT_ID and RAILWAY_SERVICE_ID itself and rejects either without
+     * RAILWAY_PROJECT_ID — which the message below says outright and the sentence above never would.
+     */
     refuse(
       'no RAILWAY_API_TOKEN is set and the Railway CLI is not usable',
-      'Either export a project token, or sign in and link a project with `railway link`.',
+      `${(status.stderr || status.stdout || 'the CLI gave no reason').trim()}
+  Either export a project token, or sign in and link a project with \`railway link\`.`,
     );
   }
   let linked;

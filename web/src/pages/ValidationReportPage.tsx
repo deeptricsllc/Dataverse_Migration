@@ -163,6 +163,24 @@ function Verdict({
       </>,
     );
   }
+  /*
+   * Why a difference can be a warning rather than a failure.
+   *
+   * Without this the headline read "Passed with warnings" over "2 hold a different value", and left
+   * the reader to work out which two and whose fault they were. A record the run found already in
+   * the target and left alone is not a record the run got wrong, and that is the whole reason the
+   * outcome is not a failure — so it belongs in the headline, not in a panel further down.
+   */
+  const preExisting = entities.reduce((n, e) => n + (e.findings?.PRE_EXISTING_DIFFERENCE ?? 0), 0);
+  if (preExisting > 0) {
+    lines.push(
+      <>
+        <strong>{fmtNumber(preExisting)}</strong> of the differences below are in records this run did not
+        write. The target already held them and the run left them as they were, so this migration did not
+        cause them.
+      </>,
+    );
+  }
   if (s.brokenReferences > 0) {
     lines.push(
       <>
@@ -569,9 +587,14 @@ function RulesPanel({ rules, entity }: { rules: ComparisonRulesDto | null; entit
             {rules.excludedFields.length === 0 ? (
               <p className="mt-1 text-xs text-slate-600">Every source column was compared.</p>
             ) : (
-              <ul className="mt-1 space-y-0.5 text-xs">
+              /*
+               * Two columns, not a wrapping row. A reason long enough to wrap put the next field
+               * name directly underneath it, so a reader pairing them down the page attached every
+               * reason to the wrong column.
+               */
+              <ul className="mt-1 space-y-1 text-xs">
                 {rules.excludedFields.map((f) => (
-                  <li key={f.field} className="flex flex-wrap items-baseline gap-1.5">
+                  <li key={f.field} className="grid grid-cols-[minmax(8rem,auto)_1fr] items-baseline gap-x-3">
                     <Mono className="text-xs">{f.field}</Mono>
                     <span className="text-slate-600">{f.reason}</span>
                   </li>
@@ -786,11 +809,26 @@ export function ValidationReportPage() {
           )
         }
       />
+      {/*
+        While it runs.
+
+        It printed the badge and the progress message, and while the job was queued both of them were
+        the word "Queued" — a card that said the same thing twice and told a reader nothing about
+        what was about to be compared or how long to wait for it.
+      */}
       {['QUEUED', 'RUNNING'].includes(v.status) && (
         <Card>
-          <div className="flex items-center gap-3 text-sm text-slate-600">
-            <StatusBadge status={v.status} /> {v.progressMessage}
+          <div className="flex items-center gap-3 text-sm text-slate-600" data-testid="validation-progress">
+            <StatusBadge status={v.status} />
+            <span>
+              {v.status === 'QUEUED'
+                ? `Waiting to start. ${fmtNumber(v.tables.length)} table(s) to compare.`
+                : (v.progressMessage ?? 'Comparing records against the source.')}
+            </span>
           </div>
+          <p className="mt-1 text-xs text-slate-500">
+            This page updates itself. Nothing is recorded until the comparison finishes.
+          </p>
         </Card>
       )}
       {v.status === 'FAILED' && <ErrorState error={new Error(`Validation failed: ${v.errorMessage}`)} />}

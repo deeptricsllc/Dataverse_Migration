@@ -108,9 +108,16 @@ const signIn = async (page: Page) => {
    */
   if (process.env.EXPECTED_SHA) {
     const settings = await api.get(page, '/api/settings');
-    expect(settings.build?.commit, 'the deployment reports the candidate commit').toBe(
-      process.env.EXPECTED_SHA,
-    );
+    /*
+     * A prefix, because the build reports the commit shortened to twelve characters — enough to
+     * identify it without implying the whole hash means something to a reader. The comparison is
+     * still exact in the direction that matters: a different commit cannot share this prefix.
+     */
+    expect(
+      String(process.env.EXPECTED_SHA).startsWith(String(settings.build?.commit)),
+      `deployment reports ${settings.build?.commit}, candidate is ${process.env.EXPECTED_SHA}`,
+    ).toBe(true);
+    expect(settings.build?.commit, 'and it reports one at all').toBeTruthy();
     console.warn(`[provenance] ${settings.build.branch}@${settings.build.commit}`);
   }
   // The worked examples are built on first sign-in. Validation has nothing to show until they are.
@@ -308,13 +315,16 @@ test('the validation experience, state by state', async ({ page }) => {
     const current = await api.get(page, `/api/validations/${live.id}`);
     if (current.status === 'COMPLETED' || current.status === 'FAILED') break;
     running = await page
-      .getByText(/Running|Queued|Validating/)
-      .first()
+      .getByTestId('validation-progress')
       .isVisible()
       .catch(() => false);
     if (!running) await page.waitForTimeout(100);
   }
-  if (running) await shot(page, 'validation-running');
+  if (running) {
+    // What it says while it runs, not only that it is running.
+    await expect(page.getByTestId('validation-progress')).toContainText(/compare|Comparing|Validating/);
+    await shot(page, 'validation-running');
+  }
   await settled(page, live.id);
 
   // ------------------------------------------------- 8 or 9. Passed, or with warnings
@@ -383,7 +393,9 @@ test('the validation experience, state by state', async ({ page }) => {
   await expect(page.getByTestId('validation-verdict')).toBeVisible();
   await page.getByTestId(`validation-entity-${firstDataset.logicalName}`).click();
   await expect(page.getByTestId(`rules-${firstDataset.logicalName}`)).toBeVisible();
-  await page.getByTestId(`rules-${firstDataset.logicalName}`).scrollIntoViewIfNeeded();
+  // The table, not the panel inside it: the rules have their own state two shots further on, and a
+  // review of "dataset results" that does not show the per-dataset counts reviews something else.
+  await page.getByTestId(`validation-entity-${firstDataset.logicalName}`).scrollIntoViewIfNeeded();
   await shot(page, 'dataset-results');
 
   // ------------------------------------- 3 and 4. Identity, and the comparison rules
@@ -402,21 +414,34 @@ test('the validation experience, state by state', async ({ page }) => {
 
   // ----------------------------------------------------- 10 and 13. Failed, missing records
   /*
-   * A failure the comparison can prove, rather than one arranged for the screenshot.
+   * A failure this review causes on purpose, in a table nothing else in it touches.
    *
-   * The worked examples already contain one: the legacy SQL customers include a record whose name is
-   * only whitespace, and the target requires a name, so the write is refused and validation confirms
-   * the record is not there. Where that example is absent, offices are migrated into QA — which
-   * holds two of the five regions — so the offices referencing the other three cannot be written.
+   * It used to take whichever validation in the workspace had already failed, and fall back to
+   * migrating offices into QA where some regions are missing. Both depended on what had run before:
+   * once this review started migrating regions into QA for the warnings state, the offices had
+   * regions to point at and the run that was supposed to fail passed. A review whose states depend
+   * on their own order is a review that will certify the wrong thing the first time one is added.
+   *
+   * So: configuration records into UAT, which holds none, and then one of them is removed from the
+   * target. The run wrote it, the target no longer has it, and nobody has explained that — which is
+   * validation's own finding rather than a failure the run already reported.
    */
-  let failing: { report: Report };
-  const alreadyFailed = existing.find((v) => v.outcome === 'FAIL');
-  if (alreadyFailed) {
-    failing = { report: await settled(page, alreadyFailed.id) };
-  } else {
-    const qa = envs.find((e) => e.displayName === 'DeepTrics QA')!;
-    failing = await migrateAndValidate(page, 'Offices into QA', dev.id, qa.id, ['dtx_office']);
-  }
+  const failRun = await migrateAndValidate(page, 'Record removed after the run', dev.id, uat.id, [
+    'dtx_applicationconfig',
+  ]);
+  expect(failRun.report.outcome, 'clean before anything is removed').not.toBe('FAIL');
+  const configRows: { items: { sourceId: string; targetId: string | null; entity: string }[] } =
+    await api.get(page, `/api/runs/${failRun.runId}/records?limit=50&entity=dtx_applicationconfig`);
+  const removed = configRows.items.find((m) => m.targetId);
+  expect(removed, 'a record the run wrote').toBeTruthy();
+  await api.post(page, '/api/demo/target-edit', {
+    environmentId: uat.id,
+    table: 'dtx_applicationconfig',
+    recordId: removed!.targetId,
+    remove: true,
+  });
+  const afterRemoval = await api.post(page, '/api/validations', { migrationRunId: failRun.runId });
+  const failing = { report: await settled(page, afterRemoval.id) };
   expect(failing.report.outcome, `outcome was ${failing.report.outcome}`).toBe('FAIL');
   await page.goto(`/validation/${failing.report.id}`);
   await expect(page.getByTestId('validation-verdict')).toContainText('Next action');
