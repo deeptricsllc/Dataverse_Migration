@@ -16,7 +16,9 @@ import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { Readable } from 'node:stream';
 import { csvFileName, csvStream, toCsv, type CsvValue } from '../lib/csv';
-import { AppError, forbidden } from '../lib/errors';
+import { and, eq } from 'drizzle-orm';
+import { demoRecords } from '../db/schema';
+import { AppError, forbidden, notFound } from '../lib/errors';
 import { armLostAnswer } from '../dataverse/demo/fault-injection';
 import { DEMO_ENVIRONMENTS } from '../dataverse/demo/fixtures';
 import { verifyEvidencePackage } from '../services/evidence-verifier';
@@ -42,6 +44,7 @@ const idParams = z.object({ id: uuid });
  */
 const differenceType = z.enum([
   'MISSING_IN_TARGET',
+  'RECORD_FAILED_IN_RUN',
   'VALUE_MISMATCH',
   'VALUE_LOST',
   'VALUE_TRUNCATED',
@@ -1782,6 +1785,88 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       means:
         'The next migration that writes this table will have one write committed and its answer lost. The ' +
         'run cannot account for that record, so it finishes needing reconciliation rather than complete.',
+    };
+  });
+
+  /**
+   * Changes one record in a simulated target, outside any migration.
+   *
+   * What a validation exists to catch is data that stopped matching after the run: a value edited by
+   * hand, a reference repointed by an integration, a record deleted by somebody tidying up. None of
+   * those can be caused by configuring a migration, so without this the screens that report them can
+   * only be demonstrated by writing rows straight into the database — which is a fixture dressed as
+   * evidence, and proves the components render rather than that the comparison works.
+   *
+   * So this causes the real thing: the record really changes, and the comparison really finds it.
+   * Fenced the same four ways as `/api/demo/fault-injection` — demo mode only, the caller's own
+   * simulated environment only, administrator only, and one named record at a time. There is no path
+   * from here to a customer's tenant.
+   */
+  app.post('/api/demo/target-edit', async (req) => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) {
+      throw forbidden('A simulated target can only be edited in DEMO MODE');
+    }
+    if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can edit a simulated target');
+    const body = z
+      .object({
+        environmentId: uuid,
+        table: tableName,
+        recordId: z.string().min(1).max(200),
+        /** Columns to set. A null value clears the column. */
+        set: z.record(z.string(), z.unknown()).optional(),
+        /** True removes the record, which is what a target record deleted after a run looks like. */
+        remove: z.boolean().default(false),
+      })
+      .parse(req.body);
+    const env = (await s.environments.list(req.ctx)).find((e) => e.id === body.environmentId);
+    if (!env) throw forbidden('That environment is not in this workspace');
+    if (env.provider !== 'demo') {
+      throw forbidden('Only a simulated environment can be edited this way');
+    }
+    const environmentKey = DEMO_ENVIRONMENTS.find((d) => d.url === env.url)?.key;
+    if (!environmentKey) throw forbidden('That environment has no simulated data behind it');
+
+    const scope = and(
+      eq(demoRecords.organizationId, req.ctx.organizationId),
+      eq(demoRecords.environmentKey, environmentKey),
+      eq(demoRecords.logicalName, body.table),
+      eq(demoRecords.recordId, body.recordId),
+    );
+    const [existing] = await s.db.select().from(demoRecords).where(scope);
+    if (!existing) throw notFound('Record in the simulated environment');
+
+    if (body.remove) {
+      await s.db.delete(demoRecords).where(scope);
+    } else {
+      await s.db
+        .update(demoRecords)
+        .set({ data: { ...existing.data, ...(body.set ?? {}) }, updatedAt: new Date() })
+        .where(scope);
+    }
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'DEMO_TARGET_EDITED',
+      outcome: 'SUCCESS',
+      targetEnvironmentId: env.id,
+      requestId: req.ctx.requestId,
+      details: {
+        environment: env.displayName,
+        table: body.table,
+        recordId: body.recordId,
+        // The column names, not the values: a value here is data somebody put in a column.
+        columns: body.remove ? null : Object.keys(body.set ?? {}),
+        removed: body.remove,
+      },
+    });
+    return {
+      changed: true,
+      table: body.table,
+      recordId: body.recordId,
+      removed: body.remove,
+      means: body.remove
+        ? 'The record is no longer in the target. A validation of the run that wrote it will report it missing.'
+        : 'The target now holds a different value from the one the run wrote. A validation will report the difference.',
     };
   });
 

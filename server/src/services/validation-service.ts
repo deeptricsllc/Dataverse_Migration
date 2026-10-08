@@ -214,8 +214,13 @@ function namedTransformations(
   },
 ): string[] {
   const names: string[] = (m.transformations ?? []).map((r) => r.kind);
-  // The legacy single-transform field, for a run executed before rules were a list.
-  if (names.length === 0 && m.transform) names.push(m.transform.kind);
+  /*
+   * The legacy single-transform field, for a run executed before rules were a list. `DIRECT` is not
+   * a transformation — it is the default, and it means the value was carried across unchanged. Every
+   * mapping carries it, so listing it made the report say that every column in the table had a
+   * transformation applied to it.
+   */
+  if (names.length === 0 && m.transform && m.transform.kind !== 'DIRECT') names.push(m.transform.kind);
   if (m.choiceMap) names.push('CHOICE_MAP');
   return names;
 }
@@ -724,6 +729,8 @@ export class ValidationService {
       brokenReferences: 0,
       /** Filled in below, once the mappings the comparison will use are known. */
       rules: null,
+      /** Filled in once the comparison has run. */
+      findings: null,
       checks,
     };
 
@@ -1126,8 +1133,14 @@ export class ValidationService {
           targetRecordId: null,
           field: null,
           sourceValue: null,
-          targetValue: 'Record failed to migrate',
-          differenceType: 'MISSING_IN_TARGET',
+          /*
+           * No value, and no sentence pretending to be one. This used to read
+           * `Record failed to migrate` in the column headed "In target", so a message sat where a
+           * value belongs and the detail panel offered it as the name of the target record. What
+           * happened to the record is the category's job to say, and it now has its own.
+           */
+          targetValue: null,
+          differenceType: 'RECORD_FAILED_IN_RUN',
           outcome: 'FAIL',
         });
       }
@@ -1159,6 +1172,13 @@ export class ValidationService {
      * data. The records were still compared on every other column, which is why they are counted as
      * matched — the limit is on a column, and that is where the report puts it.
      */
+    /*
+     * Findings by kind, from the engine's own tally rather than from the stored list.
+     *
+     * The list is capped per table, so counting it would report the number of examples as the number
+     * of findings — which is the mistake the record and field counts exist to keep apart.
+     */
+    base.findings = byType.size > 0 ? Object.fromEntries(byType) : null;
     base.uncomparedColumns =
       uncompared.size > 0
         ? [...uncompared.entries()].map(([field, v]) => ({ field, reason: v.reason, records: v.records }))
@@ -1703,6 +1723,7 @@ export class ValidationService {
       uncomparedColumns: result.uncomparedColumns,
       aggregates: result.aggregates,
       comparisonRules: result.rules,
+      findingCounts: result.findings,
       checkedRecords: result.checkedRecords,
       failedInRun: result.failedInRun,
       unresolvedInRun: result.unresolvedInRun,
@@ -1777,6 +1798,7 @@ export class ValidationService {
         // Null predates the rules being recorded. A report must say that rather than show the rules
         // as they stand today beside a finding from an earlier comparison.
         rules: e.comparisonRules ?? null,
+        findings: e.findingCounts ?? null,
         checkedRecords: e.checkedRecords,
         failedInRun: e.failedInRun,
         unresolvedInRun: e.unresolvedInRun ?? 0,

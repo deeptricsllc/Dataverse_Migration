@@ -190,7 +190,14 @@ export type AuditAction =
   | 'DATASET_RENAMED'
   | 'DEMO_DATA_RESET'
   /** A deliberate failure armed against simulated data. Recorded because it changes what a run reports. */
-  | 'DEMO_FAULT_ARMED';
+  | 'DEMO_FAULT_ARMED'
+  /**
+   * A record in a simulated target changed outside a migration, on purpose.
+   *
+   * Recorded because the whole point of the change is that a later validation reports a difference,
+   * and a reader looking at that difference must be able to find out that somebody caused it.
+   */
+  | 'DEMO_TARGET_EDITED';
 
 export interface AuditInput {
   organizationId: string;

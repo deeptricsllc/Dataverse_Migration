@@ -195,6 +195,19 @@ exactly like one that compared everything.
 Reports written before the rules were recorded say `Comparison rules not recorded`. They are not
 backfilled; see §10.
 
+## 9.15 Which finding is which
+
+Two records are not in the target for two different reasons, and they are two findings:
+
+- **`RECORD_FAILED_IN_RUN`** — the run reported the record as failed and the comparison confirms it is
+  absent. The run already explained why. The reader's next step is the run's failure list.
+- **`MISSING_IN_TARGET`** — the run recorded a target record for it, and no record with that identity
+  is in the target now. Nobody has explained that yet, and the run's failure list will not mention it.
+
+They were one category, so a reader filtering for missing records got both kinds mixed with the wrong
+next action on half of them — while the counts beside them, `failedInRun` and `missing`, had kept the
+two apart since the run gate.
+
 ## 9.2 A finding says what to do about it
 
 Every finding carries, besides the values: its category, its severity, the dataset, the record

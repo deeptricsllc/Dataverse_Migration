@@ -1735,6 +1735,19 @@ export type ValidationOutcome = 'PASS' | 'WARNING' | 'INCOMPLETE' | 'FAIL';
  */
 export type DifferenceType =
   | 'MISSING_IN_TARGET'
+  /**
+   * The run reported this record as failed, and it is confirmed absent.
+   *
+   * Its own category, because it is a different finding with a different next action from
+   * `MISSING_IN_TARGET`. That one is validation's own discovery — the run said it had dealt with the
+   * record and the record is not there, which nobody knows the reason for yet. This one the run
+   * already explained, and the reader's next step is the run's failure list, not an investigation.
+   *
+   * They were one category, so a reader filtering for missing records got both kinds mixed, with the
+   * wrong next action on half of them — while the counts beside them, `missing` and `failedInRun`,
+   * had kept the two apart since the run gate.
+   */
+  | 'RECORD_FAILED_IN_RUN'
   | 'VALUE_MISMATCH'
   /** The source had a value after transformation; the target has none. */
   | 'VALUE_LOST'
@@ -1914,6 +1927,17 @@ export interface ValidationEntityResultDto {
    * the report says rather than showing the rules as they stand today.
    */
   rules: ComparisonRulesDto | null;
+  /**
+   * How many findings of each kind, which is a different number from how many records.
+   *
+   * One record with four wrong columns is one `different` record and four findings. Both numbers are
+   * worth having and reading one as the other is wrong in both directions, so they are two fields
+   * with two labels. Counted by the engine as it compares, not from the stored list: that list is
+   * capped, so counting it would quietly turn "2,000 of 40,000" into "2,000".
+   *
+   * Null on reports produced before the breakdown was recorded.
+   */
+  findings: Partial<Record<DifferenceType, number>> | null;
   checks: ValidationCheckDto[];
 }
 

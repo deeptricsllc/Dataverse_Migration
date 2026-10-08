@@ -1,4 +1,4 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { demoRecords, validationDifferences, validationRuns } from '../../server/src/db/schema';
@@ -47,6 +47,8 @@ const measure = (line: string) =>
     `${line}
 `,
   );
+/** Empties the file, so a figure in it is always from the run that is reading it. */
+const startMeasurements = () => writeFileSync(MEASUREMENTS, '');
 
 describe('validation performance', () => {
   let t: TestApp;
@@ -57,6 +59,7 @@ describe('validation performance', () => {
   let validationMs = 0;
 
   beforeAll(async () => {
+    startMeasurements();
     t = await createTestApp();
     api = new ApiClient(t.app);
     const session = await api.demoLogin();

@@ -430,6 +430,63 @@ const IDENTITY_BASIS: Record<IdentityBasis, string> = {
  * forty-seven columns nobody asked about. The excluded columns are listed by name for the same
  * reason: a count invites the reader to assume the rest did not matter.
  */
+/**
+ * What was found in this dataset, by kind, and what could not be checked.
+ *
+ * Findings, not records, and labelled as findings: one record with four wrong columns is one
+ * different record and four findings, and a reader who takes either number for the other draws the
+ * wrong conclusion in both directions. The dataset row above counts records; this counts findings.
+ *
+ * The checks that could not be completed are here too, because a dataset with no findings and one
+ * unverified check is not a dataset with nothing wrong — it is a dataset nobody finished looking at.
+ */
+function FindingBreakdown({
+  findings,
+  checks,
+  entity,
+}: {
+  findings: Partial<Record<DifferenceType, number>> | null;
+  checks: { check: string; outcome: string; message: string }[];
+  entity: string;
+}) {
+  const unverified = checks.filter((c) => c.outcome === 'INCOMPLETE');
+  const kinds = Object.entries(findings ?? {}).filter(([, n]) => (n ?? 0) > 0) as [DifferenceType, number][];
+  if (kinds.length === 0 && unverified.length === 0) return null;
+  return (
+    <div className="mt-3" data-testid={`findings-${entity}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Findings</p>
+      {kinds.length === 0 ? (
+        <p className="mt-1 text-sm text-slate-600">No findings.</p>
+      ) : (
+        <ul className="mt-1 space-y-0.5 text-sm">
+          {kinds.map(([type, n]) => (
+            <li key={type} className="flex flex-wrap items-baseline gap-2">
+              <span className="w-48 flex-none text-slate-700">{findingLabel(type)}</span>
+              <span className="tabular-nums text-slate-900">{fmtNumber(n)}</span>
+              <span className="text-xs text-slate-500">finding(s)</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {unverified.length > 0 && (
+        <>
+          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Checks not completed
+          </p>
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {unverified.map((c) => (
+              <li key={c.check} className="flex flex-wrap items-baseline gap-2">
+                <span className="w-48 flex-none text-slate-700">{humanize(c.check)}</span>
+                <span className="text-slate-600">{c.message}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RulesPanel({ rules, entity }: { rules: ComparisonRulesDto | null; entity: string }) {
   const [open, setOpen] = useState(false);
   if (!rules) {
@@ -457,11 +514,16 @@ function RulesPanel({ rules, entity }: { rules: ComparisonRulesDto | null; entit
         </dd>
         <dt className="text-slate-500">Fields compared</dt>
         <dd className="text-slate-700">
-          {fmtNumber(rules.comparedFields.length)}
-          {transformed.length > 0 && <>, {fmtNumber(transformed.length)} with a transformation</>}
+          {fmtNumber(rules.comparedFields.length)} field(s)
+          {transformed.length > 0 && (
+            <>
+              {' · '}
+              {fmtNumber(transformed.length)} with a transformation
+            </>
+          )}
         </dd>
-        <dt className="text-slate-500">Fields excluded</dt>
-        <dd className="text-slate-700">{fmtNumber(rules.excludedFields.length)}</dd>
+        <dt className="text-slate-500">Fields not compared</dt>
+        <dd className="text-slate-700">{fmtNumber(rules.excludedFields.length)} field(s)</dd>
         <dt className="text-slate-500">Numeric tolerance</dt>
         <dd className="text-slate-700">{rules.numericTolerance}</dd>
         <dt className="text-slate-500">Date and time</dt>
@@ -547,18 +609,42 @@ function FindingDetail({ d }: { d: ValidationDifferenceDto }) {
         <dl className="grid max-w-4xl gap-x-6 gap-y-1 text-sm sm:grid-cols-[9rem_1fr]">
           <dt className="text-slate-500">Finding</dt>
           <dd className="font-medium text-slate-900">{x.label}</dd>
+          <dt className="text-slate-500">Severity</dt>
+          <dd>
+            <StatusBadge status={d.outcome} />
+          </dd>
           <dt className="text-slate-500">Dataset</dt>
           <dd className="text-slate-700">
             <Mono className="text-xs">{d.entity}</Mono>
           </dd>
-          <dt className="text-slate-500">{x.expectedLabel}</dt>
-          <dd className="break-words text-slate-700">
-            {d.sourceValue ?? <span className="text-slate-400">no value</span>}
+          <dt className="text-slate-500">Record</dt>
+          <dd className="text-slate-700">
+            <Mono className="text-xs">{d.sourceRecordId ?? d.targetRecordId ?? '—'}</Mono>
           </dd>
-          <dt className="text-slate-500">{x.actualLabel}</dt>
-          <dd className="break-words text-slate-700">
-            {d.targetValue ?? <span className="text-slate-400">no value</span>}
-          </dd>
+          {d.field && (
+            <>
+              <dt className="text-slate-500">Field</dt>
+              <dd className="text-slate-700">
+                <Mono className="text-xs">{d.field}</Mono>
+              </dd>
+            </>
+          )}
+          {/*
+            Shown only where the finding is about a value. A missing record has no pair to compare,
+            and two rows reading "no value" ask the reader to work out that they mean nothing here.
+          */}
+          {x.hasValues && (
+            <>
+              <dt className="text-slate-500">{x.expectedLabel}</dt>
+              <dd className="break-words text-slate-700">
+                {d.sourceValue ?? <span className="text-slate-400">no value</span>}
+              </dd>
+              <dt className="text-slate-500">{x.actualLabel}</dt>
+              <dd className="break-words text-slate-700">
+                {d.targetValue ?? <span className="text-slate-400">no value</span>}
+              </dd>
+            </>
+          )}
           <dt className="text-slate-500">Rule applied</dt>
           <dd className="text-slate-700">{x.rule}</dd>
           <dt className="text-slate-500">Why it matters</dt>
@@ -575,11 +661,6 @@ function FindingDetail({ d }: { d: ValidationDifferenceDto }) {
               source record <Mono className="text-xs">{d.sourceRecordId ?? 'none'}</Mono> · target record{' '}
               <Mono className="text-xs">{d.targetRecordId ?? 'none'}</Mono>
             </div>
-            {d.field && (
-              <div>
-                field <Mono className="text-xs">{d.field}</Mono>
-              </div>
-            )}
           </dd>
         </dl>
       </td>
@@ -974,6 +1055,11 @@ export function ValidationReportPage() {
                             {e.aggregates && (
                               <AggregatePanel aggregates={e.aggregates} entity={e.logicalName} />
                             )}
+                            <FindingBreakdown
+                              findings={e.findings}
+                              checks={e.checks}
+                              entity={e.logicalName}
+                            />
                             <RulesPanel rules={e.rules} entity={e.logicalName} />
                             <button
                               type="button"
@@ -1029,6 +1115,7 @@ export function ValidationReportPage() {
                       ...(
                         [
                           'MISSING_IN_TARGET',
+                          'RECORD_FAILED_IN_RUN',
                           'VALUE_LOST',
                           'VALUE_TRUNCATED',
                           'VALUE_MISMATCH',

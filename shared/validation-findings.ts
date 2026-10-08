@@ -33,6 +33,14 @@ export interface FindingExplanation {
    */
   expectedLabel: string;
   actualLabel: string;
+  /**
+   * Whether this finding is about a value at all.
+   *
+   * A missing record has no pair of values to show, so a detail panel that shows the pair anyway
+   * prints two rows reading `no value` and asks the reader to work out that they mean nothing here.
+   * The record identity is what matters for those, and the category says the rest.
+   */
+  hasValues: boolean;
 }
 
 const EXPECTED_VALUE = 'Expected value';
@@ -50,11 +58,27 @@ const TARGET_VALUE = 'Value in target';
 const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
   MISSING_IN_TARGET: {
     label: 'Missing record',
-    rule: 'The record is paired through the identity the run used. No target record carries that identity.',
-    consequence: 'The record is not in the target. Any record that references it has no parent to point at.',
-    nextAction: 'Review the run failures for this record, then retry the outstanding records.',
+    /*
+     * The narrower meaning, now that a record the run reported as failed has its own category.
+     * This one the run said it had dealt with, and it is not there — which nobody has explained yet,
+     * and which the run's failure list will not mention.
+     */
+    rule: 'The run recorded a target record for this source record. No record with that identity is in the target now.',
+    consequence:
+      'The record is not in the target, and the run did not report a failure for it. Something removed it after the run.',
+    nextAction: 'Check whether the record was deleted in the target, then migrate it again.',
     expectedLabel: 'Source record',
     actualLabel: 'Target record',
+    hasValues: false,
+  },
+  RECORD_FAILED_IN_RUN: {
+    label: 'Record failed in the run',
+    rule: 'The run reported this record as failed. The comparison confirms no target record carries its identity.',
+    consequence: 'The record is not in the target. The run already recorded why it could not be written.',
+    nextAction: 'Open the run, read the failure for this record, then retry the outstanding records.',
+    expectedLabel: 'Source record',
+    actualLabel: 'Target record',
+    hasValues: false,
   },
   VALUE_MISMATCH: {
     label: 'Field mismatch',
@@ -63,6 +87,7 @@ const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
     nextAction: 'Review the mapping and the transformations for this field.',
     expectedLabel: EXPECTED_VALUE,
     actualLabel: TARGET_VALUE,
+    hasValues: true,
   },
   VALUE_LOST: {
     label: 'Value not written',
@@ -72,6 +97,7 @@ const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
     nextAction: 'Check that the field is in the mapping and that the target column accepts the value.',
     expectedLabel: EXPECTED_VALUE,
     actualLabel: TARGET_VALUE,
+    hasValues: true,
   },
   VALUE_TRUNCATED: {
     label: 'Value cut short',
@@ -80,6 +106,7 @@ const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
     nextAction: 'Increase the length of the target column, then migrate the records again.',
     expectedLabel: EXPECTED_VALUE,
     actualLabel: TARGET_VALUE,
+    hasValues: true,
   },
   LOOKUP_MISMATCH: {
     label: 'Relationship mismatch',
@@ -88,14 +115,17 @@ const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
     nextAction: 'Review the mapping for the referenced table, then migrate the records again.',
     expectedLabel: 'Expected reference',
     actualLabel: 'Reference in target',
+    hasValues: true,
   },
   BROKEN_REFERENCE: {
     label: 'Broken reference',
     rule: 'Every reference on a compared target record must point at a record that exists in the target.',
     consequence: 'The reference points at nothing. The record cannot be opened through that relationship.',
     nextAction: 'Migrate the referenced table first, then migrate this table again.',
-    expectedLabel: 'Referenced table',
+    // No left-hand value: the finding is that the reference in the target points at nothing.
+    expectedLabel: 'Expected reference',
     actualLabel: 'Reference in target',
+    hasValues: true,
   },
   PRE_EXISTING_DIFFERENCE: {
     label: 'Pre-existing difference',
@@ -105,6 +135,7 @@ const EXPLANATIONS: Record<DifferenceType, FindingExplanation> = {
     nextAction: 'Decide whether the target record must be updated. This run did not change it.',
     expectedLabel: EXPECTED_VALUE,
     actualLabel: TARGET_VALUE,
+    hasValues: true,
   },
 };
 
@@ -117,6 +148,7 @@ export const explainFinding = (type: DifferenceType): FindingExplanation =>
     nextAction: 'Review the record in the target.',
     expectedLabel: EXPECTED_VALUE,
     actualLabel: TARGET_VALUE,
+    hasValues: true,
   };
 
 /** The short label for one difference, for a table cell or a filter. */

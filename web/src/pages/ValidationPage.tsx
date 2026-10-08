@@ -101,6 +101,7 @@ export function ValidationPage() {
                 loading={start.isPending}
                 disabled={!effectiveRunId}
                 onClick={() => start.mutate({ migrationRunId: effectiveRunId })}
+                data-testid="validate-run"
               >
                 Validate run
               </Button>
@@ -118,11 +119,16 @@ export function ValidationPage() {
           {!ready && <Button onClick={() => navigate('/environments')}>Select environments</Button>}
           {ready && candidates.isLoading && <Spinner />}
           {ready && candidates.data && tableOptions.length === 0 && (
-            <p className="text-sm text-slate-500">Analyze the environments first to choose tables.</p>
+            <p className="text-sm text-slate-500" data-testid="validation-datasets-empty">
+              Compare the schemas first, then select the tables to validate.
+            </p>
           )}
           {ready && tableOptions.length > 0 && (
             <>
-              <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+              <div
+                className="flex max-h-40 flex-wrap gap-2 overflow-y-auto"
+                data-testid="validation-datasets"
+              >
                 {tableOptions.map((t) => (
                   <label
                     key={t.logicalName}
@@ -130,6 +136,7 @@ export function ValidationPage() {
                   >
                     <input
                       type="checkbox"
+                      data-testid={`validation-dataset-${t.logicalName}`}
                       checked={tables.has(t.logicalName)}
                       onChange={(e) => {
                         const next = new Set(tables);
@@ -145,6 +152,7 @@ export function ValidationPage() {
               <Button
                 className="mt-3"
                 icon={<ShieldCheck className="h-4 w-4" />}
+                data-testid="validate-datasets"
                 disabled={tables.size === 0}
                 loading={start.isPending}
                 onClick={() =>

@@ -665,6 +665,14 @@ describe('validation scenarios', () => {
         const fieldDifferences = found.items.filter((x) => x.field !== null).length;
         expect(fieldDifferences, 'one field difference per changed column').toBe(2);
         expect(found.items.filter((x) => x.differenceType === 'MISSING_IN_TARGET').length).toBe(1);
+
+        /*
+         * And the dataset reports both numbers, from the engine's own tally rather than from the
+         * stored list — which is capped per table, so counting it would report the number of
+         * examples as the number of findings.
+         */
+        expect(accounts.findings?.VALUE_MISMATCH, 'one finding per changed column').toBe(2);
+        expect(accounts.findings?.MISSING_IN_TARGET, 'and one for the record that is gone').toBe(1);
       }),
     900_000,
   );
