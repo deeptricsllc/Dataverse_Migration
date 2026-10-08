@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
+import type { DemoSetupStatusDto } from '../../../shared/domain';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
@@ -1603,9 +1604,47 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     database: s.db ? (config.DATABASE_URL ? 'postgres' : 'pglite') : 'unknown',
   }));
 
-  app.get('/api/demo/status', async (req) => {
-    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) return { building: false, ready: true };
+  /**
+   * What the demo workspace says about itself.
+   *
+   * A deployment that is not in demo mode has no worked examples to wait for, so it answers ready and
+   * the screen never renders.
+   */
+  app.get('/api/demo/status', async (req): Promise<DemoSetupStatusDto> => {
+    /*
+     * Nothing to wait for, so nothing to say.
+     *
+     * A deployment with no worked examples would otherwise report "not ready" for ever, and the screen
+     * would say a workspace was being prepared that nobody was preparing — the same untruth this change
+     * exists to remove, in a different costume.
+     */
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg || !config.DEMO_SCENARIOS) {
+      return { status: 'READY', ready: true, building: false, detail: null, attempts: 0, canRetry: false };
+    }
     return s.demoScenarios.status(req.ctx);
+  });
+
+  /**
+   * Builds the worked examples again for this workspace.
+   *
+   * For the organization asking, in place. The failure it answers used to need a new workspace: a build
+   * that gave up recorded nothing, so nothing could start it again, and the only way out was to sign out
+   * and get a different organization — abandoning whatever the person had already done.
+   *
+   * Any member of a demo workspace may ask. It writes nothing outside their own organization, it is
+   * idempotent, and requiring an administrator would leave most evaluators stuck in exactly the state
+   * this exists to clear.
+   */
+  app.post('/api/demo/retry-setup', async (req): Promise<DemoSetupStatusDto> => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) {
+      throw forbidden('Demo setup can only be retried in DEMO MODE');
+    }
+    /*
+     * `RUN_WORKER` is deliberately not required. It says whether this process runs jobs, which is a
+     * deployment shape, not an answer to whether a person may ask for their workspace to be built.
+     */
+    if (!config.DEMO_SCENARIOS) throw forbidden('This deployment does not build the worked examples');
+    return s.demoScenarios.retry(req.ctx);
   });
 
   /**

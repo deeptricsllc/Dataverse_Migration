@@ -225,6 +225,13 @@
       "when": 1790928315831,
       "tag": "0031_error_attempt",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790928316831,
+      "tag": "0032_demo_setup_status",
+      "breakpoints": true
     }
   ]
 }

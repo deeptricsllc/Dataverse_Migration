@@ -2234,6 +2234,38 @@ export interface MigrationWorkspaceDto {
  * Derived, never stored, and never a step number. "Step 6 of 9" describes the product; these describe
  * the work, which is the only thing a person planning a weekend cutover is asking about.
  */
+/**
+ * How far a demo workspace got in building its worked examples.
+ *
+ * Persisted on the organization, because the failure this replaced was invisible: a build that gave up
+ * left no trace, the in-memory flag cleared itself, and the workspace reported "not ready, not building"
+ * for ever with nothing able to start it again.
+ */
+export type DemoSetupStatus =
+  /** Nothing has started yet, or a retry has been asked for and not begun. */
+  | 'PENDING'
+  /** A build is running now. */
+  | 'BUILDING'
+  /** The worked examples are there. */
+  | 'READY'
+  /** An attempt finished without building them. Says why, and can be tried again. */
+  | 'FAILED';
+
+/** What the demo workspace says about itself while it is being prepared. */
+export interface DemoSetupStatusDto {
+  status: DemoSetupStatus;
+  /** True only when the worked examples are actually present. */
+  ready: boolean;
+  /** True while an attempt is running. Never true for a workspace that has given up. */
+  building: boolean;
+  /** Why the last attempt did not finish. Null unless the status is `FAILED`. */
+  detail: string | null;
+  /** Attempts made so far, so a workspace retrying in a loop is visible rather than silent. */
+  attempts: number;
+  /** Whether asking again is worth anything from here. */
+  canRetry: boolean;
+}
+
 export type MigrationProjectStatus =
   'DRAFT' | 'PREPARING' | 'BLOCKED' | 'READY' | 'RUNNING' | 'COMPLETED_WITH_ISSUES' | 'COMPLETED';
 

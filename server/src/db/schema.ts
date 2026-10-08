@@ -67,6 +67,7 @@ import type {
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
+import type { DemoSetupStatus } from '../../../shared/domain';
 import type { AggregateCheck } from '../../../shared/aggregates';
 import type { UniquenessCheck } from '../../../shared/uniqueness';
 import type { ReadinessAssessment } from '../../../shared/readiness';
@@ -89,6 +90,24 @@ export const organizations = pgTable('organizations', {
   /** Microsoft Entra tenant id (tid claim). Null for demo organizations. */
   entraTenantId: text('entra_tenant_id').unique(),
   isDemo: boolean('is_demo').notNull().default(false),
+  /**
+   * How far the demo workspace got in building its worked examples.
+   *
+   * Persisted rather than held in memory, because the thing that went wrong was invisible: a build
+   * that gave up left no trace, the in-memory flag cleared itself, and the workspace reported
+   * "not ready, not building" for ever with nothing able to start it again. A status in the row
+   * survives the process, can be retried by the organization that owns it, and can be read by the
+   * screen that has to say what happened.
+   *
+   * Null for every organization that is not a demo, and for demo workspaces built before this
+   * column existed — those are read as ready when their projects are there, which they are.
+   */
+  demoSetupStatus: text('demo_setup_status').$type<DemoSetupStatus | null>(),
+  /** Why the last attempt did not finish. Shown to the person looking at the empty workspace. */
+  demoSetupDetail: text('demo_setup_detail'),
+  /** How many attempts have been made, so a retry loop is visible rather than silent. */
+  demoSetupAttempts: integer('demo_setup_attempts').notNull().default(0),
+  demoSetupUpdatedAt: ts('demo_setup_updated_at'),
   createdAt: createdAt(),
 });
 

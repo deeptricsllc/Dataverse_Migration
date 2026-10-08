@@ -1,8 +1,14 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { MigrationPlanDto, ProjectDto } from '../../../shared/domain';
+import type {
+  DemoSetupStatus,
+  DemoSetupStatusDto,
+  EnvironmentDto,
+  MigrationPlanDto,
+  ProjectDto,
+} from '../../../shared/domain';
 import type { AppDb } from '../db/client';
-import { migrationRuns, projects, validationRuns } from '../db/schema';
+import { migrationRuns, organizations, projects, validationRuns } from '../db/schema';
 import type { RequestContext } from './context';
 import type { EnvironmentService } from './environment-service';
 import type { MigrationRunService } from './migration-run-service';
@@ -31,9 +37,37 @@ export const DEMO_PROBLEM_PROJECT = 'Customer Migration — Data Quality Issues'
 
 const TERMINAL = ['COMPLETED', 'COMPLETED_WITH_WARNINGS', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'];
 
+/**
+ * How many times discovery is asked again before the attempt is called a failure.
+ *
+ * Discovery either answers with every simulated environment or throws. It is not a thing that
+ * gradually becomes true, so there is nothing to poll for and no delay to guess at. These retries
+ * exist for the other case — a provider that throws once — and each one re-runs the real operation
+ * and re-checks the real condition rather than waiting and hoping.
+ */
+const DISCOVERY_ATTEMPTS = 3;
+/** Between attempts, doubling. Short, because a failure here blocks a sign-in from finishing. */
+const DISCOVERY_BACKOFF_MS = 250;
+
+/** The simulated environments the two worked examples are built from. */
+const REQUIRED_ENVIRONMENTS = [
+  'DeepTrics Development',
+  'DeepTrics UAT',
+  'DeepTrics QA',
+  'Legacy SQL Server (Demo)',
+] as const;
+
 export class DemoScenarioService {
-  /** One build at a time per process: two sign-ins at once must not both seed. */
-  private building: Promise<void> | null = null;
+  /**
+   * The build running for each organization, if any.
+   *
+   * Keyed by organization, which it was not. A single promise for the whole process meant the second
+   * workspace to sign in got back the *first* one's build, returned immediately, and was never built —
+   * and since each evaluator sign-in makes its own organization, that workspace stayed empty for ever.
+   * The named team sign-in has the opposite problem and needs the same map: several people land in one
+   * organization at once, and only one of them should be writing it.
+   */
+  private readonly building = new Map<string, Promise<void>>();
 
   constructor(
     private readonly db: AppDb,
@@ -63,7 +97,7 @@ export class DemoScenarioService {
    * thing currently writing to stop.
    */
   async settle(): Promise<void> {
-    await this.building;
+    await Promise.allSettled([...this.building.values()]);
   }
 
   /**
@@ -74,14 +108,48 @@ export class DemoScenarioService {
    * in. Saying so costs one small poll and removes the only moment the product looks broken when
    * it is working exactly as intended.
    */
-  async status(ctx: RequestContext): Promise<{ building: boolean; ready: boolean }> {
+  async status(ctx: RequestContext): Promise<DemoSetupStatusDto> {
     const rows = await this.db
       .select({ name: projects.name })
       .from(projects)
       .where(and(eq(projects.organizationId, ctx.organizationId), eq(projects.status, 'ACTIVE')));
     const names = new Set(rows.map((r) => r.name));
-    const ready = DEMO_SCENARIO_PROJECTS.every((n) => names.has(n));
-    return { ready, building: !ready && this.building !== null };
+    /*
+     * The examples being present is the authority, not the recorded status.
+     *
+     * A workspace built before this column existed has no status and its projects are there; reading it
+     * as anything but ready would be inventing a problem for a workspace that has none. And a recorded
+     * status that disagrees with the projects is a recorded status that is wrong.
+     */
+    const present = DEMO_SCENARIO_PROJECTS.every((n) => names.has(n));
+    const [org] = await this.db
+      .select({
+        status: organizations.demoSetupStatus,
+        detail: organizations.demoSetupDetail,
+        attempts: organizations.demoSetupAttempts,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, ctx.organizationId));
+
+    const running = this.building.has(ctx.organizationId);
+    const status: DemoSetupStatus = present
+      ? 'READY'
+      : running
+        ? 'BUILDING'
+        : (org?.status ?? 'PENDING') === 'READY'
+          ? // Recorded ready, examples gone: somebody archived them. Not a failure, and not ready.
+            'PENDING'
+          : ((org?.status ?? 'PENDING') as DemoSetupStatus);
+
+    return {
+      status,
+      ready: present,
+      building: status === 'BUILDING',
+      detail: status === 'FAILED' ? (org?.detail ?? 'Setup did not complete.') : null,
+      attempts: org?.attempts ?? 0,
+      // Worth asking again whenever the examples are not there and nothing is already doing it.
+      canRetry: !present && status !== 'BUILDING',
+    };
   }
 
   async tidy(ctx: RequestContext): Promise<{ archived: number }> {
@@ -100,15 +168,93 @@ export class DemoScenarioService {
    * Never throws at the caller: a demo that cannot be built is a worse demo, not a broken sign-in.
    */
   async ensure(ctx: RequestContext): Promise<void> {
-    if (this.building) return this.building;
-    this.building = this.build(ctx)
-      .catch((err) => {
-        this.logger.error({ err }, 'Demo scenarios could not be built');
+    const running = this.building.get(ctx.organizationId);
+    if (running) return running;
+
+    const attempt = this.attempt(ctx).finally(() => this.building.delete(ctx.organizationId));
+    this.building.set(ctx.organizationId, attempt);
+    return attempt;
+  }
+
+  /**
+   * Asks again for a workspace whose setup did not finish.
+   *
+   * The whole point of the recorded status: the organization that failed can try again, in place. No
+   * signing out, no second workspace, nothing for somebody to abandon and come back to. Returns when
+   * the attempt has finished, so the caller can report what happened rather than guess.
+   */
+  async retry(ctx: RequestContext): Promise<DemoSetupStatusDto> {
+    await this.ensure(ctx);
+    return this.status(ctx);
+  }
+
+  /** One attempt, with its outcome recorded whichever way it goes. */
+  private async attempt(ctx: RequestContext): Promise<void> {
+    await this.record(ctx, 'BUILDING', null, { countAttempt: true });
+    try {
+      await this.build(ctx);
+      await this.record(ctx, 'READY', null);
+    } catch (err) {
+      /*
+       * Recorded, not swallowed. This used to log and return, which left the workspace indistinguishable
+       * from one still working — "not ready, not building", for ever, with nothing able to start it.
+       */
+      const detail = err instanceof Error ? err.message : 'Setup did not complete.';
+      this.logger.error({ err, organizationId: ctx.organizationId }, 'Demo scenarios could not be built');
+      await this.record(ctx, 'FAILED', detail);
+    }
+  }
+
+  /** Writes where this workspace got to, so the next reader does not have to infer it. */
+  private async record(
+    ctx: RequestContext,
+    status: DemoSetupStatus,
+    detail: string | null,
+    options: { countAttempt?: boolean } = {},
+  ): Promise<void> {
+    await this.db
+      .update(organizations)
+      .set({
+        demoSetupStatus: status,
+        demoSetupDetail: detail,
+        demoSetupUpdatedAt: new Date(),
+        ...(options.countAttempt ? { demoSetupAttempts: sql`${organizations.demoSetupAttempts} + 1` } : {}),
       })
-      .finally(() => {
-        this.building = null;
-      });
-    return this.building;
+      .where(eq(organizations.id, ctx.organizationId));
+  }
+
+  /**
+   * The simulated environments, from a discovery this call made itself.
+   *
+   * The defect this replaces: the build read the environment list, and treated a non-empty answer as
+   * proof that discovery had finished. Discovery inserts the environments one at a time, so a list read
+   * while another request was discovering returned some of them — and the build, finding one of its four
+   * missing, logged a line and returned. The workspace was then empty for ever.
+   *
+   * Discovery is idempotent and returns the complete list it just wrote, so asking it directly removes
+   * the partial read rather than racing it. The retries below are for the other failure: a provider that
+   * throws. Each one re-runs the operation and re-checks the real condition.
+   */
+  private async requiredEnvironments(ctx: RequestContext): Promise<EnvironmentDto[]> {
+    let last = 'Discovery did not return the simulated environments.';
+    for (let attempt = 1; attempt <= DISCOVERY_ATTEMPTS; attempt++) {
+      try {
+        const envs = await this.environments.discover(ctx);
+        const missing = REQUIRED_ENVIRONMENTS.filter((n) => !envs.some((e) => e.displayName === n));
+        if (missing.length === 0) return envs;
+        last = `The simulated environments are not all present: ${missing.join(', ')} missing.`;
+      } catch (err) {
+        last = err instanceof Error ? err.message : 'Environment discovery failed.';
+      }
+      this.logger.warn(
+        { attempt, of: DISCOVERY_ATTEMPTS, reason: last, organizationId: ctx.organizationId },
+        'Demo setup could not read the simulated environments; asking again',
+      );
+      if (attempt < DISCOVERY_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, DISCOVERY_BACKOFF_MS * 2 ** (attempt - 1)));
+      }
+    }
+    throw new Error(last);
   }
 
   private async build(ctx: RequestContext): Promise<void> {
@@ -126,20 +272,18 @@ export class DemoScenarioService {
       );
     if (existing) return;
 
-    // A brand new demo organization has no connections until somebody asks for them, and the
-    // scenarios need four. Discovery in DEMO MODE only lists the simulated environments, so doing
-    // it here costs nothing and removes an ordering dependency on whichever screen loads first.
-    let envs = await this.environments.list(ctx);
-    if (envs.length === 0) envs = await this.environments.discover(ctx);
-    const by = (name: string) => envs.find((e) => e.displayName === name);
+    /*
+     * The environments this build needs, from a discovery it ran itself rather than from whatever
+     * another request had written so far. `requiredEnvironments` throws if they cannot be had, which is
+     * the point: an attempt that cannot proceed is a failure somebody can see and retry, not a warning
+     * in a log and an empty workspace.
+     */
+    const envs = await this.requiredEnvironments(ctx);
+    const by = (name: string) => envs.find((e) => e.displayName === name)!;
     const dev = by('DeepTrics Development');
     const uat = by('DeepTrics UAT');
     const qa = by('DeepTrics QA');
     const sql = by('Legacy SQL Server (Demo)');
-    if (!dev || !uat || !qa || !sql) {
-      this.logger.warn('Demo scenarios skipped: the simulated environments are not all present');
-      return;
-    }
 
     const started = Date.now();
     await this.successStory(ctx, dev.id, uat.id, dev.displayName, uat.displayName);
