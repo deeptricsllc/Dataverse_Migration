@@ -1709,7 +1709,21 @@ export interface RollbackPreviewDto {
 // Validation
 // ---------------------------------------------------------------------------
 
-export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
+/**
+ * What a validation found, as distinct from whether it ran.
+ *
+ * `INCOMPLETE` was missing, and its absence was the defect. The engine recorded everywhere underneath
+ * that a comparison could not run — coverage `NOT_VERIFIED`, the reason on the check — but the outcome
+ * had three values, so "could not be checked" had nowhere to go except `WARNING`, which the report
+ * prints as *Passed with warnings*. A validation that compared nothing said the word passed.
+ *
+ * Ranked `PASS < WARNING < INCOMPLETE < FAIL`, and worst wins. Not knowing is worse than knowing
+ * something minor; a proven mismatch outranks an unchecked area, because it is the actionable headline
+ * and the unchecked part stays visible on the check that could not run.
+ *
+ * See `docs/VALIDATION_SEMANTICS.md`.
+ */
+export type ValidationOutcome = 'PASS' | 'WARNING' | 'INCOMPLETE' | 'FAIL';
 /**
  * Why a record does not match.
  *

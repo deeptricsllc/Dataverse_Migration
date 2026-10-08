@@ -42,6 +42,8 @@ const PAGE = 50;
 const OUTCOME_LABELS: Record<string, string> = {
   PASS: 'All checks passed',
   WARNING: 'Passed with warnings',
+  /* Not a kind of pass: a required comparison could not run, so the headline must not say passed. */
+  INCOMPLETE: 'Incomplete',
   FAIL: 'Checks failed',
 };
 

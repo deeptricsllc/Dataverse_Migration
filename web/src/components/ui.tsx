@@ -198,6 +198,11 @@ const STATUS_TONES: Record<string, string> = {
   SOURCE_ONLY: 'bg-violet-50 text-violet-700 ring-violet-600/20',
   TARGET_ONLY: 'bg-teal-50 text-teal-700 ring-teal-600/20',
   INCOMPATIBLE: 'bg-red-50 text-red-700 ring-red-600/20',
+  /*
+   * Not green, and not the quiet slate an unmapped status falls back to. A validation that could not
+   * check something is asking for attention, not reporting a shade of success.
+   */
+  INCOMPLETE: 'bg-amber-50 text-amber-800 ring-amber-600/20',
   FAIL: 'bg-red-50 text-red-700 ring-red-600/20',
   FAILED: 'bg-red-50 text-red-700 ring-red-600/20',
   BLOCKER: 'bg-red-50 text-red-700 ring-red-600/20',
@@ -210,6 +215,7 @@ const STATUS_LABELS: Record<string, string> = {
   TARGET_ONLY: 'Target only',
   COMPLETED_WITH_ERRORS: 'Completed with errors',
   COMPLETED_WITH_WARNINGS: 'Completed with warnings',
+  INCOMPLETE: 'Incomplete',
   AUTO_MAPPED: 'Auto-mapped',
   /**
    * `NEEDS_RECONCILIATION` would read as "Needs reconciliation", and in this product that sentence

@@ -67,7 +67,7 @@ import type {
 import type { TableMetadata, TableSummary } from '../../../shared/metadata';
 import type { RecordAccounting } from '../../../shared/run-metrics';
 import type { WorkspaceRole } from '../../../shared/authorization';
-import type { DemoSetupStatus } from '../../../shared/domain';
+import type { DemoSetupStatus, ValidationOutcome } from '../../../shared/domain';
 import type { AggregateCheck } from '../../../shared/aggregates';
 import type { UniquenessCheck } from '../../../shared/uniqueness';
 import type { ReadinessAssessment } from '../../../shared/readiness';
@@ -920,7 +920,11 @@ export const validationRuns = pgTable(
     /** How deep this validation was asked to go. Null predates the setting; read as STANDARD. */
     depth: text('depth').$type<ValidationDepth>(),
     status: text('status').$type<'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'>().notNull().default('QUEUED'),
-    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>(),
+    /**
+     * Text, so a new outcome needs no migration. Reports written before `INCOMPLETE` existed keep what
+     * they recorded; nothing recomputes a result somebody already signed.
+     */
+    outcome: text('outcome').$type<ValidationOutcome>(),
     summary: jsonb('summary').$type<ValidationSummary>(),
     progressMessage: text('progress_message'),
     errorMessage: text('error_message'),
@@ -944,7 +948,7 @@ export const validationEntityResults = pgTable(
       .references(() => validationRuns.id, { onDelete: 'cascade' }),
     logicalName: text('logical_name').notNull(),
     displayName: text('display_name').notNull(),
-    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
+    outcome: text('outcome').$type<ValidationOutcome>().notNull(),
     sourceCount: integer('source_count'),
     targetCount: integer('target_count'),
     /**
@@ -998,7 +1002,7 @@ export const validationDifferences = pgTable(
     sourceValue: text('source_value'),
     targetValue: text('target_value'),
     differenceType: text('difference_type').notNull(),
-    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
+    outcome: text('outcome').$type<ValidationOutcome>().notNull(),
     createdAt: createdAt(),
   },
   (t) => [index('validation_differences_run_idx').on(t.validationRunId, t.logicalName)],
@@ -1393,7 +1397,7 @@ export const dataComparisons = pgTable(
       .references(() => environments.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     status: text('status').$type<DataComparisonStatus>().notNull().default('QUEUED'),
-    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull().default('PASS'),
+    outcome: text('outcome').$type<ValidationOutcome>().notNull().default('PASS'),
     options: jsonb('options').$type<DataComparisonOptions>().notNull(),
     totals: jsonb('totals').$type<ComparisonTotalsDto>(),
     progressMessage: text('progress_message'),
@@ -1420,7 +1424,7 @@ export const dataComparisonTables = pgTable(
     leftTable: text('left_table').notNull(),
     rightTable: text('right_table').notNull(),
     displayName: text('display_name').notNull(),
-    outcome: text('outcome').$type<'PASS' | 'WARNING' | 'FAIL'>().notNull(),
+    outcome: text('outcome').$type<ValidationOutcome>().notNull(),
     /** Exact counts from each side, which is not the same as how many were read. */
     leftCount: integer('left_count'),
     rightCount: integer('right_count'),

@@ -69,7 +69,12 @@ const MAX_TABLES_PER_COMPARISON = 50;
 const MAX_RECORDS_PER_SIDE = 50_000;
 const MAX_DIFFERENCES_PER_TABLE = 2_000;
 
-const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
+/**
+ * Worst wins. `INCOMPLETE` above `WARNING` because not knowing is worse than knowing something minor;
+ * `FAIL` above `INCOMPLETE` because a proven mismatch is the actionable headline and the unchecked area
+ * stays visible on the check that recorded it. See `docs/VALIDATION_SEMANTICS.md`.
+ */
+const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, INCOMPLETE: 2, FAIL: 3 };
 const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
 

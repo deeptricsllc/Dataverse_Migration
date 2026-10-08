@@ -78,7 +78,12 @@ import { transformField } from './transformation/engine';
 import { compareValues, displayValue } from './values';
 import { envRef } from './env-ref';
 
-const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, FAIL: 2 };
+/**
+ * Worst wins. `INCOMPLETE` above `WARNING` because not knowing is worse than knowing something minor;
+ * `FAIL` above `INCOMPLETE` because a proven mismatch is the actionable headline and the unchecked area
+ * stays visible on the check that recorded it. See `docs/VALIDATION_SEMANTICS.md`.
+ */
+const RANK: Record<ValidationOutcome, number> = { PASS: 0, WARNING: 1, INCOMPLETE: 2, FAIL: 3 };
 const worst = (outcomes: ValidationOutcome[]): ValidationOutcome =>
   outcomes.reduce<ValidationOutcome>((w, o) => (RANK[o] > RANK[w] ? o : w), 'PASS');
 
@@ -530,7 +535,7 @@ export class ValidationService {
       await this.audit.record({
         organizationId: vr.organizationId,
         userId: vr.createdByUserId,
-        action: 'VALIDATION_COMPLETED',
+        action: 'VALIDATION_FAILED',
         outcome: 'FAILURE',
         sourceEnvironmentId: vr.sourceEnvironmentId,
         targetEnvironmentId: vr.targetEnvironmentId,
@@ -1034,13 +1039,18 @@ export class ValidationService {
        * However well the records it *could* compare match, completeness is not provable while the
        * outcome of a write is unknown: the target may hold a record this report does not account for, or
        * may be missing one it claims. That is a statement about the migration rather than about the
-       * comparison, and it fails the check rather than qualifying it — a reader who sees a passing
-       * verdict next to a footnote will remember the verdict.
+       * comparison, and it must not be qualified away — a reader who sees a passing verdict next to a
+       * footnote will remember the verdict.
        */
       if (unresolvedInRun > 0) {
         checks.push({
           check: 'RECORD_EXISTENCE',
-          outcome: 'FAIL',
+          /*
+           * Incomplete rather than failed, now that the two can be told apart. Nothing here was shown to
+           * disagree: these records were excluded from the comparison precisely because nobody can say
+           * what happened to them. Calling it a failure claims a mismatch that was never found.
+           */
+          outcome: 'INCOMPLETE',
           message:
             `${unresolvedInRun} record(s) have an unknown write outcome, so this migration's completeness cannot be proven. ` +
             `Each one may or may not be in the target; the run lists them and they must be reconciled before any verdict here means anything.` +
@@ -1077,7 +1087,13 @@ export class ValidationService {
             : nothingExamined
               ? {
                   check: 'RECORD_EXISTENCE',
-                  outcome: 'WARNING',
+                  /*
+                   * Not verified, which is now its own outcome rather than a warning. The comment above
+                   * describes this exact trap being caught once already — a green badge on a
+                   * self-contradicting sentence — and `WARNING` left the headline reading
+                   * *Passed with warnings* for a check that examined nothing.
+                   */
+                  outcome: 'INCOMPLETE',
                   message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} Nothing here says whether this run's records are in the target.`,
                 }
               : {
@@ -1121,8 +1137,12 @@ export class ValidationService {
           : base.coverage?.mode === 'NOT_VERIFIED' || base.checkedRecords === 0
             ? {
                 check: 'FIELD_VALUES',
-                // Nothing was compared, so there is nothing to pass. Same reason as above.
-                outcome: 'WARNING',
+                /*
+                 * Nothing was compared, so there is nothing to pass — and nothing to warn about either.
+                 * This was `WARNING`, which the report prints as *Passed with warnings*, so a validation
+                 * that compared no column on any record put the word passed in its headline.
+                 */
+                outcome: 'INCOMPLETE',
                 message: `Not verified. ${base.coverage?.reason ?? 'No records were examined.'} No column was compared on any record.`,
               }
             : {

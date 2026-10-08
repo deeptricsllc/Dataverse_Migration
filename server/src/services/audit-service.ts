@@ -137,6 +137,16 @@ export type AuditAction =
   | 'BUSINESS_LOGIC_BYPASS_ENABLED'
   | 'VALIDATION_REQUESTED'
   | 'VALIDATION_COMPLETED'
+  /**
+   * A validation that could not run to a verdict.
+   *
+   * Its own action, because it was recorded as `VALIDATION_COMPLETED` with a `FAILURE` outcome — an
+   * entry whose verb and whose result contradict each other, in the one record that exists to say what
+   * happened. A reader filtering the trail for completed validations was being handed crashes.
+   */
+  | 'VALIDATION_FAILED'
+  /** Evidence left the platform. Recorded because an exported report outlives the screen it came from. */
+  | 'VALIDATION_EVIDENCE_EXPORTED'
   | 'TABLE_CATEGORY_CHANGED'
   /** A workspace role was changed: who, by whom, from what to what. */
   | 'TEAM_ROLE_CHANGED'

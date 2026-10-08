@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
-import type { DemoSetupStatusDto } from '../../../shared/domain';
+import type { DemoSetupStatusDto, ValidationOutcome } from '../../../shared/domain';
+import type { RequestContext } from '../services/context';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
@@ -1152,6 +1153,33 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     );
   });
 
+  /**
+   * Evidence that leaves the platform is recorded.
+   *
+   * An exported report outlives the screen it came from and is what somebody attaches to a change
+   * record, so the trail has to show that it was taken, from which validation, and by whom.
+   */
+  const auditValidationExport = async (
+    req: { ctx: RequestContext },
+    id: string,
+    kind: 'summary' | 'differences',
+    run: {
+      outcome: ValidationOutcome | null;
+      sourceEnvironment: { id: string };
+      targetEnvironment: { id: string };
+    },
+  ) =>
+    s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'VALIDATION_EVIDENCE_EXPORTED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: run.sourceEnvironment.id,
+      targetEnvironmentId: run.targetEnvironment.id,
+      requestId: req.ctx.requestId,
+      details: { validationRunId: id, report: kind, validationOutcome: run.outcome },
+    });
+
   app.get('/api/validations/:id/differences.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const q = z
@@ -1170,6 +1198,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.query);
     const run = await s.validation.get(req.ctx, id);
+    await auditValidationExport(req, id, 'differences', run);
     return streamCsv(
       reply,
       csvFileName([
@@ -1203,6 +1232,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
   app.get('/api/validations/:id/summary.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const run = await s.validation.get(req.ctx, id);
+    await auditValidationExport(req, id, 'summary', run);
     return sendCsv(
       reply,
       csvFileName([
