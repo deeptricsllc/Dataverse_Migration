@@ -116,7 +116,7 @@ describe('a run reports the worst outcome its evidence supports', () => {
     });
     expect(refused.statusCode).toBe(409);
     expect(refused.json()).toMatchObject({
-      error: { message: 'Nothing in this run is waiting for another attempt.' },
+      error: { message: expect.stringContaining('waiting on a correction') },
     });
   });
 

@@ -496,7 +496,10 @@ export class MigrationRunService {
        * two places is not enforced, so both read the same assessment.
        */
       const assessment = await this.retrySafety(ctx, runId);
-      if (assessment.safe === 0 && assessment.state === 'NOTHING_TO_RETRY') {
+      if (
+        assessment.safe === 0 &&
+        (assessment.state === 'NOTHING_TO_RETRY' || assessment.state === 'CORRECTION_REQUIRED')
+      ) {
         throw conflict(assessment.reason, { excluded: assessment.excluded } as never);
       }
       await this.requeue(ctx, runId, true);
@@ -1279,10 +1282,20 @@ export class MigrationRunService {
      * accurate and sounds like a refusal. There is nothing to refuse.
      */
     if (!workWaiting && needsPerson === 0 && !ACTIVE.includes(run.status)) {
+      /*
+       * Nothing an attempt can do is not the same as nothing outstanding.
+       *
+       * Where records are excluded, they are waiting on a change somebody has to make, and the state says
+       * so rather than leaving it to whoever reads the exclusions underneath.
+       */
+      const outstanding = excluded.reduce((n, e) => n + e.records, 0);
       return {
         ...base,
-        state: 'NOTHING_TO_RETRY',
-        reason: 'Nothing in this run is waiting for another attempt.',
+        state: outstanding > 0 ? 'CORRECTION_REQUIRED' : 'NOTHING_TO_RETRY',
+        reason:
+          outstanding > 0
+            ? `Another attempt would change nothing. ${describeCount(outstanding, 'record is', 'records are')} waiting on a correction.`
+            : 'Nothing in this run is waiting for another attempt.',
         allowed: false,
       };
     }

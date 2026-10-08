@@ -41,19 +41,18 @@ export function RetryControl({ run }: { run: MigrationRunDto }) {
    * Hidden only when there is genuinely nothing to say.
    *
    * A run that carried everything is not a run somebody is deciding whether to retry, so it gets no card.
-   * But `NOTHING_TO_RETRY` also covers the run this gate exists for — every record written, two hundred and
-   * thirty-five references dropped, and no further attempt that can set them — and there the exclusions
-   * carry the only sentence on the page that says what would actually fix it. Hiding the card there hid the
-   * correction.
+   * A run with records waiting on a change somebody has to make is `CORRECTION_REQUIRED`, and there the
+   * exclusions carry the only sentence on the page that says what would fix it — which is why the two
+   * states are separate and only one of them is silent.
    */
-  if (s.state === 'NOTHING_TO_RETRY' && s.excluded.length === 0) return null;
+  if (s.state === 'NOTHING_TO_RETRY') return null;
 
   return (
     <Card className="mb-5" data-testid="retry-control">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            {s.state === 'NOTHING_TO_RETRY' ? 'What another attempt would not fix' : 'Next attempt'}
+            {s.state === 'CORRECTION_REQUIRED' ? 'Correction required' : 'Next attempt'}
           </p>
           <p className="mt-0.5 text-sm text-slate-900" data-testid="retry-reason">
             {s.reason}

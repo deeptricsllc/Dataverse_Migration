@@ -154,7 +154,13 @@ describe('whether another attempt is safe', () => {
     expect(run.omittedReferences).toBeGreaterThan(0);
 
     const s = await safety(run.id);
-    expect(s.state).toBe('NOTHING_TO_RETRY');
+    /*
+     * Not "nothing to retry". Nothing an attempt can do is not the same as nothing outstanding, and a
+     * state saying the former reads as the latter to anything consuming it rather than the exclusions
+     * beside it — the same understatement this gate exists to remove.
+     */
+    expect(s.state).toBe('CORRECTION_REQUIRED');
+    expect(s.reason).toMatch(/waiting on a correction/);
     expect(s.allowed).toBe(false);
     expect(s.safe).toBe(0);
     expect(s.needsReconciliation).toBe(0);

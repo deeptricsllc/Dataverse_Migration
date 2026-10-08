@@ -1570,7 +1570,17 @@ export type RetrySafetyState =
   | 'RECONCILE_FIRST'
   /** The run is not in a state a retry applies to — it is still going, or another run holds the target. */
   | 'RETRY_BLOCKED'
-  /** The run finished and there is nothing a further attempt would do. */
+  /**
+   * Another attempt would change nothing, and records are waiting on a change somebody has to make.
+   *
+   * Distinct from `NOTHING_TO_RETRY`, which it used to be folded into, and the distinction is the same one
+   * this whole gate is about: a name that understates its own evidence. A run with two hundred and thirty-five
+   * records in the target missing a reference has nothing for an attempt to do — and reporting that as
+   * "nothing to retry" reads as "nothing outstanding" to anybody consuming the state rather than the
+   * exclusions beside it. The correction is named in `excluded`.
+   */
+  | 'CORRECTION_REQUIRED'
+  /** The run finished, nothing is waiting, and nothing is outstanding. */
   | 'NOTHING_TO_RETRY';
 
 /**
