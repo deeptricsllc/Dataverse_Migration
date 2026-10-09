@@ -484,10 +484,29 @@ export class ProjectService {
   // Internals
   // ---------------------------------------------------------------------------
 
+  /**
+   * The environment a project is being pointed at, if it can be pointed at one.
+   *
+   * Two gates, and the second one was missing. `getAccessible` refuses an environment this user may
+   * not use. `resolveDataset` refuses a connection that holds nothing — and it was applied in
+   * `addSource` and not here, so a project created straight from an empty SharePoint or file
+   * connection got it as its primary source without the question ever being asked.
+   *
+   * That is the whole of the reported failure: the project was created, the connection was its
+   * source, analysis was accepted, and it died in the worker saying `None of the requested tables
+   * exist in this source` — a sentence about the engine's bookkeeping, several minutes after the
+   * moment when the person could have been told they had not chosen a file yet.
+   *
+   * One rule, both doors.
+   */
   private async resolveEnvironment(ctx: RequestContext, environmentId: string | null | undefined) {
     if (!environmentId) return null;
-    // getAccessible is the gate: it refuses an environment this user may not use.
-    return this.environmentsSvc.getAccessible(ctx, environmentId);
+    const env = await this.environmentsSvc.getAccessible(ctx, environmentId);
+    const resolution = await resolveDataset(this.db, env);
+    if (!resolution.resolves) {
+      throw badRequest(`${resolution.message} ${resolution.whatToDo}`);
+    }
+    return env;
   }
 
   /** A migration project may point at an analysis project, and only at one of that kind. */

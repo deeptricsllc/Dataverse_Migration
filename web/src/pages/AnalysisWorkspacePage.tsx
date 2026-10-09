@@ -205,15 +205,35 @@ function AnalyseButton({
   onAnalyse: (all: boolean) => void;
 }) {
   if (datasets.length === 0) return null;
+
+  /*
+   * Only the connections that resolve to something to read.
+   *
+   * A connection holding nothing chosen is not an analysable dataset, and the server refuses to
+   * analyse one. Offering the action anyway is how somebody pressed Analyse over a SharePoint
+   * connection with no file selected and met `None of the requested tables exist in this source`
+   * several minutes later. `unusable` comes from the server, because the screen cannot tell the
+   * difference between a connection holding nothing and a database nobody has looked at yet — both
+   * list no objects, and only one of them is a problem.
+   */
+  const usable = datasets.filter((d) => !d.unusable);
+  if (usable.length === 0) {
+    return (
+      <Button variant="primary" disabled data-testid="analyse">
+        {datasets.length === 1 ? 'Nothing selected to analyse' : 'Nothing selected in any dataset'}
+      </Button>
+    );
+  }
+
   /*
    * Counted in datasets as the person sees them. A run covers a whole connection, but "Analyse 1 dataset"
    * over a workbook they just chose three sheets from describes the machinery rather than the work.
    */
   const count = (of: AssessedDatasetDto[]) => of.reduce((n, d) => n + Math.max(d.objects.length, 1), 0);
-  const total = count(datasets);
-  const busy = count(datasets.filter((d) => d.state === 'QUEUED' || d.state === 'RUNNING'));
+  const total = count(usable);
+  const busy = count(usable.filter((d) => d.state === 'QUEUED' || d.state === 'RUNNING'));
   const pending = count(
-    datasets.filter((d) => d.state === 'NOT_ANALYSED' || d.state === 'STALE' || d.state === 'FAILED'),
+    usable.filter((d) => d.state === 'NOT_ANALYSED' || d.state === 'STALE' || d.state === 'FAILED'),
   );
 
   if (busy > 0) {
@@ -526,23 +546,49 @@ function DatasetRowItem({
 }) {
   const staged = dataset.connectionType === 'FILE';
 
-  if (!object) {
-    /*
-     * In the project, but not yet a dataset. The server refuses to analyse this, so the row says what is
-     * missing instead of showing a row of zeroes that would read as "we looked and found nothing".
-     */
+  /*
+   * In the project and not analysable: the server says so, and says what is missing.
+   *
+   * The server's own sentence, not one composed here. A file connection needs a file and a
+   * SharePoint connection needs a selection, and those are different instructions — getting them
+   * from `resolveDataset` is what keeps the screen and the refusal saying the same thing.
+   */
+  if (dataset.unusable) {
     return (
       <li className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="dataset-row">
         <Database className="h-4 w-4 flex-none text-amber-600" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-slate-900">{dataset.name}</p>
-          <p className="text-xs text-amber-800">
-            Nothing has been chosen from this connection yet, so there is nothing to analyse.
+          <p className="text-xs text-amber-800" data-testid="dataset-unusable">
+            {dataset.unusable.message} {dataset.unusable.whatToDo}
           </p>
         </div>
         <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-inset ring-amber-200">
           Nothing selected
         </span>
+      </li>
+    );
+  }
+
+  if (!object) {
+    /*
+     * Analysable, but its contents are not listed yet.
+     *
+     * A database or a Dataverse environment keeps its tables on its own side, and nothing here has
+     * looked. This row used to say "nothing has been chosen from this connection yet", which is
+     * true of an empty file connection and false of a database where everything is in scope — and
+     * it said it about both, because it was reading an empty list rather than asking the server.
+     */
+    return (
+      <li className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="dataset-row">
+        <Table2 className="h-4 w-4 flex-none text-slate-400" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-slate-900">{dataset.name}</p>
+          <p className="text-xs text-slate-500">
+            {datasetKindLabel(dataset)} · its tables are listed once it has been analysed.
+          </p>
+        </div>
+        <DatasetState dataset={dataset} />
       </li>
     );
   }

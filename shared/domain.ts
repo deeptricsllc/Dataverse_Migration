@@ -2774,6 +2774,15 @@ export interface AssessedObjectDto {
 export interface AssessedDatasetDto {
   environmentId: string;
   name: string;
+  /**
+   * Why this connection cannot be analysed, when it cannot be.
+   *
+   * Null means it can. The screen must not work this out for itself from an empty `objects` list:
+   * a database that has never been analysed has no objects either, and is perfectly analysable —
+   * its tables live on its side and nothing has looked yet. Only the server knows the difference,
+   * so it says, and says what the person has to go and do about it.
+   */
+  unusable: { message: string; whatToDo: string } | null;
   connectionType: string | null;
   provider: string | null;
   analysed: boolean;

@@ -29,6 +29,7 @@ import {
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { JobQueue } from '../jobs/queue';
 import { badRequest, errorMessage, notFound } from '../lib/errors';
+import { resolveDataset } from './dataset-resolution';
 import type { AuditService } from './audit-service';
 import type { RequestContext } from './context';
 import { analyzeDependencies } from './dependency-graph';
@@ -105,6 +106,24 @@ export class AnalysisService {
       if (listed.length === 0) throw badRequest('That dataset is not part of this project');
     }
     const env = await this.environmentsSvc.getAccessible(ctx, wanted);
+
+    /**
+     * Does this connection resolve to anything to read?
+     *
+     * Checked here and not only where the dataset was added, because adding and running are
+     * different moments and the answer can change between them: a file can be removed from a
+     * connection after the project was built around it. A check that only runs at the earlier moment
+     * is a check that passes for a project which cannot work.
+     *
+     * This is the refusal the reported failure should have been. It was accepted instead, queued,
+     * and failed inside the worker with `None of the requested tables exist in this source` — which
+     * named no table the person had asked for, because they had asked for none.
+     */
+    const resolution = await resolveDataset(this.db, env);
+    if (!resolution.resolves) {
+      throw badRequest(`${resolution.message} ${resolution.whatToDo}`);
+    }
+
     const tables = [...new Set((input.tables ?? []).map((t) => t.trim()).filter(Boolean))];
     if (tables.length > MAX_TABLES_PER_ANALYSIS) {
       throw badRequest(`An analysis covers at most ${MAX_TABLES_PER_ANALYSIS} tables at a time`);
@@ -177,7 +196,25 @@ export class AnalysisService {
       const catalog = await this.metadata.getCatalog(env.id, conn);
       const chosen = selectTables(catalog, run.options.tables);
       if (chosen.length === 0) {
-        throw badRequest('None of the requested tables exist in this source');
+        /*
+         * Two different situations, and they had one message between them.
+         *
+         * An empty catalogue means the connection holds nothing to read — nothing was chosen, or
+         * what was chosen is gone. `None of the requested tables exist in this source` described
+         * neither: no table was requested, and the source has no tables to speak of. A run that
+         * reaches here is also a run the checks above should have refused, so it says that too.
+         */
+        if (catalog.length === 0) {
+          const resolution = await resolveDataset(this.db, env);
+          throw badRequest(
+            resolution.resolves
+              ? `${env.displayName} holds nothing to analyse. Select the data to analyse, then run it again.`
+              : `${resolution.message} ${resolution.whatToDo}`,
+          );
+        }
+        throw badRequest(
+          `None of the selected tables are in ${env.displayName} any more. Select the data to analyse, then run it again.`,
+        );
       }
 
       await progress(`Reading metadata for ${chosen.length} table(s)`);
