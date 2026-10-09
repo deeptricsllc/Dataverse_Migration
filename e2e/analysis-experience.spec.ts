@@ -120,8 +120,23 @@ test('the assessment can be read, taken apart and challenged', async ({ page }) 
   const summary = page.getByTestId('executive-summary');
   await expect(summary).toContainText('1,420 records');
   await expect(summary).toContainText('No reliable record identifier');
-  await expect(page.getByTestId('readiness-score')).toHaveText('72');
+  /*
+   * 75, where this read 72 before relationship discovery existed.
+   *
+   * The overall figure is the mean of the dimensions that could be assessed, and Relationships had
+   * never been one of them for this project: it was assessed only when the source declared a
+   * dependency, and a file import declares nothing. Four tables are now compared against each
+   * other, so the dimension is assessed and joins the mean. The assertions below pin the reason
+   * rather than the number, so a future change that moves the score has to move it for a stated
+   * cause.
+   */
+  await expect(page.getByTestId('readiness-score')).toHaveText('75');
   await expect(page.getByTestId('readiness-band')).toHaveText('Needs attention');
+  const readiness = page.getByTestId('readiness');
+  await expect(readiness, 'relationships are assessed now that tables can be compared').toContainText(
+    'Relationships',
+  );
+  await expect(readiness).not.toContainText('No relationship information was available');
 
   // --- and never in migration terms -----------------------------------------
   const main = page.getByRole('main');

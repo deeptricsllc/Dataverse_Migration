@@ -140,7 +140,14 @@ function parseCsv(text: string): Row[] {
     row.push(cell);
     rows.push(row);
   }
-  const header = rows[0].map((h) => h.replace(/^﻿/, ''));
+  /*
+   * The server writes a byte-order mark, which would otherwise become part of the first header
+   * name and make every lookup of "Severity" miss. Built from a char code rather than written as a
+   * literal, because a stray invisible character in a source file is the kind of thing that is
+   * edited back in by accident.
+   */
+  const bom = String.fromCharCode(0xfeff);
+  const header = rows[0].map((h) => (h.startsWith(bom) ? h.slice(1) : h));
   return rows.slice(1).map((r) => Object.fromEntries(header.map((h, i) => [h, r[i] ?? ''])));
 }
 
