@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { FINDING_DISPOSITIONS } from '../../../shared/findings';
+import { DIMENSION_FOR, READINESS_DIMENSION_LABELS } from '../../../shared/analysis-readiness';
+import { FINDING_DISPOSITIONS, findingDeducts } from '../../../shared/findings';
 import { PROJECT_KINDS, SCHEDULE_MODES, STAGED_SOURCE_KINDS } from '../../../shared/domain';
 import { csvFileName, toCsv } from '../lib/csv';
 import type { Services } from '../services/container';
@@ -439,6 +440,11 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
         'Share of records',
         'Why it matters',
         'What to do',
+        // How this finding reaches the score, so a reader can reconcile the list against the
+        // number. Without it the only way to know whether a finding cost anything was to infer it
+        // from the category, and two categories deliberately cost nothing.
+        'Readiness dimension',
+        'Counts against readiness',
         'Evidence',
       ],
       assessment.findings.map((f) => [
@@ -453,6 +459,8 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
         f.affectedPercent === null ? '' : `${f.affectedPercent}%`,
         f.whyItMatters,
         f.recommendation,
+        DIMENSION_FOR[f.category] === null ? 'None' : READINESS_DIMENSION_LABELS[DIMENSION_FOR[f.category]!],
+        findingDeducts(f) ? 'Yes' : 'No',
         f.evidence.join(' | '),
       ]),
     );

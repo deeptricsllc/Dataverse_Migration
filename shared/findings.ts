@@ -307,6 +307,16 @@ export function findingsForTable(input: FindingsInput): Finding[] {
   for (const field of profile.fields) {
     const d = field.duplication;
     if (!d || !couldIdentify(field) || d.duplicateGroups === 0) continue;
+    /*
+     * A reference repeating is the reference working.
+     *
+     * `product_code` in an orders table names a product, and ninety orders across twenty products
+     * means it repeats seventy times — correctly. Only a column that is meant to identify *this*
+     * table's records is expected to be unique, so collisions are reported for those and left alone
+     * for the rest. The alternative, reporting every key-shaped column that repeats, flagged two
+     * healthy foreign keys on the first enterprise fixture it met.
+     */
+    if (!identifiesOwnTable(field, profile.displayName)) continue;
 
     /*
      * Critical when this collision is *why* the table has no identity, a warning when some other
@@ -451,7 +461,18 @@ export function findingsForTable(input: FindingsInput): Finding[] {
     ].filter(([, n]) => (n as number) > 0) as [string, number][];
     const dominant = shapes.slice().sort((a, b) => b[1] - a[1])[0];
     const minority = c.populated - (dominant?.[1] ?? 0);
-    if (shapes.length > 1 && minority > 0 && pct(minority, c.populated)! >= MIXED_SHAPE_FLOOR) {
+    /*
+     * A column of written amounts beside bare numbers is one defect, already reported above as
+     * money kept as text with the conversion it needs. Reporting it again as "more than one kind of
+     * value" would deduct twice and tell the reader nothing they were not just told.
+     */
+    const moneyAlreadySaid = c.currency > 0 && c.dates === 0 && c.text === 0;
+    if (
+      !moneyAlreadySaid &&
+      shapes.length > 1 &&
+      minority > 0 &&
+      pct(minority, c.populated)! >= MIXED_SHAPE_FLOOR
+    ) {
       found.push({
         id: id('MIXED_VALUE_TYPES', field.field),
         category: 'TYPE_COMPATIBILITY',
@@ -877,7 +898,7 @@ const SYNTHETIC_COLUMN = /^__/;
  * amount that happens not to repeat is not an identifier, and suggesting it as one costs the product more
  * credibility than the finding was ever worth.
  */
-const KEY_LIKE_NAME =
+export const KEY_LIKE_NAME =
   /(^|[^a-z])(id|key|code|no|num|number|ref|reference|sku|guid|uuid|account|barcode|isbn|ean)([^a-z]|$)/i;
 
 /**
@@ -913,6 +934,30 @@ function candidateKeys(profile: TableProfileDto): FieldProfileDto[] {
  * it, and calling the column "mixed type" as well would be a second finding for the same records.
  */
 const MIXED_SHAPE_FLOOR = 5;
+
+/** Generic identifier names, which belong to whichever table they are in. */
+const BARE_IDENTIFIER = /^(id|code|ref|reference|key|number|no|uuid|guid|pk)$/i;
+
+/**
+ * Whether this column is meant to identify a record of the table it is in, rather than point at
+ * another table's record.
+ *
+ * Decided from the name, because that is what is available here: one table cannot see another. A
+ * column named after its own table, or named like a bare identifier, identifies; a column named
+ * after something else references. It is a heuristic, and it is only used to suppress a finding —
+ * the worst case is silence about a genuinely duplicated key whose name does not mention its table.
+ */
+function identifiesOwnTable(field: FieldProfileDto, tableName: string): boolean {
+  const name = field.field.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (BARE_IDENTIFIER.test(field.field.replace(/[^a-zA-Z0-9]/g, ''))) return true;
+  const table = tableName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const singular = table.endsWith('ies')
+    ? `${table.slice(0, -3)}y`
+    : table.endsWith('s')
+      ? table.slice(0, -1)
+      : table;
+  return name.includes(singular) || singular.includes(name);
+}
 
 const isNearlyUnique = (f: FieldProfileDto) =>
   f.examined > 0 &&
@@ -1076,6 +1121,13 @@ function fromSemantic(
       deducts: false,
     };
   }
+  /*
+   * Superseded where the per-record counts exist.
+   *
+   * MONEY_AS_TEXT says everything this says and says how many records, in which notations, and to
+   * what scale. Emitting both put two warnings on one column and deducted for the defect twice.
+   */
+  if (reading.type === 'CURRENCY' && (field?.conversion?.currency ?? 0) > 0) return null;
   if (reading.type === 'CURRENCY' || reading.type === 'PERCENTAGE') {
     return {
       ...base,

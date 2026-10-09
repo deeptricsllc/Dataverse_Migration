@@ -55,7 +55,7 @@ export const READINESS_DIMENSION_DESCRIPTIONS: Record<ReadinessDimension, string
 };
 
 /** Which findings count against which dimension. Duplicates are an identity problem, not a separate axis. */
-const DIMENSION_FOR: Record<FindingCategory, ReadinessDimension | null> = {
+export const DIMENSION_FOR: Record<FindingCategory, ReadinessDimension | null> = {
   IDENTITY: 'IDENTITY',
   DUPLICATES: 'IDENTITY',
   COMPLETENESS: 'COMPLETENESS',

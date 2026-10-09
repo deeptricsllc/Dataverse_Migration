@@ -13,7 +13,9 @@ import {
   FINDING_DISPOSITIONS,
   FINDING_DISPOSITION_DESCRIPTIONS,
   FINDING_DISPOSITION_LABELS,
+  findingDeducts,
 } from '@shared/findings';
+import { DIMENSION_FOR, READINESS_DIMENSION_LABELS } from '@shared/analysis-readiness';
 import { api } from '../lib/api';
 import { Button, Select, cx } from './ui';
 
@@ -81,6 +83,7 @@ export function FindingCard({
   const [open, setOpen] = useState(defaultOpen);
   const tone = TONE[finding.severity];
   const settled = dispositionSilences(disposition?.status);
+  const dimension = DIMENSION_FOR[finding.category];
 
   /** "1,420 records (40%)" — the scale of the problem, which decides whether it is worth fixing first. */
   const scale =
@@ -114,6 +117,23 @@ export function FindingCard({
               <SeverityChip severity={finding.severity} />
               <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                 {FINDING_CATEGORY_LABELS[finding.category]}
+              </span>
+              {/*
+                How this finding reaches the score.
+                The readiness panel promises that every deduction traces to a finding you can open.
+                Read from the other end that promise was unverifiable: a reader looking at a finding
+                had no way to tell whether it had cost anything, and two categories deliberately
+                cost nothing at all. Saying so here closes the loop in the direction people read it.
+              */}
+              <span
+                className="text-[11px] font-medium uppercase tracking-wide text-slate-400"
+                data-testid="finding-readiness"
+              >
+                {dimension === null
+                  ? '· not scored'
+                  : findingDeducts(finding)
+                    ? `· counts against ${READINESS_DIMENSION_LABELS[dimension]}`
+                    : `· ${READINESS_DIMENSION_LABELS[dimension]}, no deduction`}
               </span>
             </div>
             <h3 className="mt-1.5 text-sm font-semibold text-slate-900">{finding.title}</h3>

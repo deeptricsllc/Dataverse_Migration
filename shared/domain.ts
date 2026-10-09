@@ -866,6 +866,16 @@ export interface FieldProfileDto {
    * absent for columns where the question does not arise (a lookup has no spelling).
    */
   conversion?: ConversionProfileDto | null;
+  /**
+   * Distinct values with their record counts, for comparing this column against columns in other
+   * tables. Present only where a relationship could plausibly run through the column.
+   *
+   * Carried with counts rather than as a bare set because the question a reader asks about a broken
+   * reference is "how many records", and a set of values can only answer "how many values". Absent
+   * for secured columns: masking collapses every value to one string, which would make any two
+   * secured columns look perfectly related.
+   */
+  valueSample?: { values: ValueFrequencyDto[]; truncated: boolean } | null;
   /** The distinct values and their counts, for choice mapping. Capped. */
   topValues: ValueFrequencyDto[];
   topValuesTruncated: boolean;

@@ -36,6 +36,7 @@ import {
   type FieldValue,
   type TableMetadata,
 } from '../../../shared/metadata';
+import { KEY_LIKE_NAME } from '../../../shared/findings';
 import { EMAIL_SHAPE } from '../../../shared/semantic-types';
 import {
   currencyMarker,
@@ -80,6 +81,13 @@ export const COLLISION_EXAMPLES = 5;
 /** Example values kept per value shape, and distinct notations tracked per column. */
 export const SHAPE_SAMPLES = 3;
 export const NOTATION_CAP = 20;
+/**
+ * Distinct values kept per column for cross-table comparison.
+ *
+ * Only for columns a relationship could run through, and bounded, because this is the one part of a
+ * profile that grows with the data rather than with the schema.
+ */
+export const RELATIONSHIP_SAMPLE_CAP = 1_000;
 export const COLLISION_EXAMPLE_RECORDS = 5;
 /** Offending values kept per issue, so a person can recognise the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
@@ -488,6 +496,7 @@ class FieldAccumulator {
   private readonly isDate: boolean;
   private readonly isEmail: boolean;
   private readonly shapesApply: boolean;
+  private readonly sampleForRelationships: boolean;
   private readonly isLookup: boolean;
 
   constructor(
@@ -501,7 +510,23 @@ class FieldAccumulator {
     this.isDate = attr.type === 'DateTime';
     this.isEmail = attr.semantic?.type === 'EMAIL';
     // A lookup holds a reference, not a spelling, so none of the conversion questions apply to it.
-    this.shapesApply = (this.isText || this.isNumeric) && !this.isLookup;
+    /*
+     * Boolean columns included deliberately. Inference reads a column of Yes/no/TRUE/y as Boolean
+     * because it can interpret all four, which is exactly the column worth reporting: the target
+     * accepts one convention, and a loader written for one spelling treats the others as false
+     * rather than as an error. The inference succeeding is not the same as the data being clean.
+     */
+    this.shapesApply = (this.isText || this.isNumeric || attr.type === 'Boolean') && !this.isLookup;
+    /*
+     * Whether this column is worth comparing against other tables.
+     *
+     * A reference is nearly always spelled like one -- customer_number, accountid, order_ref -- or
+     * is a lookup, which declares it. Sampling every column instead would multiply the size of a
+     * stored profile by the size of the data for the sake of comparing surnames against postcodes.
+     */
+    this.sampleForRelationships =
+      !attr.isSecured &&
+      (this.isLookup || KEY_LIKE_NAME.test(attr.logicalName) || attr.semantic?.type === 'IDENTIFIER');
     for (const rule of rules) {
       if (rule.kind === 'REGEX_PATTERN') this.patterns.set(ruleKey(rule), compilePattern(rule.pattern));
     }
@@ -774,7 +799,8 @@ class FieldAccumulator {
     const count = (shape: ValueShape) => this.shapeCounts.get(shape) ?? 0;
     const numbers = count('NUMBER');
     const currency = count('CURRENCY');
-    const booleans = count('BOOLEAN');
+    // A normalised Boolean column reads as text or number here; its records are still booleans.
+    const booleans = this.attr.type === 'Boolean' ? this.nonNull : count('BOOLEAN');
     const dates = count('DATE');
     const text = count('TEXT');
     return {
@@ -787,7 +813,15 @@ class FieldAccumulator {
       text,
       currencyMarkers: [...this.currencyMarkers].sort(),
       decimalSeparators: [...this.decimalSeparators].sort(),
-      booleanSpellings: [...this.booleanSpellings].sort(),
+      /*
+       * For a column inference read as Boolean the values reaching here are already normalised, so
+       * the spellings come from where they still existed. For a text column they are counted from
+       * the values like everything else.
+       */
+      booleanSpellings:
+        this.attr.type === 'Boolean' && this.attr.sourceSpellings?.length
+          ? [...this.attr.sourceSpellings].sort()
+          : [...this.booleanSpellings].sort(),
       maxDecimals: this.maxDecimals,
       overTwoDecimals: this.overTwoDecimals,
       // A secured column shows nothing. The counts are still true and still useful.
@@ -830,6 +864,18 @@ class FieldAccumulator {
       invalidValueCount: this.invalidValueCount,
       duplication: this.duplication(),
       conversion: this.shapesApply ? this.conversion() : null,
+      valueSample: this.sampleForRelationships
+        ? {
+            values: [...this.freq.entries()]
+              .filter(([value]) => value.trim() !== '')
+              .slice(0, RELATIONSHIP_SAMPLE_CAP)
+              .map(([value, count]) => ({ value, count })),
+            // Truncated either because the column overflowed the distinct cap, or because it has
+            // more distinct values than we keep for comparison. Either way the set is incomplete,
+            // and a missing value would otherwise read as a broken reference.
+            truncated: this.distinctOverflow || this.freq.size > RELATIONSHIP_SAMPLE_CAP,
+          }
+        : null,
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,
       issues: [],

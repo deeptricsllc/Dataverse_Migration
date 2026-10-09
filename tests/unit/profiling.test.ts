@@ -155,6 +155,22 @@ describe('value shapes, counted in records', () => {
     expect(c2.overTwoDecimals, 'two of the four').toBe(2);
   });
 
+  it('reports the spellings a boolean column had before inference normalised them', async () => {
+    /*
+     * By the time the profiler sees a Boolean column the values are already true and false, so the
+     * four ways the source spelled them are carried from where they still existed. Without this the
+     * product would read Yes/no/TRUE/y, understand all four, and report nothing -- while the target
+     * takes one convention and a loader written for one spelling reads the rest as false.
+     */
+    const meta = table('account', [
+      attr('active', 'Boolean', { sourceSpellings: ['yes', 'no', 'true', 'y'] }),
+    ]);
+    const { result } = await profile(meta, rows('active', [true, false, true, false]));
+    const c = field(result, 'active').conversion!;
+    expect(c.booleanSpellings).toEqual(['no', 'true', 'y', 'yes']);
+    expect(c.booleans, 'every populated record is one of them').toBe(4);
+  });
+
   it('shows no example values for a secured column', async () => {
     const meta = table('account', [attr('secret', 'String', { isSecured: true })]);
     const { result } = await profile(meta, rows('secret', ['$1,200.50', '$2.00']));
