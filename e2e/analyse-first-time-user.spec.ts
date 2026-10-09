@@ -35,6 +35,21 @@ async function shot(page: Page, name: string) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
+/**
+ * Wait until every dataset has finished, rather than until the word "Analysed" appears.
+ *
+ * The first dataset to finish puts "Analysed" on the screen while the rest are still running, so
+ * matching that text photographs a half-finished project and reads a readiness score computed from
+ * part of it. That is how the overview defect below went unnoticed for a run. The header's amber
+ * "N not analysed yet" is the signal that is absent only when the work is actually done.
+ */
+async function waitForAllAnalysed(page: Page) {
+  const main = page.getByRole('main');
+  await expect(main).toContainText('Analysed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  await expect(page.getByRole('button', { name: /Analysing/ })).toHaveCount(0, { timeout: 600_000 });
+}
+
 /** An export as it actually arrives from a finance system: several sheets, several kinds of wrong. */
 function messyEnterpriseWorkbook(): Buffer {
   const customers = Array.from({ length: 60 }, (_, i) => [
@@ -176,7 +191,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   const analyse = page.getByTestId('analyse');
   await expect(analyse).toBeEnabled();
   await analyse.click();
-  await expect(page.getByRole('main')).toContainText('Analysed', { timeout: 600_000 });
+  await waitForAllAnalysed(page);
   await shot(page, 'analysed');
 
   // --- 8. the findings -----------------------------------------------------
@@ -216,8 +231,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   expect(csv).toContain('Why it matters');
   expect(csv).toContain('What to do');
   expect(csv, 'the critical finding is in the file').toMatch(/No reliable record identifier/i);
-  expect(csv.split('
-').length, 'one row per finding').toBeGreaterThan(5);
+  expect(csv.split('\n').length, 'one row per finding').toBeGreaterThan(5);
   await shot(page, 'export');
 
   // --- 11. a second source -------------------------------------------------
@@ -242,7 +256,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   await page.getByRole('tab', { name: /Datasets/ }).click();
   await expect(page.getByTestId('dataset-row')).toHaveCount(4, { timeout: 120_000 });
   await page.getByTestId('analyse').click();
-  await expect(page.getByRole('main')).toContainText('Analysed', { timeout: 600_000 });
+  await waitForAllAnalysed(page);
   /*
    * Back to the dataset list to count them. Finishing an analysis puts the reader on the overview,
    * which is right — the summary is what they came for — and the rows live one tab over.
@@ -251,6 +265,12 @@ test('a first-time user can analyse a messy export and understand the result', a
   await expect(page.getByTestId('dataset-row')).toHaveCount(4, { timeout: 120_000 });
   await shot(page, 'second-source-analysed');
   await page.getByRole('tab', { name: /Overview/ }).click();
+  /*
+   * The summary counted only the datasets it had assessed while saying the project "contains" them,
+   * so a project with four datasets and three analysed read "4 datasets" in the header and "contains
+   * 3 datasets ... 81 out of 100" directly underneath. With everything analysed the two agree.
+   */
+  await expect(page.getByRole('main')).toContainText('contains 4 datasets');
   await shot(page, 'overview-across-four-datasets');
 
   // --- 12. come back later -------------------------------------------------

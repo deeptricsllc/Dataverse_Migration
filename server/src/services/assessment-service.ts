@@ -366,6 +366,10 @@ export class AssessmentService {
         projectName: project.name,
         // Datasets as the user counts them: the sheets and tables, not the connections carrying them.
         datasets: datasets.filter((d) => d.analysed).reduce((n, d) => n + Math.max(d.objects.length, 1), 0),
+        // Counted the same way the header counts them, so the two cannot disagree.
+        notAnalysed: datasets
+          .filter((d) => !d.analysed)
+          .reduce((n, d) => n + Math.max(d.objects.length, 1), 0),
         tables: tables.length,
         records,
         readiness,

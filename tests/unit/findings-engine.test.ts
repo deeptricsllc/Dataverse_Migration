@@ -373,6 +373,47 @@ describe('the executive summary is assembled from findings, not generated', () =
     expect(summary).toContain('no critical problems found');
   });
 
+  it('says what it has not looked at, so the score is not read as covering everything', () => {
+    const findings = run([field({ field: 'id', distinctCount: 1000 })]);
+    const readiness = assessReadiness(findings, { profiled: true, relationships: false });
+    const summary = executiveSummary({
+      projectName: 'Finance export review',
+      datasets: 3,
+      tables: 3,
+      records: 190,
+      notAnalysed: 1,
+      readiness,
+      findings,
+    });
+
+    /*
+     * The project has four datasets and the header says so. This paragraph used to say "contains 3
+     * datasets" beside it and then quote a score, which reads as the score for the whole project.
+     */
+    expect(summary).toContain('contains 4 datasets');
+    expect(summary).toContain('3 have been analysed so far');
+    expect(summary).toContain('not counted in anything below');
+    expect(summary, 'the old sentence claimed the project was only what had been assessed').not.toContain(
+      'contains 3 datasets',
+    );
+  });
+
+  it('reports the whole project when nothing has been analysed at all', () => {
+    const readiness = assessReadiness([], { profiled: false, relationships: false });
+    const summary = executiveSummary({
+      projectName: 'Fresh',
+      datasets: 0,
+      tables: 0,
+      records: 0,
+      notAnalysed: 4,
+      readiness,
+      findings: [],
+    });
+    // Not "contains 0 datasets" above a list of four.
+    expect(summary).toContain('Fresh contains 4 datasets');
+    expect(summary).toContain('Nothing has been analysed yet');
+  });
+
   it('does not pretend to assess an empty project', () => {
     const readiness = assessReadiness([], { profiled: false, relationships: false });
     const summary = executiveSummary({

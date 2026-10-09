@@ -222,11 +222,27 @@ export function bandFor(score: number, criticalCount: number): ReadinessBand {
 
 export interface ExecutiveSummaryInput {
   projectName: string;
+  /** Datasets this assessment actually covers, counted as sheets and tables rather than connections. */
   datasets: number;
   tables: number;
   records: number;
+  /**
+   * Datasets in the project that this assessment does not cover, in the same unit as `datasets`.
+   *
+   * Nonzero while a dataset is still being analysed, and after one fails. The paragraph has to say so:
+   * the header counts every dataset in the project and this sentence counted only the analysed ones, so
+   * a project with a fourth dataset mid-analysis read "4 datasets" at the top and "contains 3 datasets
+   * ... 81 out of 100" directly underneath. Both numbers were right and the sentence was still false,
+   * because a score presented without its coverage is read as covering everything.
+   */
+  notAnalysed?: number;
   readiness: AnalysisReadiness;
   findings: Finding[];
+}
+
+/** "one dataset" / "4 datasets" — this paragraph gets read aloud, so small numbers are words. */
+function count(n: number, noun: string): string {
+  return `${n === 1 ? 'one' : n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 /**
@@ -238,10 +254,19 @@ export interface ExecutiveSummaryInput {
  */
 export function executiveSummary(input: ExecutiveSummaryInput): string {
   const { projectName, datasets, tables, records, readiness, findings } = input;
-  const scale = `${projectName} contains ${datasets === 1 ? 'one dataset' : `${datasets} datasets`} across ${tables === 1 ? 'one table' : `${tables} tables`}, totalling ${records.toLocaleString()} ${records === 1 ? 'record' : 'records'}.`;
+  const notAnalysed = input.notAnalysed ?? 0;
+  const held = `${count(tables, 'table')}, totalling ${records.toLocaleString()} ${records === 1 ? 'record' : 'records'}`;
+  const scale =
+    notAnalysed === 0
+      ? `${projectName} contains ${count(datasets, 'dataset')} across ${held}.`
+      : `${projectName} contains ${count(datasets + notAnalysed, 'dataset')}, of which ${
+          datasets === 1 ? 'one has' : `${datasets} have`
+        } been analysed so far: ${held}. The ${
+          notAnalysed === 1 ? 'one that has' : `${notAnalysed} that have`
+        } not been analysed ${notAnalysed === 1 ? 'is' : 'are'} not counted in anything below.`;
 
   if (readiness.score === null) {
-    return `${scale} Nothing has been analysed yet, so there is no assessment to report.`;
+    return `${projectName} contains ${count(datasets + notAnalysed, 'dataset')}. Nothing has been analysed yet, so there is no assessment to report.`;
   }
 
   const criticals = findings.filter((f) => f.severity === 'CRITICAL');
