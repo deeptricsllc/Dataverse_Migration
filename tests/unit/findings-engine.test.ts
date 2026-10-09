@@ -34,6 +34,7 @@ const field = (over: Partial<FieldProfileDto> & { field: string }): FieldProfile
   minDate: null,
   maxDate: null,
   invalidDateCount: 0,
+  invalidEmailCount: 0,
   invalidValueCount: 0,
   topValues: [],
   topValuesTruncated: false,
@@ -84,6 +85,69 @@ const run = (
 
 const byRule = (findings: Finding[], fragment: string) => findings.filter((f) => f.id.includes(fragment));
 const titles = (findings: Finding[]) => findings.map((f) => f.title);
+
+describe('findings that have to be arithmetically true, not merely plausible', () => {
+  /*
+   * Both of these were found by reading a report the product produced on a deliberately messy
+   * workbook and checking its numbers against the file that generated it. Both were wrong in the
+   * direction that matters: they understated a problem, and they did it confidently.
+   */
+
+  it('counts invalid addresses in records, not in spellings of wrong', () => {
+    // One bad address repeated across 400 of 1000 records. The semantic reader sees ONE distinct
+    // bad value, because it works from a distinct sample; the person cleaning the data sees 400.
+    const findings = run(
+      [field({ field: 'email', distinctCount: 601, invalidEmailCount: 400 })],
+      [
+        attribute('email', {
+          semantic: {
+            type: 'EMAIL',
+            confidence: 'HIGH',
+            label: 'Email address',
+            evidence: '600 of 601 sampled values are email addresses; 1 are not.',
+            suggestedTransformation: 'Correct or exclude the values that are not addresses',
+          },
+        }),
+      ],
+    );
+    const [invalid] = byRule(findings, 'INVALID_EMAIL');
+    expect(invalid, 'the finding is raised at all').toBeTruthy();
+    expect(invalid.affected, 'records, not distinct bad values').toBe(400);
+    expect(invalid.affectedPercent).toBe(40);
+    expect(invalid.summary).toContain('400 records');
+    // The sampled figure is still shown, as evidence, labelled as sampling.
+    expect(invalid.evidence.join(' ')).toContain('sampled');
+  });
+
+  it('offers the column that was meant to be the key as the near miss, not whatever happens to be unique', () => {
+    /*
+     * A finance export: customer_number is the intended key and repeats, while credit_limit and
+     * opened_on happen not to repeat and are no use as identifiers. Ranked by distinctness alone
+     * the evidence read "credit_limit: 60 distinct across 60 examined, 0 empty values" underneath
+     * the sentence "no column is unique and filled in" -- refuted by its own evidence -- and
+     * customer_number did not appear at all.
+     */
+    const findings = run(
+      [
+        field({ field: 'customer_number', examined: 60, distinctCount: 48, duplicateCount: 12 }),
+        field({ field: 'customer_name', examined: 60, distinctCount: 52 }),
+        field({ field: 'credit_limit', examined: 60, distinctCount: 60 }),
+        field({ field: 'opened_on', examined: 60, distinctCount: 60 }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 4 },
+    );
+    const [noKey] = byRule(findings, 'NO_RELIABLE_KEY');
+    expect(noKey, 'still critical -- nothing identifies a record').toBeTruthy();
+
+    const evidence = noKey.evidence.join(' | ');
+    expect(evidence, 'the column a reader is looking for').toContain('customer_number');
+    expect(evidence, 'not a column that is unique by accident').not.toContain('credit_limit');
+
+    // And the sentence no longer claims something the evidence beneath it disproves.
+    expect(noKey.summary).toContain('that could identify a record');
+  });
+});
 
 describe('identity, which is what a migration actually depends on', () => {
   it('raises a critical finding when nothing identifies a record, and says what it looked at', () => {
@@ -371,6 +435,47 @@ describe('the executive summary is assembled from findings, not generated', () =
     });
     expect(summary).toContain('looks ready to migrate');
     expect(summary).toContain('no critical problems found');
+  });
+
+  it('says what it has not looked at, so the score is not read as covering everything', () => {
+    const findings = run([field({ field: 'id', distinctCount: 1000 })]);
+    const readiness = assessReadiness(findings, { profiled: true, relationships: false });
+    const summary = executiveSummary({
+      projectName: 'Finance export review',
+      datasets: 3,
+      tables: 3,
+      records: 190,
+      notAnalysed: 1,
+      readiness,
+      findings,
+    });
+
+    /*
+     * The project has four datasets and the header says so. This paragraph used to say "contains 3
+     * datasets" beside it and then quote a score, which reads as the score for the whole project.
+     */
+    expect(summary).toContain('contains 4 datasets');
+    expect(summary).toContain('3 have been analysed so far');
+    expect(summary).toContain('not counted in anything below');
+    expect(summary, 'the old sentence claimed the project was only what had been assessed').not.toContain(
+      'contains 3 datasets',
+    );
+  });
+
+  it('reports the whole project when nothing has been analysed at all', () => {
+    const readiness = assessReadiness([], { profiled: false, relationships: false });
+    const summary = executiveSummary({
+      projectName: 'Fresh',
+      datasets: 0,
+      tables: 0,
+      records: 0,
+      notAnalysed: 4,
+      readiness,
+      findings: [],
+    });
+    // Not "contains 0 datasets" above a list of four.
+    expect(summary).toContain('Fresh contains 4 datasets');
+    expect(summary).toContain('Nothing has been analysed yet');
   });
 
   it('does not pretend to assess an empty project', () => {

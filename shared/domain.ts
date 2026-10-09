@@ -759,6 +759,15 @@ export interface FieldProfileDto {
   minDate: string | null;
   maxDate: string | null;
   invalidDateCount: number;
+  /**
+   * Records whose value is not shaped like an email address, in a column read as holding them.
+   *
+   * Counted per record, which is the only count a reader can act on. The semantic reader works from
+   * distinct sampled values, so the number it reports is a count of distinct bad values -- one bad
+   * address repeated across ten thousand rows is 1 there and 10,000 here. Publishing the former as
+   * "records affected" understated the problem by whatever its repetition factor happened to be.
+   */
+  invalidEmailCount: number;
   /** Values that could not be converted at all (non-numeric in a numeric column, …). */
   invalidValueCount: number;
   /** The distinct values and their counts, for choice mapping. Capped. */
@@ -2774,6 +2783,15 @@ export interface AssessedObjectDto {
 export interface AssessedDatasetDto {
   environmentId: string;
   name: string;
+  /**
+   * Why this connection cannot be analysed, when it cannot be.
+   *
+   * Null means it can. The screen must not work this out for itself from an empty `objects` list:
+   * a database that has never been analysed has no objects either, and is perfectly analysable —
+   * its tables live on its side and nothing has looked yet. Only the server knows the difference,
+   * so it says, and says what the person has to go and do about it.
+   */
+  unusable: { message: string; whatToDo: string } | null;
   connectionType: string | null;
   provider: string | null;
   analysed: boolean;

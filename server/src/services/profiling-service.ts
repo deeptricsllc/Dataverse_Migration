@@ -34,6 +34,7 @@ import {
   type FieldValue,
   type TableMetadata,
 } from '../../../shared/metadata';
+import { EMAIL_SHAPE } from '../../../shared/semantic-types';
 import type { MigrationConnector } from '../connectors/types';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { AppDb } from '../db/client';
@@ -431,6 +432,7 @@ class FieldAccumulator {
   private whitespaceCount = 0;
   private invalidValueCount = 0;
   private invalidDateCount = 0;
+  private invalidEmailCount = 0;
   private minLength: number | null = null;
   private maxLength: number | null = null;
   private lengthSum = 0;
@@ -451,6 +453,7 @@ class FieldAccumulator {
   private readonly isText: boolean;
   private readonly isNumeric: boolean;
   private readonly isDate: boolean;
+  private readonly isEmail: boolean;
   private readonly isLookup: boolean;
 
   constructor(
@@ -462,6 +465,7 @@ class FieldAccumulator {
     this.isText = TEXT_TYPES.has(attr.type) || this.isLookup;
     this.isNumeric = NUMERIC_TYPES.has(attr.type);
     this.isDate = attr.type === 'DateTime';
+    this.isEmail = attr.semantic?.type === 'EMAIL';
     for (const rule of rules) {
       if (rule.kind === 'REGEX_PATTERN') this.patterns.set(ruleKey(rule), compilePattern(rule.pattern));
     }
@@ -510,6 +514,20 @@ class FieldAccumulator {
         const scale = decimalScale(text);
         if (scale !== null) this.maxScale = this.maxScale === null ? scale : Math.max(this.maxScale, scale);
       }
+    }
+
+    /*
+     * Counted over every record, not over the distinct sample the semantic reader works from, so the
+     * finding can say how many records a person has to fix rather than how many spellings of wrong
+     * there were.
+     *
+     * Deliberately not `invalidValueCount`. That one means "could not be converted to the storage
+     * type", and `not-an-email` is a perfectly good String — counting it there raised a second
+     * finding saying the value could not be converted to String, which is false, and deducted for
+     * the same records twice.
+     */
+    if (this.isEmail && trimmed !== '' && !EMAIL_SHAPE.test(trimmed)) {
+      this.invalidEmailCount++;
     }
 
     if (this.isDate) {
@@ -651,6 +669,7 @@ class FieldAccumulator {
       minDate: this.minDate === null ? null : new Date(this.minDate).toISOString(),
       maxDate: this.maxDate === null ? null : new Date(this.maxDate).toISOString(),
       invalidDateCount: this.invalidDateCount,
+      invalidEmailCount: this.invalidEmailCount,
       invalidValueCount: this.invalidValueCount,
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,

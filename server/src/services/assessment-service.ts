@@ -89,6 +89,20 @@ export class AssessmentService {
       .where(eq(projectSources.projectId, projectId))
       .orderBy(asc(projectSources.position));
 
+    /*
+     * Which of these connections resolve to something to read. Asked once, from the same function
+     * the run itself asks, so the screen and the engine cannot disagree about whether work can
+     * begin.
+     */
+    const unusableByEnvironment = new Map(
+      (
+        await unresolvableDatasets(
+          this.db,
+          sources.map((s) => s.environment),
+        )
+      ).map((u) => [u.environment.id, { message: u.resolution.message, whatToDo: u.resolution.whatToDo }]),
+    );
+
     /**
      * The latest completed analysis per dataset.
      *
@@ -264,6 +278,12 @@ export class AssessmentService {
               origin: null,
               analysed: true,
             }));
+      /*
+       * Whether this connection resolves to anything, answered once here so every screen reading
+       * the assessment gets the same answer the run would give. Inferring it from `objects.length`
+       * on the client would call a never-analysed database unusable, which it is not.
+       */
+      const gap = unusableByEnvironment.get(s.environment.id) ?? null;
       const attempt = newestAttemptByEnvironment.get(s.environment.id);
       const theirTables = tables.filter((t) => t.analysisRunId === run?.id);
       const theirFindings = findings.filter((f) => f.dataset === s.environment.displayName);
@@ -293,6 +313,7 @@ export class AssessmentService {
       return {
         environmentId: s.environment.id,
         name: s.environment.displayName,
+        unusable: gap,
         connectionType: s.environment.connectionType,
         provider: s.environment.provider,
         analysed: Boolean(run),
@@ -345,6 +366,10 @@ export class AssessmentService {
         projectName: project.name,
         // Datasets as the user counts them: the sheets and tables, not the connections carrying them.
         datasets: datasets.filter((d) => d.analysed).reduce((n, d) => n + Math.max(d.objects.length, 1), 0),
+        // Counted the same way the header counts them, so the two cannot disagree.
+        notAnalysed: datasets
+          .filter((d) => !d.analysed)
+          .reduce((n, d) => n + Math.max(d.objects.length, 1), 0),
         tables: tables.length,
         records,
         readiness,
