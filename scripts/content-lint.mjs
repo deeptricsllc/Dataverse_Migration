@@ -78,13 +78,6 @@ const BANNED = [
 const EM_DASH = '\u2014';
 const DASH_MIN_LENGTH = 25;
 
-/** Headings that announce themselves rather than naming their content. */
-const BANNED_HEADINGS = [
-  ['what we found', 'Name the content. "Findings".'],
-  ['what happens next', 'Name the action.'],
-  ["here's how", 'Name the content.'],
-];
-
 /**
  * Removes comments, then keeps only what a user could read.
  *

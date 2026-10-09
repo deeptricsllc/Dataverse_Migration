@@ -16,7 +16,7 @@ test('an anonymous visitor gets the product, not a sign-in box', async ({ page }
 
   await page.goto('/');
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading', { name: /Know exactly what a migration will do/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Plan migrations with confidence/ })).toBeVisible();
 
   // The things an evaluator scrolls for.
   await expect(page.getByRole('heading', { name: 'Why the numbers can be trusted.' })).toBeVisible();
@@ -106,7 +106,7 @@ for (const width of [390, 360, 320]) {
   test(`the landing page works on a phone (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Know exactly what a migration will do/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Plan migrations with confidence/ })).toBeVisible();
     // A horizontal scrollbar on a marketing page is the first thing anyone notices on a phone.
     // Evaluated as an expression string: this file is typechecked without the DOM library.
     const overflow = Number(
