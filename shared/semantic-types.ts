@@ -120,7 +120,13 @@ export function excelSerialToIsoDate(serial: number): string | null {
 // Detection
 // ---------------------------------------------------------------------------
 
-const EMAIL = /^[^\s@]+@[^\s@.]+\.[^\s@]{2,}$/;
+/**
+ * Exported so the profiler counts invalid addresses by the same rule this uses to decide the column
+ * holds addresses at all. Two regexes would let the product say "this column is email" and "none of
+ * these are invalid" about the same values.
+ */
+export const EMAIL_SHAPE = /^[^\s@]+@[^\s@.]+\.[^\s@]{2,}$/;
+const EMAIL = EMAIL_SHAPE;
 const URL = /^(https?:\/\/|www\.)[^\s]+$/i;
 /**
  * Deliberately narrow. A telephone number has no universal shape, so this only matches things that are

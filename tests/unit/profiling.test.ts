@@ -417,6 +417,7 @@ function baseProfile(overrides: Partial<FieldProfileDto> = {}): FieldProfileDto 
     minDate: null,
     maxDate: null,
     invalidDateCount: 0,
+    invalidEmailCount: 0,
     invalidValueCount: 0,
     topValues: [],
     topValuesTruncated: false,

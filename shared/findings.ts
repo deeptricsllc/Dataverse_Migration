@@ -192,14 +192,14 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       category: 'IDENTITY',
       severity: 'CRITICAL',
       title: 'No reliable record identifier',
-      summary: `No column in ${profile.displayName} is both unique and filled in for every record, so there is nothing that reliably identifies a row.`,
+      summary: `No column in ${profile.displayName} that could identify a record is both unique and filled in for every record, so there is nothing that reliably identifies a row.`,
       dataset,
       table: profile.displayName,
       columns: [],
       affected: total,
       affectedPercent: 100,
       evidence: [
-        `${plural(profile.columns, 'column')} examined, none of them unique and fully populated.`,
+        `${plural(profile.columns, 'column')} examined, none of them usable as an identifier.`,
         ...(profile.fields.some((f) => SYNTHETIC_COLUMN.test(f.field))
           ? [
               'A row number was added during import so the rows could be addressed at all. It identifies a row within this import only, and changes if the file is re-exported in a different order.',
@@ -606,16 +606,22 @@ const KEY_LIKE_NAME =
  * with a leading zero, say). A reading that says the column is something else — money, a telephone number,
  * an address — disqualifies it outright, because those are unique by accident rather than by design.
  */
+const NOT_A_KEY = new Set(['CURRENCY', 'PERCENTAGE', 'PHONE', 'EMAIL', 'URL', 'EXCEL_SERIAL_DATE']);
+
+/** Plausibly an identifier, before asking whether it is actually unique and complete. */
+function couldIdentify(f: FieldProfileDto): boolean {
+  if (SYNTHETIC_COLUMN.test(f.field)) return false;
+  const reading = f.semantic?.type;
+  if (reading && NOT_A_KEY.has(reading)) return false;
+  return KEY_LIKE_NAME.test(f.field) || reading === 'IDENTIFIER';
+}
+
 function candidateKeys(profile: TableProfileDto): FieldProfileDto[] {
-  const NOT_A_KEY = new Set(['CURRENCY', 'PERCENTAGE', 'PHONE', 'EMAIL', 'URL', 'EXCEL_SERIAL_DATE']);
   return profile.fields.filter((f) => {
-    if (SYNTHETIC_COLUMN.test(f.field)) return false;
     if (f.examined === 0 || f.distinctCount === null) return false;
     if (f.distinctCount !== f.examined) return false;
     if (f.nullCount + f.blankCount !== 0) return false;
-    const reading = f.semantic?.type;
-    if (reading && NOT_A_KEY.has(reading)) return false;
-    return KEY_LIKE_NAME.test(f.field) || reading === 'IDENTIFIER';
+    return couldIdentify(f);
   });
 }
 
@@ -625,12 +631,24 @@ const isNearlyUnique = (f: FieldProfileDto) =>
   f.distinctCount / f.examined >= NEARLY_UNIQUE &&
   f.distinctCount !== f.examined;
 
-/** The columns that came closest to being a key, so "there is no key" says what it looked at. */
+/**
+ * The columns that came closest to being a key, so "there is no key" says what it looked at.
+ *
+ * Ranked by distinctness alone, this listed whichever columns happened not to repeat -- on a finance
+ * export it offered `credit_limit: 60 distinct across 60 examined, 0 empty values` as the evidence
+ * for "no column is unique and filled in", which is a sentence refuted by the line beneath it, and
+ * it pushed `customer_number` off the end of the list. The column a reader is looking for is the one
+ * that was meant to be the key and missed, so plausible identifiers come first and the rest are a
+ * fallback for a table that has none.
+ */
 function nearMisses(profile: TableProfileDto): FieldProfileDto[] {
-  return [...profile.fields]
-    .filter((f) => !SYNTHETIC_COLUMN.test(f.field) && f.examined > 0 && f.distinctCount !== null)
-    .sort((a, b) => (b.distinctCount ?? 0) / b.examined - (a.distinctCount ?? 0) / a.examined)
-    .slice(0, 3);
+  const measurable = profile.fields.filter(
+    (f) => !SYNTHETIC_COLUMN.test(f.field) && f.examined > 0 && f.distinctCount !== null,
+  );
+  const byDistinctness = (a: FieldProfileDto, b: FieldProfileDto) =>
+    (b.distinctCount ?? 0) / b.examined - (a.distinctCount ?? 0) / a.examined;
+  const plausible = measurable.filter(couldIdentify);
+  return (plausible.length > 0 ? plausible : measurable).sort(byDistinctness).slice(0, 3);
 }
 
 function lengthSpread(field: FieldProfileDto): boolean {
@@ -683,17 +701,28 @@ function fromSemantic(
     };
   }
   if (reading.type === 'EMAIL' && reading.suggestedTransformation) {
-    const bad = /(\d+) are not/.exec(reading.evidence);
-    const affected = bad ? Number(bad[1]) : 0;
+    /*
+     * `reading.evidence` counts distinct sampled values, because that is what the semantic reader
+     * works from. It is the wrong number to publish as "records affected": one misspelling repeated
+     * across ten thousand rows is one distinct value and ten thousand records to fix. The profiler
+     * counts the records; the sampled figure stays in the evidence, labelled as what it is.
+     */
+    const sampled = /(\d+) are not/.exec(reading.evidence);
+    const distinctBad = sampled ? Number(sampled[1]) : 0;
+    const records = field?.invalidEmailCount ?? null;
+    const affected = records ?? 0;
     return {
       ...base,
       id: id('INVALID_EMAIL', column),
       category: 'VALIDITY',
       severity: 'WARNING',
       title: `${column} contains addresses that are not valid`,
-      summary: `${column} holds email addresses, and ${plural(affected, 'value')} are not formatted as one.`,
+      summary:
+        records === null
+          ? `${column} holds email addresses, and ${plural(distinctBad, 'distinct value')} are not formatted as one.`
+          : `${column} holds email addresses, and ${plural(records, 'record')} contain a value that is not formatted as one.`,
       affected,
-      affectedPercent: field ? pct(affected, field.examined) : null,
+      affectedPercent: records !== null && field ? pct(records, field.examined) : null,
       evidence: [reading.evidence],
       whyItMatters:
         'An invalid address is rejected by some targets and silently accepted by others. Where it is accepted, it becomes an email nobody can send to, discovered by the first campaign that tries.',

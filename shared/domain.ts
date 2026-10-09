@@ -759,6 +759,15 @@ export interface FieldProfileDto {
   minDate: string | null;
   maxDate: string | null;
   invalidDateCount: number;
+  /**
+   * Records whose value is not shaped like an email address, in a column read as holding them.
+   *
+   * Counted per record, which is the only count a reader can act on. The semantic reader works from
+   * distinct sampled values, so the number it reports is a count of distinct bad values -- one bad
+   * address repeated across ten thousand rows is 1 there and 10,000 here. Publishing the former as
+   * "records affected" understated the problem by whatever its repetition factor happened to be.
+   */
+  invalidEmailCount: number;
   /** Values that could not be converted at all (non-numeric in a numeric column, …). */
   invalidValueCount: number;
   /** The distinct values and their counts, for choice mapping. Capped. */
