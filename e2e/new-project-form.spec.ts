@@ -65,12 +65,13 @@ test('adding a connection happens here, without leaving the form', async ({ page
 
   // The connection picker opens over the form. It used to navigate to the connections page, which
   // threw away everything typed so far.
-  await expect(page.getByRole('radio', { name: /SQL Server/ })).toBeVisible();
+  await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
   /*
-   * And a file is not among the things you can connect to. A spreadsheet on somebody's laptop is the data
-   * itself, not reusable access to a system, and it goes in through Add dataset.
+   * And no file option here. The connections screen offers one, because there it can take somebody
+   * to a project; here a project is already being created and a half-filled form is on screen, so
+   * a card that navigated away would discard what they typed.
    */
-  await expect(page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ })).toHaveCount(0);
+  await expect(page.getByTestId('connector-upload')).toHaveCount(0);
   await expect(page).toHaveURL(/\/projects/);
   // The footer button, not the dialog's × which shares its accessible name.
   await page.getByRole('dialog', { name: 'Add connection' }).getByText('Close', { exact: true }).click();

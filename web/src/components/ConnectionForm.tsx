@@ -30,7 +30,7 @@ type SqlType = SqlConnectionType;
  * next question. On this screen it does not: the answer to all three is the same, and it is "not
  * here, in a project".
  */
-const connectionGallery: Connector[] = [UPLOAD_FROM_COMPUTER, ...CONNECTORS.filter((c) => c.connectionType)];
+const CONNECTABLE: Connector[] = CONNECTORS.filter((c) => c.connectionType);
 
 /** The kinds that are a file or a list rather than a server, so the form asks for nothing. */
 const STAGED_HINT =
@@ -323,8 +323,15 @@ export function ConnectionModal({
         */}
         {!connection && !initialType && (
           <SourceGallery
-            intro="What do you want to connect to?"
-            connectors={connectionGallery}
+            intro="What are you connecting to?"
+            /*
+             * The upload card only where it leads somewhere.
+             * Opened from the connections screen there is no project yet, so the card says where
+             * files go and takes the person there. Opened from the new-project form there is a
+             * half-filled form on screen: navigating away would throw away what they typed, and a
+             * card that did nothing would be worse than no card at all.
+             */
+            connectors={onUploadChosen ? [UPLOAD_FROM_COMPUTER, ...CONNECTABLE] : CONNECTABLE}
             onChoose={(c) => {
               if (c.id === UPLOAD_FROM_COMPUTER.id) {
                 onUploadChosen?.();
