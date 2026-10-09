@@ -80,7 +80,10 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
     name: 'customers.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      ['customer_number,customer_name,email', ...Array.from({ length: 8 }, (_, i) => `C-${100 + i},Name ${i},p${i}@example.test`)].join('\n'),
+      [
+        'customer_number,customer_name,email',
+        ...Array.from({ length: 8 }, (_, i) => `C-${100 + i},Name ${i},p${i}@example.test`),
+      ].join('\n'),
     ),
   });
   const preview = page.getByTestId('dataset-preview');
