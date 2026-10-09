@@ -27,7 +27,7 @@ const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
  */
 const CURRENCY_SYMBOL = /[$£€¥₹]/;
 const CURRENCY_CODE = /\b(USD|EUR|GBP|JPY|INR|AUD|CAD|CHF|CNY|SEK|NZD)\b/i;
-const MONEY_BODY = /^-?\(?\s*(?:\d{1,3}(?:[,  ]\d{3})+|\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,4})?\s*\)?-?$/;
+const MONEY_BODY = /^-?\(?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,4})?\s*\)?-?$/;
 
 /** The boolean spellings a spreadsheet actually contains. */
 export const BOOLEAN_TOKENS = new Set([
@@ -71,7 +71,7 @@ export function looksLikeCurrency(text: string): boolean {
   const body = hasMarker ? moneyBody(trimmed) : trimmed;
   if (!MONEY_BODY.test(body)) return false;
   // Without a symbol it is only money-as-text if it is grouped: 1,234.56 rather than 1234.56.
-  return hasMarker || /[,  ]/.test(body) || /^\d{1,3}(\.\d{3})+$/.test(body);
+  return hasMarker || /[,\s]/.test(body) || /^\d{1,3}(\.\d{3})+$/.test(body);
 }
 
 /**
@@ -105,11 +105,11 @@ export function decimalSeparator(text: string): 'dot' | 'comma' | null {
   const body = looksLikeCurrency(trimmed) ? moneyBody(trimmed) : trimmed;
   // Grouped with dots means the comma is the decimal mark, and the other way round.
   if (/^\d{1,3}(\.\d{3})+,\d+/.test(body)) return 'comma';
-  if (/^\d{1,3}([,  ]\d{3})+\.\d+/.test(body)) return 'dot';
+  if (/^\d{1,3}([,\s]\d{3})+\.\d+/.test(body)) return 'dot';
   // Grouped with no fraction says nothing about the convention: "1,200" is a thousand two hundred
   // under one reading and one-point-two under the other, and guessing picks the wrong one half the
   // time in exactly the columns where that matters.
-  if (/^\d{1,3}([,  ]\d{3})+$/.test(body)) return null;
+  if (/^\d{1,3}([,\s]\d{3})+$/.test(body)) return null;
   if (/^\d{1,3}(\.\d{3})+$/.test(body)) return null;
   if (/,\d{1,4}\s*\)?-?$/.test(body)) return 'comma';
   if (/\.\d{1,4}\s*\)?-?$/.test(body)) return 'dot';
