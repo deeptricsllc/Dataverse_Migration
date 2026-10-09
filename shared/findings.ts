@@ -361,6 +361,202 @@ export function findingsForTable(input: FindingsInput): Finding[] {
     });
   }
 
+  /*
+   * --- Conversion and type -------------------------------------------------
+   *
+   * What would happen if somebody loaded this column into a typed target tomorrow. Every count is a
+   * count of records, so the number is an estimate of work rather than of variety, and every
+   * recommendation is a proposal. Nothing here converts anything.
+   */
+  for (const field of profile.fields) {
+    const c = field.conversion;
+    if (!c || c.populated === 0) continue;
+    const show = (shape: string) => c.samples.find((x) => x.shape === shape)?.values.slice(0, 3) ?? [];
+    const quote = (values: string[]) => values.map((v) => `"${v}"`).join(', ');
+
+    /*
+     * Money kept as text. Reported whenever any record carries a written amount, not only when the
+     * column is mostly money: a column that is 20% "$1,200.50" and 80% bare numbers is the harder
+     * case, because the semantic reader will not call it a currency column and a careless import
+     * will turn every written amount into a null.
+     */
+    if (c.currency > 0 && (field.type === 'String' || field.type === 'Memo')) {
+      const mixed = c.numbers > 0;
+      const ambiguous = c.decimalSeparators.length > 1;
+      const mixedCurrency = c.currencyMarkers.length > 1;
+      const examples = show('CURRENCY');
+      found.push({
+        id: id('MONEY_AS_TEXT', field.field),
+        category: 'TYPE_COMPATIBILITY',
+        // An ambiguous decimal mark is worse than money-as-text: the amounts are already wrong for
+        // some readers, rather than merely awkward to load.
+        severity: ambiguous ? 'CRITICAL' : 'WARNING',
+        title: ambiguous
+          ? `${field.field} writes amounts with two different decimal marks`
+          : `${field.field} holds money written as text`,
+        summary:
+          `${plural(c.currency, 'record')} in ${field.field} hold an amount written with a currency symbol or ` +
+          `thousands separators${mixed ? `, while ${plural(c.numbers, 'record')} hold a bare number` : ''}. ` +
+          `Stored as text, none of them can be summed, compared or totalled.`,
+        dataset,
+        table: profile.displayName,
+        columns: [field.field],
+        affected: c.currency,
+        affectedPercent: pct(c.currency, c.examined),
+        evidence: [
+          `${plural(c.currency, 'record')} written as money${examples.length ? `: ${quote(examples)}` : ''}.`,
+          ...(mixed
+            ? [
+                `${plural(c.numbers, 'record')} hold a plain number${show('NUMBER').length ? `: ${quote(show('NUMBER'))}` : ''}.`,
+              ]
+            : []),
+          ...(c.currencyMarkers.length > 1
+            ? [`More than one currency appears in this column: ${c.currencyMarkers.join(', ')}.`]
+            : c.currencyMarkers.length === 1
+              ? [`Marked ${c.currencyMarkers[0]} throughout.`]
+              : []),
+          ...(c.decimalSeparators.length > 1
+            ? [
+                'Both a dot and a comma are used as the decimal mark, so the same digits mean different amounts in different records.',
+              ]
+            : []),
+          ...(c.maxDecimals !== null ? [`Up to ${plural(c.maxDecimals, 'decimal place')}.`] : []),
+          caveat,
+        ],
+        whyItMatters: ambiguous
+          ? 'The decimal mark is not consistent in this column, so the same digits mean different amounts in different records. Read "1.234,56" with the wrong convention and the amount is out by a factor of a thousand, in a column where that is money.'
+          : mixedCurrency
+            ? 'Amounts in more than one currency share a column with nothing recording which is which, so any total across them is meaningless and any conversion is a guess.'
+            : 'A text amount cannot be added up or compared, and any target that expects a number will either reject the record or store the text and silently stop being arithmetic.',
+        recommendation:
+          `Convert ${field.field} to a decimal column before migrating: strip the symbol and separators, ` +
+          `agree which separator is the decimal point, and keep ${c.maxDecimals && c.maxDecimals > 2 ? c.maxDecimals : 2} decimal places. ` +
+          `Confirm the currency — a column of amounts with no currency column beside it is only unambiguous while everything is in one currency.`,
+        migrationImpact:
+          'Loaded into a numeric target as-is, the written amounts fail to convert and those records are rejected or land empty. Loaded into a text target, they migrate and stop being money.',
+        confidence: 'HIGH',
+        basis: profile.basis,
+      });
+    }
+
+    /*
+     * A column that holds two kinds of thing. Only worth saying when the minority is big enough to
+     * be a category rather than a typo, and when neither side is trivial.
+     */
+    const shapes = [
+      ['number', c.numbers],
+      ['written amount', c.currency],
+      ['date', c.dates],
+      ['text', c.text],
+    ].filter(([, n]) => (n as number) > 0) as [string, number][];
+    const dominant = shapes.slice().sort((a, b) => b[1] - a[1])[0];
+    const minority = c.populated - (dominant?.[1] ?? 0);
+    if (shapes.length > 1 && minority > 0 && pct(minority, c.populated)! >= MIXED_SHAPE_FLOOR) {
+      found.push({
+        id: id('MIXED_VALUE_TYPES', field.field),
+        category: 'TYPE_COMPATIBILITY',
+        severity: 'WARNING',
+        title: `${field.field} holds more than one kind of value`,
+        summary:
+          `${field.field} is mostly ${dominant[0]} (${plural(dominant[1], 'record')}), but ` +
+          `${plural(minority, 'record')} hold something else. A column has one type in the target.`,
+        dataset,
+        table: profile.displayName,
+        columns: [field.field],
+        affected: minority,
+        affectedPercent: pct(minority, c.examined),
+        evidence: [
+          ...shapes.map(([label, n]) => {
+            const key =
+              label === 'written amount'
+                ? 'CURRENCY'
+                : label === 'number'
+                  ? 'NUMBER'
+                  : label === 'date'
+                    ? 'DATE'
+                    : 'TEXT';
+            const ex = show(key);
+            return `${plural(n, 'record')} read as ${label}${ex.length ? `: ${quote(ex)}` : ''}.`;
+          }),
+          caveat,
+        ],
+        whyItMatters:
+          'Whichever type the target column is given, the records of the other kind do not fit. The decision is usually made by whoever runs the import first, by accident, and the losing records go in empty.',
+        recommendation: `Decide what ${field.field} is for. If the minority are errors, correct them at source; if they are a second meaning sharing one column, split them into two columns before migrating.`,
+        migrationImpact:
+          'The minority records fail conversion and are rejected, or are stored as text and stop supporting any arithmetic or comparison the column was for.',
+        confidence: 'HIGH',
+        basis: profile.basis,
+      });
+    }
+
+    /*
+     * One idea, several spellings. Two spellings is a pair like yes/no and is fine; three or more
+     * means the column was filled in by more than one process and nobody reconciled them.
+     */
+    if (c.booleanSpellings.length > 2) {
+      found.push({
+        id: id('INCONSISTENT_BOOLEAN', field.field),
+        category: 'CONSISTENCY',
+        severity: 'WARNING',
+        title: `${field.field} writes yes and no in ${c.booleanSpellings.length} different ways`,
+        summary:
+          `${field.field} holds ${plural(c.booleans, 'record')} using ${c.booleanSpellings.length} spellings: ` +
+          `${c.booleanSpellings.join(', ')}. A target boolean accepts one convention.`,
+        dataset,
+        table: profile.displayName,
+        columns: [field.field],
+        affected: c.booleans,
+        affectedPercent: pct(c.booleans, c.examined),
+        evidence: [
+          `Spellings in use: ${c.booleanSpellings.join(', ')}.`,
+          `${plural(c.booleans, 'record')} hold one of them.`,
+          caveat,
+        ],
+        whyItMatters:
+          'A conversion written for one spelling treats the others as unrecognised, and an unrecognised boolean usually becomes false rather than an error — so the records migrate, look fine, and mean the opposite.',
+        recommendation: `Map every spelling in ${field.field} to true or false explicitly, and decide what a blank means, before migrating.`,
+        migrationImpact:
+          'Unmapped spellings default to false in most loaders, silently inverting the meaning of those records.',
+        confidence: 'HIGH',
+        basis: profile.basis,
+      });
+    }
+
+    /*
+     * Precision. Only where the extra places exist in the data — a column that never exceeds two is
+     * not at risk, and saying so anyway is noise.
+     */
+    if (c.overTwoDecimals > 0 && c.maxDecimals !== null && c.maxDecimals > 2) {
+      found.push({
+        id: id('NUMERIC_PRECISION', field.field),
+        category: 'TYPE_COMPATIBILITY',
+        severity: 'INFO',
+        title: `${field.field} carries more precision than money usually keeps`,
+        summary:
+          `${plural(c.overTwoDecimals, 'record')} in ${field.field} have more than two decimal places, ` +
+          `up to ${c.maxDecimals}. A target with two would round them.`,
+        dataset,
+        table: profile.displayName,
+        columns: [field.field],
+        affected: c.overTwoDecimals,
+        affectedPercent: pct(c.overTwoDecimals, c.examined),
+        evidence: [
+          `Greatest precision seen: ${plural(c.maxDecimals, 'decimal place')}.`,
+          `${plural(c.overTwoDecimals, 'record')} carry more than two.`,
+          caveat,
+        ],
+        whyItMatters:
+          'Rounding is silent and irreversible. Where the extra places are deliberate — a unit price, an exchange rate, a tax fraction — rounding them changes totals that are later reconciled against the source and no longer agree.',
+        recommendation: `Give the target column at least ${c.maxDecimals} decimal places, or confirm in writing that rounding ${field.field} to two is intended.`,
+        migrationImpact:
+          'Values are rounded on write, and the difference is only visible when a total is compared back to the source.',
+        confidence: 'HIGH',
+        basis: profile.basis,
+      });
+    }
+  }
+
   // --- Duplicates ----------------------------------------------------------
   if (profile.duplicateKeyCount > 0) {
     found.push({
@@ -709,6 +905,14 @@ function candidateKeys(profile: TableProfileDto): FieldProfileDto[] {
     return couldIdentify(f);
   });
 }
+
+/**
+ * How much of a column has to disagree with the rest before it is worth reporting as mixed.
+ *
+ * Below this a handful of odd values is a data-entry slip, already reported by whichever rule owns
+ * it, and calling the column "mixed type" as well would be a second finding for the same records.
+ */
+const MIXED_SHAPE_FLOOR = 5;
 
 const isNearlyUnique = (f: FieldProfileDto) =>
   f.examined > 0 &&

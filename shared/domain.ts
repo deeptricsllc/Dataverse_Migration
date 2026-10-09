@@ -783,6 +783,41 @@ export interface DuplicationProfileDto {
   truncated: boolean;
 }
 
+/**
+ * What the values in a column actually look like, counted per record.
+ *
+ * Distinct from the semantic reading on the same column, and deliberately so. The reader decides
+ * what a column *means* from a distinct sample, which is right for "this holds email addresses" and
+ * wrong for "how many records will fail to convert" — a sample counts spellings and a migration
+ * converts records. It is also why a column holding `$1,200.50` in twelve rows and plain numbers in
+ * the other forty-eight reads as neither money nor number: four fifths of the sample has to agree
+ * before the reader will call it anything, and this column never will.
+ *
+ * Nothing here is converted. These are observations, and the findings that quote them propose.
+ */
+export interface ConversionProfileDto {
+  examined: number;
+  /** Records with any value at all. */
+  populated: number;
+  /** Records by the shape of their value. These sum to `populated`. */
+  numbers: number;
+  currency: number;
+  booleans: number;
+  dates: number;
+  text: number;
+  /** Distinct currency marks seen, e.g. ["$","EUR"]. More than one means the column mixes currencies. */
+  currencyMarkers: string[];
+  /** Distinct decimal conventions seen, "dot" and/or "comma". More than one is an ambiguity. */
+  decimalSeparators: string[];
+  /** Distinct boolean spellings seen, e.g. ["yes","n","true"]. Capped. */
+  booleanSpellings: string[];
+  /** The most decimal places on any value, and how many records carry more than two. */
+  maxDecimals: number | null;
+  overTwoDecimals: number;
+  /** A few real values per shape, so a finding can show rather than assert. Empty when secured. */
+  samples: { shape: string; values: string[] }[];
+}
+
 export interface FieldProfileDto {
   field: string;
   displayName: string;
@@ -826,6 +861,11 @@ export interface FieldProfileDto {
    * Collision arithmetic for this column. Optional for profiles written before it existed.
    */
   duplication?: DuplicationProfileDto | null;
+  /**
+   * Per-record value shapes, for conversion and type findings. Optional for older profiles, and
+   * absent for columns where the question does not arise (a lookup has no spelling).
+   */
+  conversion?: ConversionProfileDto | null;
   /** The distinct values and their counts, for choice mapping. Capped. */
   topValues: ValueFrequencyDto[];
   topValuesTruncated: boolean;

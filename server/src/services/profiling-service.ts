@@ -20,6 +20,7 @@ import type { Logger } from 'pino';
 import type {
   DataQualityIssueDto,
   DataQualityRuleDto,
+  ConversionProfileDto,
   DuplicationProfileDto,
   FieldProfileDto,
   StatisticBasis,
@@ -36,6 +37,13 @@ import {
   type TableMetadata,
 } from '../../../shared/metadata';
 import { EMAIL_SHAPE } from '../../../shared/semantic-types';
+import {
+  currencyMarker,
+  decimalPlaces,
+  decimalSeparator,
+  shapeOf,
+  type ValueShape,
+} from '../../../shared/value-shapes';
 import type { MigrationConnector } from '../connectors/types';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { AppDb } from '../db/client';
@@ -69,6 +77,9 @@ export const TOP_VALUES_LIMIT = 50;
 export const COLLISION_EXAMPLE_VALUES = 200;
 /** How many colliding values are reported in a finding. */
 export const COLLISION_EXAMPLES = 5;
+/** Example values kept per value shape, and distinct notations tracked per column. */
+export const SHAPE_SAMPLES = 3;
+export const NOTATION_CAP = 20;
 export const COLLISION_EXAMPLE_RECORDS = 5;
 /** Offending values kept per issue, so a person can recognise the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
@@ -447,6 +458,14 @@ class FieldAccumulator {
    * carry a copy of the whole table into the stored profile.
    */
   private collisionRecords = new Map<string, string[]>();
+  /** Per-record value shapes, for the conversion findings. Only where the question arises. */
+  private readonly shapeCounts = new Map<ValueShape, number>();
+  private readonly shapeSamples = new Map<ValueShape, string[]>();
+  private readonly currencyMarkers = new Set<string>();
+  private readonly decimalSeparators = new Set<string>();
+  private readonly booleanSpellings = new Set<string>();
+  private maxDecimals: number | null = null;
+  private overTwoDecimals = 0;
   private minLength: number | null = null;
   private maxLength: number | null = null;
   private lengthSum = 0;
@@ -468,6 +487,7 @@ class FieldAccumulator {
   private readonly isNumeric: boolean;
   private readonly isDate: boolean;
   private readonly isEmail: boolean;
+  private readonly shapesApply: boolean;
   private readonly isLookup: boolean;
 
   constructor(
@@ -480,6 +500,8 @@ class FieldAccumulator {
     this.isNumeric = NUMERIC_TYPES.has(attr.type);
     this.isDate = attr.type === 'DateTime';
     this.isEmail = attr.semantic?.type === 'EMAIL';
+    // A lookup holds a reference, not a spelling, so none of the conversion questions apply to it.
+    this.shapesApply = (this.isText || this.isNumeric) && !this.isLookup;
     for (const rule of rules) {
       if (rule.kind === 'REGEX_PATTERN') this.patterns.set(ruleKey(rule), compilePattern(rule.pattern));
     }
@@ -558,6 +580,38 @@ class FieldAccumulator {
      */
     if (this.isEmail && trimmed !== '' && !EMAIL_SHAPE.test(trimmed)) {
       this.invalidEmailCount++;
+    }
+
+    /*
+     * The shape of this one value, tallied per record.
+     *
+     * Counted here rather than derived from the frequency map so the answer is in records. A single
+     * misspelled amount repeated across ten thousand rows is one distinct value and ten thousand
+     * records to fix, and only the second number tells anyone how long the work takes.
+     */
+    if (this.shapesApply && trimmed !== '') {
+      const shape = shapeOf(trimmed);
+      this.shapeCounts.set(shape, (this.shapeCounts.get(shape) ?? 0) + 1);
+      const held = this.shapeSamples.get(shape);
+      if (held === undefined) this.shapeSamples.set(shape, [trimmed]);
+      else if (held.length < SHAPE_SAMPLES) held.push(trimmed);
+
+      if (shape === 'CURRENCY') {
+        const marker = currencyMarker(trimmed);
+        if (marker && this.currencyMarkers.size < NOTATION_CAP) this.currencyMarkers.add(marker);
+      }
+      if (shape === 'CURRENCY' || shape === 'NUMBER') {
+        const sep = decimalSeparator(trimmed);
+        if (sep && this.decimalSeparators.size < NOTATION_CAP) this.decimalSeparators.add(sep);
+      }
+      if (shape === 'BOOLEAN' && this.booleanSpellings.size < NOTATION_CAP) {
+        this.booleanSpellings.add(trimmed.toLowerCase());
+      }
+      const places = decimalPlaces(trimmed);
+      if (places !== null) {
+        if (this.maxDecimals === null || places > this.maxDecimals) this.maxDecimals = places;
+        if (places > 2) this.overTwoDecimals++;
+      }
     }
 
     if (this.isDate) {
@@ -715,6 +769,34 @@ class FieldAccumulator {
     };
   }
 
+  /** The per-record shape tallies, assembled for the findings that quote them. */
+  private conversion(): ConversionProfileDto {
+    const count = (shape: ValueShape) => this.shapeCounts.get(shape) ?? 0;
+    const numbers = count('NUMBER');
+    const currency = count('CURRENCY');
+    const booleans = count('BOOLEAN');
+    const dates = count('DATE');
+    const text = count('TEXT');
+    return {
+      examined: this.examined,
+      populated: numbers + currency + booleans + dates + text,
+      numbers,
+      currency,
+      booleans,
+      dates,
+      text,
+      currencyMarkers: [...this.currencyMarkers].sort(),
+      decimalSeparators: [...this.decimalSeparators].sort(),
+      booleanSpellings: [...this.booleanSpellings].sort(),
+      maxDecimals: this.maxDecimals,
+      overTwoDecimals: this.overTwoDecimals,
+      // A secured column shows nothing. The counts are still true and still useful.
+      samples: this.attr.isSecured
+        ? []
+        : [...this.shapeSamples.entries()].map(([shape, values]) => ({ shape, values })),
+    };
+  }
+
   toDto(basis: StatisticBasis): FieldProfileDto {
     const distinctCount = this.distinctOverflow ? null : this.freq.size;
     const topValues: ValueFrequencyDto[] = [...this.freq.entries()]
@@ -747,6 +829,7 @@ class FieldAccumulator {
       invalidEmailCount: this.invalidEmailCount,
       invalidValueCount: this.invalidValueCount,
       duplication: this.duplication(),
+      conversion: this.shapesApply ? this.conversion() : null,
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,
       issues: [],

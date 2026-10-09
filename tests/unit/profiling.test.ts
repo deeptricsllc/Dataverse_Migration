@@ -107,6 +107,63 @@ const field = (p: TableProfileDto, name: string): FieldProfileDto => {
 
 // ---------------------------------------------------------------------------
 
+describe('value shapes, counted in records', () => {
+  it('counts money written as text in a column that is mostly plain numbers', async () => {
+    /*
+     * The credit_limit column from the certified fixture: every fifth row carries a written amount
+     * and the rest are bare. The semantic reader calls this column nothing, because four fifths of
+     * the sample has to agree before it will; the per-record count is what makes it reportable.
+     */
+    const values = Array.from({ length: 60 }, (_, i) =>
+      i % 5 === 0 ? `$1,${200 + i}.50` : `${1000 + i * 7}`,
+    );
+    const meta = table('account', [attr('credit_limit', 'String')]);
+    const { result } = await profile(meta, rows('credit_limit', values));
+    const c = field(result, 'credit_limit').conversion!;
+
+    expect(c.populated).toBe(60);
+    expect(c.currency, 'every fifth of sixty').toBe(12);
+    expect(c.numbers).toBe(48);
+    expect(c.text).toBe(0);
+    expect(c.currencyMarkers, 'one currency throughout').toEqual(['$']);
+    expect(c.decimalSeparators, 'one decimal convention').toEqual(['dot']);
+    expect(c.maxDecimals).toBe(2);
+    expect(c.overTwoDecimals).toBe(0);
+  });
+
+  it('notices when one column writes money two different ways', async () => {
+    const meta = table('account', [attr('amount', 'String')]);
+    const { result } = await profile(meta, rows('amount', ['$1,200.50', '1.234,56', '$9.99']));
+    const c = field(result, 'amount').conversion!;
+    expect(c.currency).toBe(3);
+    // $1,200.50 and $9.99 are one convention -- the second simply has nothing to group. The
+    // ambiguity worth reporting is 1.234,56, which puts the comma where the others put the dot.
+    expect(c.decimalSeparators.sort()).toEqual(['comma', 'dot']);
+  });
+
+  it('counts boolean spellings and decimal places', async () => {
+    const meta = table('account', [attr('active', 'String')]);
+    const { result } = await profile(meta, rows('active', ['Yes', 'no', 'TRUE', 'y', 'Yes']));
+    const c = field(result, 'active').conversion!;
+    expect(c.booleans).toBe(5);
+    expect(c.booleanSpellings).toEqual(['no', 'true', 'y', 'yes']);
+
+    const meta2 = table('account', [attr('rate', 'String')]);
+    const { result: r2 } = await profile(meta2, rows('rate', ['0.12345', '1.5', '2', '0.987654']));
+    const c2 = field(r2, 'rate').conversion!;
+    expect(c2.maxDecimals).toBe(6);
+    expect(c2.overTwoDecimals, 'two of the four').toBe(2);
+  });
+
+  it('shows no example values for a secured column', async () => {
+    const meta = table('account', [attr('secret', 'String', { isSecured: true })]);
+    const { result } = await profile(meta, rows('secret', ['$1,200.50', '$2.00']));
+    const c = field(result, 'secret').conversion!;
+    expect(c.currency, 'the counts are still true').toBe(2);
+    expect(c.samples).toEqual([]);
+  });
+});
+
 describe('collision arithmetic, proven against the rows that produced it', () => {
   /*
    * The numbers a reader is asked to act on. Three of them are easy to confuse and all three are
