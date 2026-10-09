@@ -154,6 +154,120 @@ test('a spreadsheet can be uploaded, previewed and analysed without any connecti
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+/** A project with one dataset already in it, so the next upload starts from an existing project. */
+async function projectWithOneDataset(page: Page, tag: string): Promise<string> {
+  await page.goto('/projects?new=1');
+  await page.getByTestId('project-name').fill(`Existing project ${tag}`);
+  await page.getByTestId('create-project').click();
+  await page.waitForURL(/\/projects\/[0-9a-f-]{36}/);
+  const id = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
+  await page.goto(`/analysis/${id}`);
+  await page.getByTestId('add-dataset').click();
+  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('dataset-file-input').setInputFiles({
+    name: 'opening.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('code,label\nA,First\nB,Second\n'),
+  });
+  await page.getByTestId('dataset-preview').waitFor({ timeout: 120_000 });
+  await page.getByTestId('confirm-add-dataset').click();
+  await expect(page.getByTestId('dataset-row')).toHaveCount(1, { timeout: 120_000 });
+  return id;
+}
+
+test('CSV and XML upload through the browser, each read as its own shape', async ({ page }) => {
+  test.setTimeout(600_000);
+  const tag = Date.now().toString(36).slice(-5);
+  await demo(page);
+  const projectId = await projectWithOneDataset(page, tag);
+
+  /*
+   * The second upload starts from the project that is already open.
+   * Nobody should have to create a project to add a file to the project they are looking at.
+   */
+  await page.getByRole('button', { name: 'Add another dataset' }).click();
+  await page.getByTestId('connector-xml').click();
+  await page.getByTestId('dataset-file-input').setInputFiles({
+    name: 'orders.xml',
+    mimeType: 'application/xml',
+    buffer: Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?>
+<orders>
+  <order ref="ORD-1"><customer>C1</customer><total>10.50</total></order>
+  <order ref="ORD-2"><customer>C2</customer><total>20.00</total></order>
+  <order ref="ORD-3"><customer>C1</customer><total>30.25</total></order>
+</orders>`,
+    ),
+  });
+  const preview = page.getByTestId('dataset-preview');
+  await preview.waitFor({ timeout: 120_000 });
+  // The reader found records, and the attributes and child elements became columns.
+  await expect(preview).toContainText('3');
+  await expect(preview).toContainText(/ref|customer|total/);
+  await shot(page, 'xml-previewed-inside-an-existing-project');
+  await page.getByTestId('confirm-add-dataset').click();
+  await expect(page.getByTestId('dataset-row')).toHaveCount(2, { timeout: 120_000 });
+
+  await page.getByTestId('analyse').click();
+  const main = page.getByRole('main');
+  await expect(main).toContainText('Analysed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  // Both files are in the one project, and neither needed a connection.
+  await expect(main).toContainText('5 records');
+  await shot(page, 'csv-and-xml-analysed-together');
+
+  const exportLink = page.getByRole('link', { name: /Export findings/ });
+  await expect(exportLink).toBeVisible();
+  const res = await page.request.get((await exportLink.getAttribute('href'))!);
+  expect(res.status()).toBe(200);
+  expect(await res.text()).toContain('Why it matters');
+  void projectId;
+});
+
+test('a refused file does not end the attempt', async ({ page }) => {
+  const tag = Date.now().toString(36).slice(-5);
+  await demo(page);
+  await page.goto('/projects?new=1');
+  await page.getByTestId('project-name').fill(`Recovery ${tag}`);
+  await page.getByTestId('create-project').click();
+  await page.waitForURL(/\/projects\/[0-9a-f-]{36}/);
+  const id = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
+  await page.goto(`/analysis/${id}`);
+  await page.getByTestId('add-dataset').click();
+  await page.getByTestId('connector-csv').click();
+
+  await page.getByTestId('dataset-file-input').setInputFiles({
+    name: 'holiday.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('not a spreadsheet'),
+  });
+  await expect(page.getByTestId('upload-rejected')).toContainText('cannot be read here');
+
+  // The same control still works, and the refusal clears rather than lingering as a false alarm.
+  await page.getByTestId('dataset-file-input').setInputFiles({
+    name: 'recovered.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('code,label\nA,First\n'),
+  });
+  await expect(page.getByTestId('dataset-preview')).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByTestId('upload-rejected')).toHaveCount(0);
+  await shot(page, 'recovered-after-a-refused-file');
+});
+
+test('the connections list says which connections are simulated', async ({ page }) => {
+  await demo(page);
+  await page.goto('/environments');
+  const main = page.getByRole('main');
+  await expect(main).toContainText('Simulated');
+  /*
+   * The same claim on both screens. A card in the gallery that says Simulated and a connection in
+   * the list that does not would be two answers to one question.
+   */
+  const dataverseCard = main.locator('article, li, div').filter({ hasText: 'Microsoft Dataverse' }).first();
+  await expect(dataverseCard).toBeVisible();
+  await shot(page, 'connections-list-shows-simulated');
+});
+
 test('the source gallery is usable by keyboard and on a phone', async ({ page }) => {
   await demo(page);
   await page.setViewportSize({ width: 390, height: 844 });
