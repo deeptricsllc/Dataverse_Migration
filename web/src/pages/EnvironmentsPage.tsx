@@ -26,7 +26,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import {
   Button,
@@ -377,6 +377,7 @@ export function EnvironmentsPage() {
    * it survives a reload and can be linked to.
    */
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const [formOpen, setFormOpen] = useState(params.get('new') === '1');
   /** Closing also drops `?new=1`, so a reload does not reopen the form. */
   const closeForm = () => {
@@ -661,6 +662,15 @@ export function EnvironmentsPage() {
           connection={editing}
           discovering={discover.isPending}
           onClose={closeForm}
+          /*
+           * Files are added inside a project, so the card that says so takes them there with the
+           * new-project dialog already open. Telling somebody where to go and then making them
+           * find it is two steps where one would do.
+           */
+          onUploadChosen={() => {
+            closeForm();
+            navigate('/projects?new=1');
+          }}
           onDiscover={() => discover.mutate()}
           onSaved={(saved) => {
             closeForm();
