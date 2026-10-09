@@ -189,7 +189,15 @@ function Verdict({
       </>,
     );
   }
-  if (clean && checked > 0 && s.coverage?.mode === 'FULL') {
+  /*
+   * The strongest sentence on the page, and it may only be said when nothing limits it.
+   *
+   * It appeared directly above "1 check could not be completed", so a reader scanning the list met
+   * "Nothing is missing" first and the limit second. Nothing is missing *among the records that were
+   * checked* — and on this report one record had been left out because nobody could account for it,
+   * which is the one fact the sentence was covering up.
+   */
+  if (clean && checked > 0 && s.coverage?.mode === 'FULL' && unverified.length === 0) {
     lines.push(<>Nothing is missing, nothing differs, and every reference resolves.</>);
   }
   if (s.duplicateRecords > 0) {

@@ -520,6 +520,14 @@ test('the validation experience, state by state', async ({ page }) => {
   const verdict = page.getByTestId('validation-verdict');
   await expect(verdict).toContainText('could not be completed');
   await expect(verdict, 'Incomplete is not a kind of pass').not.toContainText('Passed with warnings');
+  /*
+   * And it does not print the absolute claim above the limit. "Nothing is missing" is true only of
+   * the records that were checked, and this report excluded one because nobody could account for it.
+   */
+  await expect(
+    verdict,
+    'the strongest sentence is not available to a report with a gap in it',
+  ).not.toContainText('Nothing is missing');
   await shot(page, 'validation-incomplete');
 
   // --------------------------------------------- 14. Unexpected records in the target

@@ -225,6 +225,38 @@ describe('a validation reports the worst outcome its evidence supports', () => {
     expect(exported.details?.report).toBe('summary');
   }, 600_000);
 
+  /**
+   * The strongest sentence a report can print, and when it may not be printed.
+   *
+   * "Nothing is missing, nothing differs, and every reference resolves" appeared on a report that
+   * had excluded a record because nobody could account for it — directly above the line saying a
+   * check could not be completed. The reader meets the absolute claim first.
+   */
+  it('does not claim nothing is missing when a check could not be completed', async () => {
+    const armed = await api.post<{ armed: boolean }>('/api/demo/fault-injection', {
+      environmentId: uat.id,
+      table: 'product',
+      onNthCreate: 2,
+    });
+    expect(armed.armed).toBe(true);
+    const run = await migrate('Unverified yet clean', ['product']);
+    expect(run.unresolved).toBeGreaterThan(0);
+
+    const report = await validate(run.id);
+    const unverified = report.entities.flatMap((e) => e.checks).filter((c) => c.outcome === 'INCOMPLETE');
+    expect(unverified.length, 'a check that could not be completed').toBeGreaterThan(0);
+    expect(report.outcome).toBe('INCOMPLETE');
+    /*
+     * Everything that was compared agreed, so the report may say that — about the records it
+     * examined. What it may not say is that nothing is missing, because one record was left out of
+     * the comparison precisely because nobody can say where it is.
+     */
+    const dataset = report.entities.find((e) => e.logicalName === 'product')!;
+    expect(dataset.missing).toBe(0);
+    expect(dataset.different).toBe(0);
+    expect(dataset.unresolvedInRun).toBeGreaterThan(0);
+  }, 600_000);
+
   /** An unavailable comparison never becomes a pass, whatever else the report found. */
   it('never lets an unverified check be outranked by a pass', async () => {
     const run = await migrate('Mixed outcome', ['dtx_office']);
