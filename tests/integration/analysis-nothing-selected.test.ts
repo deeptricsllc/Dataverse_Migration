@@ -131,3 +131,67 @@ describe('an analysis of a connection with nothing selected', () => {
     expect(done.totals.records).toBe(12);
   }, 300_000);
 });
+
+/**
+ * And it analyses what was chosen, not everything it can see.
+ *
+ * A separate failure in the same family. The fan-out behind the Analyse button passed the project's
+ * recorded selection; the per-dataset endpoint did not, and an empty list reaches the engine as
+ * "every table in the catalogue". A project narrowed to one sheet of a four-sheet workbook would
+ * have had all four analysed by the second route — the selection being a label on a screen rather
+ * than a fact about the work.
+ */
+describe('an analysis runs over exactly what the project selected', () => {
+  let t: TestApp;
+  let api: ApiClient;
+
+  beforeAll(async () => {
+    t = await createTestApp();
+    api = new ApiClient(t.app);
+    await api.demoLogin();
+  }, 120_000);
+  afterAll(async () => {
+    await t?.close();
+  });
+
+  it('analyses one chosen sheet of a workbook, not all of them', async () => {
+    const workbook = writeXlsx([
+      { name: 'Customers', columns: [{ header: 'id' }], rows: [['C1'], ['C2']] },
+      { name: 'Orders', columns: [{ header: 'id' }], rows: [['O1'], ['O2'], ['O3']] },
+      { name: 'Notes', columns: [{ header: 'note' }], rows: [['hello']] },
+    ]).toString('base64');
+
+    const source = await api.post<EnvironmentDto>(
+      '/api/staged-sources',
+      { displayName: `Workbook ${Date.now()}`, kind: 'UPLOAD' },
+      201,
+    );
+    await api.post(`/api/staged-sources/${source.id}/import`, {
+      filename: 'Book.xlsx',
+      contentBase64: workbook,
+    });
+    const project = await api.post<ProjectDto>('/api/projects', {
+      name: `Chosen only ${Date.now()}`,
+      kind: 'ANALYSIS',
+    });
+    // One sheet of the three, recorded on the project source.
+    await api.post(`/api/projects/${project.id}/sources`, {
+      environmentId: source.id,
+      objects: ['orders'],
+    });
+
+    // No `tables` given: the endpoint has to read the selection rather than take everything.
+    const run = await api.post<AnalysisRunDto>(`/api/projects/${project.id}/analyses`, {
+      environmentId: source.id,
+    });
+    const worker = t.services.createWorker();
+    await worker.drain(180_000);
+    await worker.stop();
+
+    const done = await api.get<AnalysisRunDto>(`/api/analyses/${run.id}`);
+    expect(done.status, done.errorMessage ?? '').toBe('COMPLETED');
+    expect(done.totals.tables, 'the one sheet that was chosen').toBe(1);
+    expect(done.tables.map((table) => table.logicalName)).toEqual(['orders']);
+    expect(done.totals.records).toBe(3);
+  }, 300_000);
+});

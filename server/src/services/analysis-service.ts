@@ -124,7 +124,25 @@ export class AnalysisService {
       throw badRequest(`${resolution.message} ${resolution.whatToDo}`);
     }
 
-    const tables = [...new Set((input.tables ?? []).map((t) => t.trim()).filter(Boolean))];
+    /**
+     * What to analyse: what the caller asked for, or what the project already chose.
+     *
+     * An empty list reaches `selectTables` as "every table in the catalogue". That is the right
+     * default for a connection nobody has narrowed, and the wrong one for a project where somebody
+     * picked three tables out of two hundred — the selection is recorded on the project source, and
+     * reading past it analyses a hundred and ninety-seven tables nobody asked about.
+     *
+     * The fan-out behind the Analyse button already passed the selection, so this closed a gap
+     * between two routes to the same work rather than a gap nobody could reach: the per-dataset
+     * endpoint is what a second screen, a retry or a script would call.
+     */
+    const [listedSource] = await this.db
+      .select({ selectedObjects: projectSources.selectedObjects })
+      .from(projectSources)
+      .where(and(eq(projectSources.projectId, projectId), eq(projectSources.environmentId, env.id)))
+      .limit(1);
+    const requested = input.tables ?? listedSource?.selectedObjects ?? [];
+    const tables = [...new Set(requested.map((t) => t.trim()).filter(Boolean))];
     if (tables.length > MAX_TABLES_PER_ANALYSIS) {
       throw badRequest(`An analysis covers at most ${MAX_TABLES_PER_ANALYSIS} tables at a time`);
     }
