@@ -34,8 +34,11 @@ Local gate on `e3d38ac`: **7 passed, 0 failed, 0 did not run, 1 skipped.**
 | end-to-end                           | passed — 29 browser journeys                                                                                                                                                              |
 | evidence drift                       | **skipped** — it compares a committed snapshot against a fresh engine run, which CI does after the engine suites. Not run locally on purpose; it is not a check this change could affect. |
 
-GitHub CI (`verify.yml`, both jobs including the real PostgreSQL / MySQL / SQL Server engines) is
-green on the preceding candidates and running on `e3d38ac` at the time of writing.
+GitHub CI (`verify.yml` — the `checks` job and the `engines` job, the latter against real
+PostgreSQL, MySQL and SQL Server) runs on every push to this branch. It completed green on
+`46f57f9` and `888b03e`. Runs for later commits were superseded by the pushes that followed them,
+which is how GitHub handles a newer push on the same branch; the PR shows the head's run. The
+`engines` job is where `evidence drift` executes, which is why the local gate skips it.
 
 ## 4. QA deployment and provenance
 
