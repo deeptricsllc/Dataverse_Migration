@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { writeXlsx } from '../server/src/lib/xlsx';
 
 /**
@@ -248,6 +248,15 @@ test('a first-time user can analyse a messy export and understand the result', a
   const res = await page.request.get(href!);
   expect(res.status(), `export ${href}`).toBe(200);
   const csv = await res.text();
+  /*
+   * Kept alongside the screenshots when capturing, because "the report is useful" is a claim about
+   * the file, and a claim about a file is worth exactly as much as the file. A reader of the
+   * certification can open this and disagree with it.
+   */
+  if (CAPTURE_DIR) {
+    mkdirSync(CAPTURE_DIR, { recursive: true });
+    writeFileSync(`${CAPTURE_DIR}/analysis-findings.csv`, csv, 'utf8');
+  }
   // The file is the findings the screen shows, with the reasoning behind each one.
   expect(csv).toContain('Why it matters');
   expect(csv).toContain('What to do');

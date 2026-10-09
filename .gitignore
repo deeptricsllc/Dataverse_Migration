@@ -20,3 +20,5 @@ provenance.log
 local-walk.log
 qa-walk.log
 .capture-walk/
+.capture-cert/
+walk-cert.log
