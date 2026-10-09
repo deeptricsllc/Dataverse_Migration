@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { explainFinding } from '../../../shared/validation-findings';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
-import type { DemoSetupStatusDto } from '../../../shared/domain';
+import type { DemoSetupStatusDto, DifferenceType, ValidationOutcome } from '../../../shared/domain';
+import type { RequestContext } from '../services/context';
 import { writtenByRun } from '../../../shared/run-metrics';
 import { WORKSPACE_ROLES, normaliseRole } from '../../../shared/authorization';
 import { signInFailureCode } from '../../../shared/sign-in-failures';
@@ -14,7 +16,9 @@ import { SESSION_COOKIE, safeReturnTo } from '../auth/auth-service';
 import { seedDemoData } from '../dataverse/factory';
 import { Readable } from 'node:stream';
 import { csvFileName, csvStream, toCsv, type CsvValue } from '../lib/csv';
-import { AppError, forbidden } from '../lib/errors';
+import { and, eq } from 'drizzle-orm';
+import { demoRecords } from '../db/schema';
+import { AppError, forbidden, notFound } from '../lib/errors';
 import { armLostAnswer } from '../dataverse/demo/fault-injection';
 import { DEMO_ENVIRONMENTS } from '../dataverse/demo/fixtures';
 import { verifyEvidencePackage } from '../services/evidence-verifier';
@@ -29,6 +33,25 @@ const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
 /** A SQL column or Dataverse attribute name. */
 const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 const idParams = z.object({ id: uuid });
+
+/**
+ * The finding categories a filter accepts. One list, used by the JSON endpoint and by the export.
+ *
+ * They were two lists, and they had drifted: `VALUE_LOST` and `VALUE_TRUNCATED` were added to the
+ * engine and to the filter on the screen, but not to the export, so choosing either of those on
+ * screen and then pressing Export answered with a validation error instead of a file. A reader
+ * exporting the thing they are looking at should not have to know which categories are old.
+ */
+const differenceType = z.enum([
+  'MISSING_IN_TARGET',
+  'RECORD_FAILED_IN_RUN',
+  'VALUE_MISMATCH',
+  'VALUE_LOST',
+  'VALUE_TRUNCATED',
+  'LOOKUP_MISMATCH',
+  'BROKEN_REFERENCE',
+  'PRE_EXISTING_DIFFERENCE',
+] as const satisfies readonly DifferenceType[]);
 const page = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -1152,24 +1175,44 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     );
   });
 
+  /**
+   * Evidence that leaves the platform is recorded.
+   *
+   * An exported report outlives the screen it came from and is what somebody attaches to a change
+   * record, so the trail has to show that it was taken, from which validation, and by whom.
+   */
+  const auditValidationExport = async (
+    req: { ctx: RequestContext },
+    id: string,
+    kind: 'summary' | 'differences',
+    run: {
+      outcome: ValidationOutcome | null;
+      sourceEnvironment: { id: string };
+      targetEnvironment: { id: string };
+    },
+  ) =>
+    s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'VALIDATION_EVIDENCE_EXPORTED',
+      outcome: 'SUCCESS',
+      sourceEnvironmentId: run.sourceEnvironment.id,
+      targetEnvironmentId: run.targetEnvironment.id,
+      requestId: req.ctx.requestId,
+      details: { validationRunId: id, report: kind, validationOutcome: run.outcome },
+    });
+
   app.get('/api/validations/:id/differences.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const q = z
       .object({
         entity: tableName.optional(),
-        type: z
-          .enum([
-            'MISSING_IN_TARGET',
-            'VALUE_MISMATCH',
-            'LOOKUP_MISMATCH',
-            'BROKEN_REFERENCE',
-            'PRE_EXISTING_DIFFERENCE',
-          ])
-          .optional(),
+        type: differenceType.optional(),
         outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
       })
       .parse(req.query);
     const run = await s.validation.get(req.ctx, id);
+    await auditValidationExport(req, id, 'differences', run);
     return streamCsv(
       reply,
       csvFileName([
@@ -1182,27 +1225,44 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Source record id',
         'Target record id',
         'Field',
-        'Source value',
-        'Target value',
-        'Difference',
-        'Outcome',
+        // Not "source value": on a value comparison this is the source value after the
+        // transformations the run applied, which is what the target was supposed to hold.
+        'Expected value',
+        'Value in target',
+        'Finding',
+        'Category',
+        'Severity',
+        // The three columns that make the export usable away from the screen. Somebody reading this
+        // file in a change record has the rule that produced each finding, what it costs, and what to
+        // do — rather than a category they have to look up.
+        'Rule applied',
+        'Why it matters',
+        'Next action',
       ],
-      map(s.validation.differencePages(req.ctx, id, q), (d) => [
-        d.entity,
-        d.sourceRecordId,
-        d.targetRecordId,
-        d.field,
-        d.sourceValue,
-        d.targetValue,
-        d.differenceType,
-        d.outcome,
-      ]),
+      map(s.validation.differencePages(req.ctx, id, q), (d) => {
+        const x = explainFinding(d.differenceType);
+        return [
+          d.entity,
+          d.sourceRecordId,
+          d.targetRecordId,
+          d.field,
+          d.sourceValue,
+          d.targetValue,
+          x.label,
+          d.differenceType,
+          d.outcome,
+          x.rule,
+          x.consequence,
+          x.nextAction,
+        ];
+      }),
     );
   });
 
   app.get('/api/validations/:id/summary.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const run = await s.validation.get(req.ctx, id);
+    await auditValidationExport(req, id, 'summary', run);
     return sendCsv(
       reply,
       csvFileName([
@@ -1229,6 +1289,17 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         'Different',
         'Broken references',
         'Checks',
+        // The rules, with the result. An evidence package that says what was found and not what was
+        // compared cannot be read against later: a column nobody compared and a column that agreed
+        // look identical.
+        'Identity',
+        'Fields compared',
+        'Fields not compared',
+        'Transformations applied',
+        'Empty and no value',
+        'Numeric tolerance',
+        'Date and time',
+        'References',
       ],
       run.entities.map((e) => [
         e.logicalName,
@@ -1247,6 +1318,22 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         e.different,
         e.brokenReferences,
         e.checks.map((c) => `${c.check}: ${c.outcome} - ${c.message}`).join(' | '),
+        e.rules
+          ? e.rules.identity.basis +
+            (e.rules.identity.fields.length ? ` (${e.rules.identity.fields.join(', ')})` : '')
+          : 'Not recorded',
+        e.rules ? e.rules.comparedFields.map((f) => f.target).join(' ') : 'Not recorded',
+        e.rules ? e.rules.excludedFields.map((f) => `${f.field} (${f.reason})`).join(' | ') : 'Not recorded',
+        e.rules
+          ? e.rules.comparedFields
+              .filter((f) => f.transformations.length > 0)
+              .map((f) => `${f.target}: ${f.transformations.join(', ')}`)
+              .join(' | ')
+          : 'Not recorded',
+        e.rules ? (e.rules.emptyEqualsNull.equal ? 'Same value' : 'Two values') : 'Not recorded',
+        e.rules?.numericTolerance ?? 'Not recorded',
+        e.rules?.dateTimeHandling ?? 'Not recorded',
+        e.rules?.lookupMatching ?? 'Not recorded',
       ]),
     );
   });
@@ -1542,15 +1629,7 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const q = page
       .extend({
         entity: tableName.optional(),
-        type: z
-          .enum([
-            'MISSING_IN_TARGET',
-            'VALUE_MISMATCH',
-            'LOOKUP_MISMATCH',
-            'BROKEN_REFERENCE',
-            'PRE_EXISTING_DIFFERENCE',
-          ])
-          .optional(),
+        type: differenceType.optional(),
         outcome: z.enum(['PASS', 'WARNING', 'FAIL']).optional(),
       })
       .parse(req.query);
@@ -1706,6 +1785,116 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       means:
         'The next migration that writes this table will have one write committed and its answer lost. The ' +
         'run cannot account for that record, so it finishes needing reconciliation rather than complete.',
+    };
+  });
+
+  /**
+   * Changes one record in a simulated target, outside any migration.
+   *
+   * What a validation exists to catch is data that stopped matching after the run: a value edited by
+   * hand, a reference repointed by an integration, a record deleted by somebody tidying up. None of
+   * those can be caused by configuring a migration, so without this the screens that report them can
+   * only be demonstrated by writing rows straight into the database — which is a fixture dressed as
+   * evidence, and proves the components render rather than that the comparison works.
+   *
+   * So this causes the real thing: the record really changes, and the comparison really finds it.
+   * Fenced the same four ways as `/api/demo/fault-injection` — demo mode only, the caller's own
+   * simulated environment only, administrator only, and one named record at a time. There is no path
+   * from here to a customer's tenant.
+   */
+  app.post('/api/demo/target-edit', async (req) => {
+    if (!config.DEMO_MODE || !req.ctx.isDemoOrg) {
+      throw forbidden('A simulated target can only be edited in DEMO MODE');
+    }
+    if (req.ctx.role !== 'ADMIN') throw forbidden('Only administrators can edit a simulated target');
+    const body = z
+      .object({
+        environmentId: uuid,
+        table: tableName,
+        recordId: z.string().min(1).max(200),
+        /** Columns to set. A null value clears the column. */
+        set: z.record(z.string(), z.unknown()).optional(),
+        /** True removes the record, which is what a target record deleted after a run looks like. */
+        remove: z.boolean().default(false),
+        /**
+         * Copies the record under a new identifier instead of changing it.
+         *
+         * A target row no migration wrote, which is what another integration or an earlier import
+         * leaves behind. It cannot be produced by configuring a migration either, and it is the
+         * condition the row-count check exists to report.
+         */
+        duplicateAs: z.string().min(1).max(200).optional(),
+      })
+      .parse(req.body);
+    const env = (await s.environments.list(req.ctx)).find((e) => e.id === body.environmentId);
+    if (!env) throw forbidden('That environment is not in this workspace');
+    if (env.provider !== 'demo') {
+      throw forbidden('Only a simulated environment can be edited this way');
+    }
+    const environmentKey = DEMO_ENVIRONMENTS.find((d) => d.url === env.url)?.key;
+    if (!environmentKey) throw forbidden('That environment has no simulated data behind it');
+
+    const scope = and(
+      eq(demoRecords.organizationId, req.ctx.organizationId),
+      eq(demoRecords.environmentKey, environmentKey),
+      eq(demoRecords.logicalName, body.table),
+      eq(demoRecords.recordId, body.recordId),
+    );
+    const [existing] = await s.db.select().from(demoRecords).where(scope);
+    if (!existing) throw notFound('Record in the simulated environment');
+
+    if (body.duplicateAs) {
+      /*
+       * The copy carries the new identifier wherever the old one appeared in its own data, which is
+       * how the simulated store holds a primary key: as a column whose value is the record id. A
+       * copy that kept the original's key would be a duplicate key rather than an extra record.
+       */
+      const data = Object.fromEntries(
+        Object.entries(existing.data).map(([k, v]) => [k, v === body.recordId ? body.duplicateAs : v]),
+      );
+      await s.db.insert(demoRecords).values({
+        organizationId: req.ctx.organizationId,
+        environmentKey,
+        logicalName: body.table,
+        recordId: body.duplicateAs,
+        data,
+      });
+    } else if (body.remove) {
+      await s.db.delete(demoRecords).where(scope);
+    } else {
+      await s.db
+        .update(demoRecords)
+        .set({ data: { ...existing.data, ...(body.set ?? {}) }, updatedAt: new Date() })
+        .where(scope);
+    }
+    await s.audit.record({
+      organizationId: req.ctx.organizationId,
+      userId: req.ctx.userId,
+      action: 'DEMO_TARGET_EDITED',
+      outcome: 'SUCCESS',
+      targetEnvironmentId: env.id,
+      requestId: req.ctx.requestId,
+      details: {
+        environment: env.displayName,
+        table: body.table,
+        recordId: body.recordId,
+        // The column names, not the values: a value here is data somebody put in a column.
+        columns: body.remove || body.duplicateAs ? null : Object.keys(body.set ?? {}),
+        removed: body.remove,
+        duplicatedAs: body.duplicateAs ?? null,
+      },
+    });
+    return {
+      changed: true,
+      table: body.table,
+      recordId: body.recordId,
+      removed: body.remove,
+      duplicatedAs: body.duplicateAs ?? null,
+      means: body.duplicateAs
+        ? 'The target holds one more record than the source. No migration wrote it, so a validation reports it as a row-count difference rather than as a finding against the run.'
+        : body.remove
+          ? 'The record is no longer in the target. A validation of the run that wrote it will report it missing.'
+          : 'The target now holds a different value from the one the run wrote. A validation will report the difference.',
     };
   });
 

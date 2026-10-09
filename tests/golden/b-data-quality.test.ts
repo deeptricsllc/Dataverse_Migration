@@ -129,7 +129,12 @@ describe('Golden Journey B: data the target will not accept', () => {
     // --- 4. remediation: which record, by name -----------------------------
     const differences = await j.api.get(`/api/validations/${report.id}/differences`);
     const diffs: ValidationDifferenceDto[] = Array.isArray(differences) ? differences : differences.items;
-    const missing = diffs.filter((d) => d.differenceType === 'MISSING_IN_TARGET');
+    /*
+     * `RECORD_FAILED_IN_RUN`, not `MISSING_IN_TARGET`. The two were one category, and they are two
+     * findings with two next actions: the run reported these as failed and said why, so the reader
+     * goes to the run's failure list rather than opening an investigation into where a record went.
+     */
+    const missing = diffs.filter((d) => d.differenceType === 'RECORD_FAILED_IN_RUN');
     expect(missing.length, 'the records to go and fix are listed individually').toBeGreaterThan(0);
     expect(
       missing.some((d) => d.sourceRecordId === '00000000-0000-4000-9000-00000000cccc'),

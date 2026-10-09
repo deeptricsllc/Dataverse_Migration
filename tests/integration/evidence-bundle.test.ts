@@ -80,6 +80,9 @@ describe('migration evidence package', () => {
       'metrics.csv',
       'validation.csv',
       'validation-coverage.json',
+      // What was compared, beside what was found. A package with one and not the other leaves a
+      // column nobody looked at and a column that agreed looking exactly alike.
+      'validation-rules.csv',
       'configuration.json',
       'connector-evidence.csv',
       'manifest.json',

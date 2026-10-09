@@ -1709,7 +1709,21 @@ export interface RollbackPreviewDto {
 // Validation
 // ---------------------------------------------------------------------------
 
-export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
+/**
+ * What a validation found, as distinct from whether it ran.
+ *
+ * `INCOMPLETE` was missing, and its absence was the defect. The engine recorded everywhere underneath
+ * that a comparison could not run — coverage `NOT_VERIFIED`, the reason on the check — but the outcome
+ * had three values, so "could not be checked" had nowhere to go except `WARNING`, which the report
+ * prints as *Passed with warnings*. A validation that compared nothing said the word passed.
+ *
+ * Ranked `PASS < WARNING < INCOMPLETE < FAIL`, and worst wins. Not knowing is worse than knowing
+ * something minor; a proven mismatch outranks an unchecked area, because it is the actionable headline
+ * and the unchecked part stays visible on the check that could not run.
+ *
+ * See `docs/VALIDATION_SEMANTICS.md`.
+ */
+export type ValidationOutcome = 'PASS' | 'WARNING' | 'INCOMPLETE' | 'FAIL';
 /**
  * Why a record does not match.
  *
@@ -1721,6 +1735,19 @@ export type ValidationOutcome = 'PASS' | 'WARNING' | 'FAIL';
  */
 export type DifferenceType =
   | 'MISSING_IN_TARGET'
+  /**
+   * The run reported this record as failed, and it is confirmed absent.
+   *
+   * Its own category, because it is a different finding with a different next action from
+   * `MISSING_IN_TARGET`. That one is validation's own discovery — the run said it had dealt with the
+   * record and the record is not there, which nobody knows the reason for yet. This one the run
+   * already explained, and the reader's next step is the run's failure list, not an investigation.
+   *
+   * They were one category, so a reader filtering for missing records got both kinds mixed, with the
+   * wrong next action on half of them — while the counts beside them, `missing` and `failedInRun`,
+   * had kept the two apart since the run gate.
+   */
+  | 'RECORD_FAILED_IN_RUN'
   | 'VALUE_MISMATCH'
   /** The source had a value after transformation; the target has none. */
   | 'VALUE_LOST'
@@ -1729,6 +1756,84 @@ export type DifferenceType =
   | 'LOOKUP_MISMATCH'
   | 'BROKEN_REFERENCE'
   | 'PRE_EXISTING_DIFFERENCE';
+
+/**
+ * How a source record was paired with a target record.
+ *
+ * Recorded rather than described, because what a clean comparison proves depends entirely on it. A
+ * comparison paired through the run's own identity map proves the record the run wrote is right; one
+ * paired on a primary key both sides happen to share proves the same thing about a weaker claim. A
+ * report that did not say which it used would let the stronger reading be taken from either.
+ */
+export type IdentityBasis =
+  /** The run's own source-to-target map: the pairing the migration itself created. */
+  | 'MIGRATION_IDENTITY_MAP'
+  /** The same primary identifier on both sides, for a comparison made without a run. */
+  | 'PRIMARY_KEY'
+  /** A configured business key. */
+  | 'BUSINESS_KEY'
+  /** A target alternate key. */
+  | 'ALTERNATE_KEY';
+
+/** One column pair this comparison looked at, and what the run did to the value on its way across. */
+export interface ComparedFieldRule {
+  source: string;
+  target: string;
+  /**
+   * The transformations the run applied, named. Empty means the value was carried across unchanged
+   * apart from the type conversion the target column requires.
+   */
+  transformations: string[];
+  /** True for a lookup, which is compared by resolving the reference rather than by value. */
+  isLookup: boolean;
+}
+
+/**
+ * The rules this comparison actually used, recorded with the result.
+ *
+ * Written from the run's immutable snapshot at the moment the comparison ran, not read from the plan
+ * as it stands now. A report has to be readable years later by somebody asking what was compared and
+ * under what rules, and a plan that has been edited since cannot answer that.
+ *
+ * Null on reports produced before the rules were recorded. That is printed as "not recorded", because
+ * a report that showed today's rules against yesterday's result would be worse than one that admits
+ * it does not know.
+ */
+export interface ComparisonRulesDto {
+  identity: {
+    basis: IdentityBasis;
+    /** The columns that carry the identity, where the basis has named columns. */
+    fields: string[];
+  };
+  /** Every column pair compared, in the order the comparison walked them. */
+  comparedFields: ComparedFieldRule[];
+  /**
+   * Source columns present in the table that this comparison did not look at, and why.
+   *
+   * Named individually. "47 of 52 columns compared" invites the reader to assume the other five did
+   * not matter, and the only way to know is to see which ones they are.
+   */
+  excludedFields: { field: string; reason: string }[];
+  /**
+   * What is normalised away before two values are called equal, in words.
+   *
+   * Every entry is a platform semantic stated in `docs/SEMANTIC_EQUALITY.md`, not a convenience. A
+   * normalisation a reader cannot trace to a rule is a comparison they cannot trust.
+   */
+  normalization: string[];
+  /** The numeric tolerance, and where it comes from. */
+  numericTolerance: string;
+  dateTimeHandling: string;
+  lookupMatching: string;
+  /**
+   * Whether an empty string and NULL are the same value in this target, and why.
+   *
+   * Not a global rule, which is how it was wrong. Dataverse stores one as the other, so treating them
+   * as equal there is the platform's own semantic; a SQL column holds two distinct values, and calling
+   * them equal reported a lost value as a match.
+   */
+  emptyEqualsNull: { equal: boolean; reason: string };
+}
 
 export interface ValidationCheckDto {
   check:
@@ -1817,6 +1922,22 @@ export interface ValidationEntityResultDto {
   missing: number;
   different: number;
   brokenReferences: number;
+  /**
+   * The rules this comparison ran under. Null on reports produced before they were recorded, which
+   * the report says rather than showing the rules as they stand today.
+   */
+  rules: ComparisonRulesDto | null;
+  /**
+   * How many findings of each kind, which is a different number from how many records.
+   *
+   * One record with four wrong columns is one `different` record and four findings. Both numbers are
+   * worth having and reading one as the other is wrong in both directions, so they are two fields
+   * with two labels. Counted by the engine as it compares, not from the stored list: that list is
+   * capped, so counting it would quietly turn "2,000 of 40,000" into "2,000".
+   *
+   * Null on reports produced before the breakdown was recorded.
+   */
+  findings: Partial<Record<DifferenceType, number>> | null;
   checks: ValidationCheckDto[];
 }
 

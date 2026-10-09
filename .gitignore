@@ -11,3 +11,9 @@ coverage/
 
 # A self-test of the certification driver, against the simulator. Never certification evidence.
 evidence/dataverse-driver-selftest.json
+validation-performance.txt
+.capture/
+capture.log
+qa-review.log
+.capture-qa/
+provenance.log

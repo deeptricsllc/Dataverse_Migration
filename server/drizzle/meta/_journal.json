@@ -232,6 +232,13 @@
       "when": 1790928316831,
       "tag": "0032_demo_setup_status",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790928317831,
+      "tag": "0033_comparison_rules",
+      "breakpoints": true
     }
   ]
 }

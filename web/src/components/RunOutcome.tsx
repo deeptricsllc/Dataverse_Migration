@@ -16,9 +16,12 @@ import { fmtDate, fmtDuration } from '../lib/format';
 export function RunOutcome({
   run,
   onReviewFailures,
+  onValidate,
 }: {
   run: MigrationRunDto;
   onReviewFailures: () => void;
+  /** Validates this run. The page owns the mutation; this is the control that names the action. */
+  onValidate: () => void;
 }) {
   /*
    * `Succeeded` is gone, and that is the point.
@@ -117,11 +120,22 @@ export function RunOutcome({
             </Button>
           )}
           {next.kind === 'VALIDATE' && (
-            <Link
-              to={`/validation`}
-              className="rounded-md bg-brand-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-800"
-            >
+            /*
+             * Validates this run. It used to link to `/validation`, which is the list — so the one
+             * control on the screen that names a run sent the reader somewhere they had to pick it
+             * out again.
+             */
+            <Button variant="primary" onClick={onValidate} data-testid="validate-this-run">
               Validate run
+            </Button>
+          )}
+          {next.kind === 'READ_VALIDATION' && (
+            <Link
+              to={`/validation/${run.latestValidationRunId}`}
+              className="rounded-md bg-brand-700 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-800"
+              data-testid="read-validation"
+            >
+              Open the report
             </Link>
           )}
         </div>
@@ -165,7 +179,16 @@ function nextAction(run: MigrationRunDto): { kind: string; label: string } | nul
     };
   }
   if (run.status === 'COMPLETED') {
-    return { kind: 'VALIDATE', label: 'Validate the run against the source.' };
+    /*
+     * A run that has already been validated is not waiting to be validated.
+     *
+     * It said "Next action: validate the run against the source" directly beneath a banner saying
+     * the run had been validated and offering the report — two instructions on one screen, and the
+     * louder one was the wrong one.
+     */
+    return run.latestValidationRunId
+      ? { kind: 'READ_VALIDATION', label: 'Read the validation report.' }
+      : { kind: 'VALIDATE', label: 'Validate the run against the source.' };
   }
   return null;
 }

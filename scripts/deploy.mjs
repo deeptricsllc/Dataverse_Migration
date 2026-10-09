@@ -44,13 +44,74 @@ const token = process.env.RAILWAY_API_TOKEN ?? process.env.RAILWAY_TOKEN;
 const project = process.env.RAILWAY_PROJECT_ID;
 const environment = process.env.RAILWAY_ENVIRONMENT_ID;
 const service = process.env.RAILWAY_SERVICE_ID;
-for (const [name, value] of [
-  ['RAILWAY_API_TOKEN (or RAILWAY_TOKEN)', token],
-  ['RAILWAY_PROJECT_ID', project],
-  ['RAILWAY_ENVIRONMENT_ID', environment],
-  ['RAILWAY_SERVICE_ID', service],
-]) {
-  if (!value) refuse(`${name} is not set`, 'The target of a deployment is never guessed.');
+
+/**
+ * Two ways to reach the platform, and the guardrails above apply to both.
+ *
+ * With a project token, the variables go over the API and the target is named outright. Without one,
+ * the Railway CLI is already signed in and already linked to a project and environment, and asking
+ * for a token that the CLI is holding anyway would mean a credential travelling somewhere it does
+ * not need to travel. So the CLI path is supported, and it names the target from the link rather
+ * than from an argument nobody checked.
+ *
+ * What it must never become is a path that skips the provenance. Both paths set BUILD_BRANCH and
+ * BUILD_COMMIT from git before the upload, and both refuse a tree the commit does not describe.
+ */
+const viaApi = Boolean(token);
+if (viaApi) {
+  for (const [name, value] of [
+    ['RAILWAY_PROJECT_ID', project],
+    ['RAILWAY_ENVIRONMENT_ID', environment],
+    ['RAILWAY_SERVICE_ID', service],
+  ]) {
+    if (!value) refuse(`${name} is not set`, 'The target of a deployment is never guessed.');
+  }
+}
+
+const RAILWAY = process.platform === 'win32' ? 'railway.cmd' : 'railway';
+/**
+ * Which service and environment the CLI path acts on, when the caller named them.
+ *
+ * A linked project can hold several services, and `railway up` with none named is a question the CLI
+ * asks a person. Naming them is how an unattended deploy stays unambiguous; leaving them out falls
+ * back to the link, which is what an interactive caller expects.
+ */
+const cliTarget = [
+  ...(service ? ['--service', service] : []),
+  ...(environment ? ['--environment', environment] : []),
+];
+/** Runs the Railway CLI, inheriting the signed-in session. Returns the exit status. */
+function railway(args, { capture = false } = {}) {
+  return spawnSync(RAILWAY, args, {
+    stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+}
+
+if (!viaApi) {
+  const status = railway(['status', '--json'], { capture: true });
+  if (status.status !== 0) {
+    /*
+     * The CLI's own words, not a guess at them. The first time this refused, the reason was that the
+     * CLI reads RAILWAY_ENVIRONMENT_ID and RAILWAY_SERVICE_ID itself and rejects either without
+     * RAILWAY_PROJECT_ID — which the message below says outright and the sentence above never would.
+     */
+    refuse(
+      'no RAILWAY_API_TOKEN is set and the Railway CLI is not usable',
+      `${(status.stderr || status.stdout || 'the CLI gave no reason').trim()}
+  Either export a project token, or sign in and link a project with \`railway link\`.`,
+    );
+  }
+  let linked;
+  try {
+    linked = JSON.parse(status.stdout);
+  } catch {
+    refuse('the Railway CLI did not report a linked project', 'Nothing names the target.');
+  }
+  // Printed, not guessed at: a deployment that does not say where it is going is the bug this file
+  // exists to prevent, whichever path it took to get there.
+  console.log(`Target: ${linked.name ?? 'unknown project'} (from the Railway CLI link)`);
 }
 
 // --- what is about to be uploaded, and whether it can be described honestly --------------------
@@ -87,6 +148,21 @@ console.log(`  on the remote as: ${onRemote.join(', ')}`);
 
 // --- record it on the service before the build, so the running image reads the truth -----------
 async function upsert(name, value) {
+  if (!viaApi) {
+    /*
+     * `--skip-deploys`, because the upload below is the deployment. Without it each variable
+     * triggers its own redeploy of the *previous* image, so the service would build the old commit
+     * twice while announcing the new one.
+     */
+    const res = railway(['variables', '--set', `${name}=${value}`, '--skip-deploys', ...cliTarget], {
+      capture: true,
+    });
+    if (res.status !== 0) {
+      refuse(`${name} could not be recorded`, (res.stderr || res.stdout || '').trim());
+    }
+    console.log(`  ${name} = ${value}`);
+    return;
+  }
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'Project-Access-Token': token },
@@ -109,10 +185,10 @@ await upsert('BUILD_BRANCH', branch);
 await upsert('BUILD_COMMIT', commit);
 
 // --- upload ------------------------------------------------------------------------------------
-const up = spawnSync(
-  process.platform === 'win32' ? 'railway.cmd' : 'railway',
-  ['up', '--detach', '--project', project, '--environment', environment, '--service', service],
-  { stdio: 'inherit', shell: process.platform === 'win32' },
+const up = railway(
+  viaApi
+    ? ['up', '--detach', '--project', project, '--environment', environment, '--service', service]
+    : ['up', '--detach', ...cliTarget],
 );
 if (up.status !== 0) {
   console.error(`\nrailway up exited ${up.status}. The provenance variables are already set to the`);

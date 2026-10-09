@@ -1,10 +1,14 @@
 import { AGGREGATE_CAVEAT, type AggregateCheck } from '@shared/aggregates';
 import type {
+  ComparisonRulesDto,
+  ValidationEntityResultDto,
   DifferenceType,
+  IdentityBasis,
   ValidationDifferenceDto,
   ValidationRunDto,
   ValidationSummary,
 } from '@shared/domain';
+import { explainFinding, findingLabel } from '@shared/validation-findings';
 import { accountedFor, METRIC_DEFINITIONS, writtenByRun, type RecordAccounting } from '@shared/run-metrics';
 import {
   coveragePercent,
@@ -42,6 +46,8 @@ const PAGE = 50;
 const OUTCOME_LABELS: Record<string, string> = {
   PASS: 'All checks passed',
   WARNING: 'Passed with warnings',
+  /* Not a kind of pass: a required comparison could not run, so the headline must not say passed. */
+  INCOMPLETE: 'Incomplete',
   FAIL: 'Checks failed',
 };
 
@@ -57,10 +63,13 @@ function Verdict({
   summary,
   outcome,
   migrationRunId,
+  entities,
 }: {
   summary: ValidationSummary;
   outcome: string | null;
   migrationRunId: string | null;
+  /** The datasets, so the headline can name the checks that could not be completed. */
+  entities: ValidationEntityResultDto[];
 }) {
   const s = summary;
   const checked = s.matchedRecords + s.missingRecords + s.differentRecords;
@@ -70,7 +79,17 @@ function Verdict({
     s.failedInRunRecords === 0 &&
     s.differentRecords === 0 &&
     s.brokenReferences === 0;
-  const tone = outcome === 'FAIL' ? 'danger' : outcome === 'WARNING' ? 'warning' : 'success';
+  /*
+   * INCOMPLETE is not a success tone. Without it the whole headline of a validation that could not
+   * run went out green, which is the same defect as the word "passed" one level up: a reader takes
+   * the colour before the words.
+   */
+  const tone =
+    outcome === 'FAIL' ? 'danger' : outcome === 'WARNING' || outcome === 'INCOMPLETE' ? 'warning' : 'success';
+  /** Checks that could not be completed, by name. The fourth question the first viewport must answer. */
+  const unverified = entities.flatMap((e) =>
+    e.checks.filter((c) => c.outcome === 'INCOMPLETE').map((c) => ({ entity: e.displayName, check: c })),
+  );
 
   const lines: ReactNode[] = [];
   lines.push(
@@ -144,6 +163,24 @@ function Verdict({
       </>,
     );
   }
+  /*
+   * Why a difference can be a warning rather than a failure.
+   *
+   * Without this the headline read "Passed with warnings" over "2 hold a different value", and left
+   * the reader to work out which two and whose fault they were. A record the run found already in
+   * the target and left alone is not a record the run got wrong, and that is the whole reason the
+   * outcome is not a failure — so it belongs in the headline, not in a panel further down.
+   */
+  const preExisting = entities.reduce((n, e) => n + (e.findings?.PRE_EXISTING_DIFFERENCE ?? 0), 0);
+  if (preExisting > 0) {
+    lines.push(
+      <>
+        <strong>{fmtNumber(preExisting)}</strong> of the differences below are in records this run did not
+        write. The target already held them and the run left them as they were, so this migration did not
+        cause them.
+      </>,
+    );
+  }
   if (s.brokenReferences > 0) {
     lines.push(
       <>
@@ -152,7 +189,15 @@ function Verdict({
       </>,
     );
   }
-  if (clean && checked > 0 && s.coverage?.mode === 'FULL') {
+  /*
+   * The strongest sentence on the page, and it may only be said when nothing limits it.
+   *
+   * It appeared directly above "1 check could not be completed", so a reader scanning the list met
+   * "Nothing is missing" first and the limit second. Nothing is missing *among the records that were
+   * checked* — and on this report one record had been left out because nobody could account for it,
+   * which is the one fact the sentence was covering up.
+   */
+  if (clean && checked > 0 && s.coverage?.mode === 'FULL' && unverified.length === 0) {
     lines.push(<>Nothing is missing, nothing differs, and every reference resolves.</>);
   }
   if (s.duplicateRecords > 0) {
@@ -220,6 +265,43 @@ function Verdict({
       ),
     );
   }
+
+  /*
+   * What could not be checked, said in the headline rather than left to the panels below.
+   *
+   * A reader who sees no failures and scrolls no further has read a report that checked nothing, and
+   * every number above this line is silent about that.
+   */
+  if (unverified.length > 0) {
+    lines.push(
+      <>
+        <strong className="text-amber-700">{fmtNumber(unverified.length)}</strong> check(s) could not be
+        completed:{' '}
+        {unverified
+          .slice(0, 4)
+          .map((u) => `${u.entity} · ${humanize(u.check.check)}`)
+          .join('; ')}
+        {unverified.length > 4 ? ` and ${unverified.length - 4} more` : ''}. Nothing there is known to be
+        wrong. It was not checked.
+      </>,
+    );
+  }
+
+  /*
+   * What to do, last and plainly. State, evidence, consequence, action — the action was the one the
+   * report left to the reader to work out.
+   */
+  lines.push(
+    outcome === 'FAIL' ? (
+      <strong>Next action: review the findings below, then correct the mapping or the data.</strong>
+    ) : outcome === 'INCOMPLETE' ? (
+      <strong>Next action: resolve what could not be checked, then validate again.</strong>
+    ) : outcome === 'WARNING' ? (
+      <strong>Next action: read the warnings below before you accept this result.</strong>
+    ) : (
+      <strong>Next action: none. Export this report as evidence of the comparison.</strong>
+    ),
+  );
 
   // Callout takes no test id of its own, and a wrapper is cheaper than widening its props.
   return (
@@ -356,6 +438,267 @@ function AggregatePanel({ aggregates, entity }: { aggregates: AggregateCheck[]; 
   );
 }
 
+/** What each identity basis proves, in the one sentence a reader needs beside the finding. */
+const IDENTITY_BASIS: Record<IdentityBasis, string> = {
+  MIGRATION_IDENTITY_MAP:
+    'The identity map this run wrote. Each source record is paired with the target record the run created for it.',
+  PRIMARY_KEY:
+    'The same primary identifier on both sides. This proves the record with that identifier agrees. It does not prove this run wrote it.',
+  BUSINESS_KEY: 'A configured business key.',
+  ALTERNATE_KEY: 'A target alternate key.',
+};
+
+/**
+ * The rules the comparison ran under.
+ *
+ * Shown with the result, not with the plan. A reader who cannot see which columns were compared, and
+ * which were left out, cannot tell a report that checked everything from one that checked the
+ * forty-seven columns nobody asked about. The excluded columns are listed by name for the same
+ * reason: a count invites the reader to assume the rest did not matter.
+ */
+/**
+ * What was found in this dataset, by kind, and what could not be checked.
+ *
+ * Findings, not records, and labelled as findings: one record with four wrong columns is one
+ * different record and four findings, and a reader who takes either number for the other draws the
+ * wrong conclusion in both directions. The dataset row above counts records; this counts findings.
+ *
+ * The checks that could not be completed are here too, because a dataset with no findings and one
+ * unverified check is not a dataset with nothing wrong — it is a dataset nobody finished looking at.
+ */
+function FindingBreakdown({
+  findings,
+  checks,
+  entity,
+}: {
+  findings: Partial<Record<DifferenceType, number>> | null;
+  checks: { check: string; outcome: string; message: string }[];
+  entity: string;
+}) {
+  const unverified = checks.filter((c) => c.outcome === 'INCOMPLETE');
+  const kinds = Object.entries(findings ?? {}).filter(([, n]) => (n ?? 0) > 0) as [DifferenceType, number][];
+  if (kinds.length === 0 && unverified.length === 0) return null;
+  return (
+    <div className="mt-3" data-testid={`findings-${entity}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Findings</p>
+      {kinds.length === 0 ? (
+        <p className="mt-1 text-sm text-slate-600">No findings.</p>
+      ) : (
+        <ul className="mt-1 space-y-0.5 text-sm">
+          {kinds.map(([type, n]) => (
+            <li key={type} className="flex flex-wrap items-baseline gap-2">
+              <span className="w-48 flex-none text-slate-700">{findingLabel(type)}</span>
+              <span className="tabular-nums text-slate-900">{fmtNumber(n)}</span>
+              <span className="text-xs text-slate-500">finding(s)</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {unverified.length > 0 && (
+        <>
+          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Checks not completed
+          </p>
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {unverified.map((c) => (
+              <li key={c.check} className="flex flex-wrap items-baseline gap-2">
+                <span className="w-48 flex-none text-slate-700">{humanize(c.check)}</span>
+                <span className="text-slate-600">{c.message}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RulesPanel({ rules, entity }: { rules: ComparisonRulesDto | null; entity: string }) {
+  const [open, setOpen] = useState(false);
+  if (!rules) {
+    return (
+      <p className="mt-3 text-xs text-slate-500" data-testid={`rules-${entity}`}>
+        Comparison rules not recorded. This report was produced before the platform recorded them.
+      </p>
+    );
+  }
+  const transformed = rules.comparedFields.filter((f) => f.transformations.length > 0);
+  return (
+    <div className="mt-3" data-testid={`rules-${entity}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Comparison rules</p>
+      <dl className="mt-1 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[10rem_1fr]">
+        <dt className="text-slate-500">Identity</dt>
+        <dd className="text-slate-700">
+          {humanize(rules.identity.basis)}
+          {rules.identity.fields.length > 0 && (
+            <>
+              {' · '}
+              <Mono className="text-xs">{rules.identity.fields.join(', ')}</Mono>
+            </>
+          )}
+          <div className="text-xs text-slate-500">{IDENTITY_BASIS[rules.identity.basis]}</div>
+        </dd>
+        <dt className="text-slate-500">Fields compared</dt>
+        <dd className="text-slate-700">
+          {fmtNumber(rules.comparedFields.length)} field(s)
+          {transformed.length > 0 && (
+            <>
+              {' · '}
+              {fmtNumber(transformed.length)} with a transformation
+            </>
+          )}
+        </dd>
+        <dt className="text-slate-500">Fields not compared</dt>
+        <dd className="text-slate-700">{fmtNumber(rules.excludedFields.length)} field(s)</dd>
+        <dt className="text-slate-500">Numeric tolerance</dt>
+        <dd className="text-slate-700">{rules.numericTolerance}</dd>
+        <dt className="text-slate-500">Date and time</dt>
+        <dd className="text-slate-700">{rules.dateTimeHandling}</dd>
+        <dt className="text-slate-500">References</dt>
+        <dd className="text-slate-700">{rules.lookupMatching}</dd>
+        <dt className="text-slate-500">Empty and no value</dt>
+        <dd className="text-slate-700">
+          {rules.emptyEqualsNull.equal ? 'Compared as the same value.' : 'Compared as two values.'}{' '}
+          <span className="text-xs text-slate-500">{rules.emptyEqualsNull.reason}</span>
+        </dd>
+      </dl>
+      <button
+        type="button"
+        className="mt-2 text-xs font-medium text-brand-700 underline"
+        onClick={() => setOpen(!open)}
+        data-testid={`rules-fields-toggle-${entity}`}
+      >
+        {open ? 'Hide every field rule' : 'Show every field rule'}
+      </button>
+      {open && (
+        <div className="mt-2 grid gap-4 md:grid-cols-2" data-testid={`rules-fields-${entity}`}>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compared</p>
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {rules.comparedFields.map((f) => (
+                <li key={f.target} className="flex flex-wrap items-baseline gap-1.5">
+                  <Mono className="text-xs">{f.source}</Mono>
+                  <ArrowRight className="h-3 w-3 text-slate-400" aria-hidden />
+                  <Mono className="text-xs">{f.target}</Mono>
+                  {f.isLookup && <Pill tone="slate">reference</Pill>}
+                  {f.transformations.map((t) => (
+                    <Pill key={t} tone="blue">
+                      {humanize(t)}
+                    </Pill>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Not compared</p>
+            {rules.excludedFields.length === 0 ? (
+              <p className="mt-1 text-xs text-slate-600">Every source column was compared.</p>
+            ) : (
+              /*
+               * Two columns, not a wrapping row. A reason long enough to wrap put the next field
+               * name directly underneath it, so a reader pairing them down the page attached every
+               * reason to the wrong column.
+               */
+              <ul className="mt-1 space-y-1 text-xs">
+                {rules.excludedFields.map((f) => (
+                  <li key={f.field} className="grid grid-cols-[minmax(8rem,auto)_1fr] items-baseline gap-x-3">
+                    <Mono className="text-xs">{f.field}</Mono>
+                    <span className="text-slate-600">{f.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Normalized before comparison
+            </p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-slate-600">
+              {rules.normalization.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One finding, opened.
+ *
+ * The table row says what the comparison saw. This says which rule produced the finding, what it
+ * costs, and what to do next — the three things a reader opened the report for, and the three the row
+ * could not hold. Technical detail is last and behind the same disclosure, because the reader who
+ * needs the record identifiers is not the reader deciding whether to act.
+ */
+function FindingDetail({ d }: { d: ValidationDifferenceDto }) {
+  const x = explainFinding(d.differenceType);
+  return (
+    <tr data-testid="finding-detail">
+      <td colSpan={7} className="bg-slate-50/70 px-6 py-3">
+        <dl className="grid max-w-4xl gap-x-6 gap-y-1 text-sm sm:grid-cols-[9rem_1fr]">
+          <dt className="text-slate-500">Finding</dt>
+          <dd className="font-medium text-slate-900">{x.label}</dd>
+          <dt className="text-slate-500">Severity</dt>
+          <dd>
+            <StatusBadge status={d.outcome} />
+          </dd>
+          <dt className="text-slate-500">Dataset</dt>
+          <dd className="text-slate-700">
+            <Mono className="text-xs">{d.entity}</Mono>
+          </dd>
+          <dt className="text-slate-500">Record</dt>
+          <dd className="text-slate-700">
+            <Mono className="text-xs">{d.sourceRecordId ?? d.targetRecordId ?? '—'}</Mono>
+          </dd>
+          {d.field && (
+            <>
+              <dt className="text-slate-500">Field</dt>
+              <dd className="text-slate-700">
+                <Mono className="text-xs">{d.field}</Mono>
+              </dd>
+            </>
+          )}
+          {/*
+            Shown only where the finding is about a value. A missing record has no pair to compare,
+            and two rows reading "no value" ask the reader to work out that they mean nothing here.
+          */}
+          {x.hasValues && (
+            <>
+              <dt className="text-slate-500">{x.expectedLabel}</dt>
+              <dd className="break-words text-slate-700">
+                {d.sourceValue ?? <span className="text-slate-400">no value</span>}
+              </dd>
+              <dt className="text-slate-500">{x.actualLabel}</dt>
+              <dd className="break-words text-slate-700">
+                {d.targetValue ?? <span className="text-slate-400">no value</span>}
+              </dd>
+            </>
+          )}
+          <dt className="text-slate-500">Rule applied</dt>
+          <dd className="text-slate-700">{x.rule}</dd>
+          <dt className="text-slate-500">Why it matters</dt>
+          <dd className="text-slate-700">{x.consequence}</dd>
+          <dt className="text-slate-500">Next action</dt>
+          <dd className="font-medium text-slate-900">{x.nextAction}</dd>
+          <dt className="text-slate-500">Technical details</dt>
+          <dd className="text-xs text-slate-600">
+            <div>
+              category <Mono className="text-xs">{d.differenceType}</Mono> · severity{' '}
+              <Mono className="text-xs">{d.outcome}</Mono>
+            </div>
+            <div>
+              source record <Mono className="text-xs">{d.sourceRecordId ?? 'none'}</Mono> · target record{' '}
+              <Mono className="text-xs">{d.targetRecordId ?? 'none'}</Mono>
+            </div>
+          </dd>
+        </dl>
+      </td>
+    </tr>
+  );
+}
+
 function RunAccounting({
   accounting,
   migrationRunId,
@@ -411,6 +754,8 @@ function RunAccounting({
 export function ValidationReportPage() {
   const { validationId } = useParams();
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** Which finding is open. One at a time: the detail is tall, and two of them hide the table. */
+  const [openFinding, setOpenFinding] = useState<string | null>(null);
   const [entity, setEntity] = useState('');
   const [type, setType] = useState('');
   const [outcome, setOutcome] = useState('');
@@ -472,18 +817,33 @@ export function ValidationReportPage() {
           )
         }
       />
+      {/*
+        While it runs.
+
+        It printed the badge and the progress message, and while the job was queued both of them were
+        the word "Queued" — a card that said the same thing twice and told a reader nothing about
+        what was about to be compared or how long to wait for it.
+      */}
       {['QUEUED', 'RUNNING'].includes(v.status) && (
         <Card>
-          <div className="flex items-center gap-3 text-sm text-slate-600">
-            <StatusBadge status={v.status} /> {v.progressMessage}
+          <div className="flex items-center gap-3 text-sm text-slate-600" data-testid="validation-progress">
+            <StatusBadge status={v.status} />
+            <span>
+              {v.status === 'QUEUED'
+                ? `Waiting to start. ${fmtNumber(v.tables.length)} table(s) to compare.`
+                : (v.progressMessage ?? 'Comparing records against the source.')}
+            </span>
           </div>
+          <p className="mt-1 text-xs text-slate-500">
+            This page updates itself. Nothing is recorded until the comparison finishes.
+          </p>
         </Card>
       )}
       {v.status === 'FAILED' && <ErrorState error={new Error(`Validation failed: ${v.errorMessage}`)} />}
 
       {done && s && (
         <div className="space-y-5">
-          <Verdict summary={s} outcome={v.outcome} migrationRunId={v.migrationRunId} />
+          <Verdict summary={s} outcome={v.outcome} migrationRunId={v.migrationRunId} entities={v.entities} />
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-9">
             <Stat
@@ -741,6 +1101,12 @@ export function ValidationReportPage() {
                             {e.aggregates && (
                               <AggregatePanel aggregates={e.aggregates} entity={e.logicalName} />
                             )}
+                            <FindingBreakdown
+                              findings={e.findings}
+                              checks={e.checks}
+                              entity={e.logicalName}
+                            />
+                            <RulesPanel rules={e.rules} entity={e.logicalName} />
                             <button
                               type="button"
                               className="mt-2 text-xs font-medium text-brand-700 underline"
@@ -795,6 +1161,7 @@ export function ValidationReportPage() {
                       ...(
                         [
                           'MISSING_IN_TARGET',
+                          'RECORD_FAILED_IN_RUN',
                           'VALUE_LOST',
                           'VALUE_TRUNCATED',
                           'VALUE_MISMATCH',
@@ -802,7 +1169,7 @@ export function ValidationReportPage() {
                           'BROKEN_REFERENCE',
                           'PRE_EXISTING_DIFFERENCE',
                         ] as DifferenceType[]
-                      ).map((t) => ({ value: t, label: humanize(t) })),
+                      ).map((t) => ({ value: t, label: findingLabel(t) })),
                     ]}
                   />
                   <Select
@@ -844,40 +1211,63 @@ export function ValidationReportPage() {
                   <Table>
                     <thead className="bg-slate-50">
                       <tr>
+                        <Th className="w-8" />
                         <Th>Table</Th>
                         <Th>Record</Th>
                         <Th>Field</Th>
-                        <Th>Source value</Th>
-                        <Th>Target value</Th>
-                        <Th>Type</Th>
+                        {/*
+                          Not "source value". On a value comparison the left column holds what the run
+                          was supposed to write, which is the source value after its transformations.
+                          Calling that the source invites a reader to check it against the source
+                          system by hand and find a difference that is correct.
+                        */}
+                        <Th>Expected</Th>
+                        <Th>In target</Th>
+                        <Th>Finding</Th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {diffs.data.items.map((d) => (
-                        <tr key={d.id} data-testid="difference-row">
-                          <Td>{d.entity}</Td>
-                          <Td>
-                            <Mono>{d.sourceRecordId ?? '—'}</Mono>
-                            {d.targetRecordId && d.targetRecordId !== d.sourceRecordId && (
+                        <Fragment key={d.id}>
+                          <tr
+                            className="cursor-pointer hover:bg-slate-50"
+                            data-testid="difference-row"
+                            onClick={() => setOpenFinding(openFinding === d.id ? null : d.id)}
+                          >
+                            <Td>
+                              {openFinding === d.id ? (
+                                <ChevronDown className="h-4 w-4 text-slate-400" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4 text-slate-400" />
+                              )}
+                            </Td>
+                            <Td>{d.entity}</Td>
+                            <Td>
+                              <Mono>{d.sourceRecordId ?? '—'}</Mono>
+                              {d.targetRecordId && d.targetRecordId !== d.sourceRecordId && (
+                                <div className="text-[11px] text-slate-500">
+                                  target <Mono>{d.targetRecordId}</Mono>
+                                </div>
+                              )}
+                            </Td>
+                            <Td>
+                              <Mono>{d.field ?? '—'}</Mono>
+                            </Td>
+                            <Td className="max-w-xs break-words text-xs">
+                              {d.sourceValue ?? <span className="text-slate-400">empty</span>}
+                            </Td>
+                            <Td className="max-w-xs break-words text-xs">
+                              {d.targetValue ?? <span className="text-slate-400">empty</span>}
+                            </Td>
+                            <Td className="space-y-1">
+                              <StatusBadge status={d.outcome} />
                               <div className="text-[11px] text-slate-500">
-                                target <Mono>{d.targetRecordId}</Mono>
+                                {findingLabel(d.differenceType)}
                               </div>
-                            )}
-                          </Td>
-                          <Td>
-                            <Mono>{d.field ?? '—'}</Mono>
-                          </Td>
-                          <Td className="max-w-xs break-words text-xs">
-                            {d.sourceValue ?? <span className="text-slate-400">empty</span>}
-                          </Td>
-                          <Td className="max-w-xs break-words text-xs">
-                            {d.targetValue ?? <span className="text-slate-400">empty</span>}
-                          </Td>
-                          <Td className="space-y-1">
-                            <StatusBadge status={d.outcome} />
-                            <div className="text-[11px] text-slate-500">{humanize(d.differenceType)}</div>
-                          </Td>
-                        </tr>
+                            </Td>
+                          </tr>
+                          {openFinding === d.id && <FindingDetail d={d} />}
+                        </Fragment>
                       ))}
                     </tbody>
                   </Table>

@@ -295,6 +295,13 @@ export class EvidenceService {
         entry: file('validation-coverage.json', coverageJson(report)),
         describes: 'What was examined, what was not, and how the examined records were chosen.',
       });
+      if (report.entities.some((e) => e.rules)) {
+        entries.push({
+          entry: file('validation-rules.csv', validationRulesCsv(report)),
+          describes:
+            'The identity, columns and normalisations each comparison ran under. A package that says what was found and not what was compared cannot be read against later.',
+        });
+      }
       if (report.entities.some((e) => (e.aggregates ?? []).length > 0)) {
         entries.push({
           entry: file('aggregates.csv', aggregatesCsv(report)),
@@ -713,6 +720,52 @@ function metricsCsv(run: MigrationRunDto): string {
       run.failed,
       writtenByRun(run),
     ],
+  ];
+  return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+
+/**
+ * The rules each comparison ran under, one row per dataset.
+ *
+ * In the package because the package is what gets archived and read years later. A file that lists
+ * what was found, without saying what was compared, leaves a column nobody looked at and a column
+ * that agreed looking exactly alike.
+ */
+function validationRulesCsv(report: ValidationRunDto): string {
+  const rows = [
+    [
+      'Table',
+      'Identity',
+      'Identity fields',
+      'Fields compared',
+      'Fields not compared',
+      'Transformations applied',
+      'Empty and no value',
+      'Numeric tolerance',
+      'Date and time',
+      'References',
+      'Normalized before comparison',
+    ],
+    ...report.entities.map((e) =>
+      e.rules
+        ? [
+            e.logicalName,
+            e.rules.identity.basis,
+            e.rules.identity.fields.join(' '),
+            e.rules.comparedFields.map((f) => f.target).join(' '),
+            e.rules.excludedFields.map((f) => `${f.field} (${f.reason})`).join(' | '),
+            e.rules.comparedFields
+              .filter((f) => f.transformations.length > 0)
+              .map((f) => `${f.target}: ${f.transformations.join(', ')}`)
+              .join(' | '),
+            e.rules.emptyEqualsNull.equal ? 'Same value' : 'Two values',
+            e.rules.numericTolerance,
+            e.rules.dateTimeHandling,
+            e.rules.lookupMatching,
+            e.rules.normalization.join(' | '),
+          ]
+        : [e.logicalName, 'Not recorded', '', '', '', '', '', '', '', '', ''],
+    ),
   ];
   return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 }
