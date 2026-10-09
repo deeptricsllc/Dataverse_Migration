@@ -1,0 +1,299 @@
+Refreshing run status every 3 seconds. Press Ctrl+C to quit.
+
+* analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+* Format, lint, types, tests, build, journeys (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  * Run npx playwright install --with-deps chromium
+  * Run npm run test:e2e
+  * Keep the traces from a failed journey
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+Refreshing run status every 3 seconds. Press Ctrl+C to quit.
+
+* analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+* Format, lint, types, tests, build, journeys (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  * Run npx playwright install --with-deps chromium
+  * Run npm run test:e2e
+  * Keep the traces from a failed journey
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+Refreshing run status every 3 seconds. Press Ctrl+C to quit.
+
+* analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+* Format, lint, types, tests, build, journeys (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  * Run npx playwright install --with-deps chromium
+  * Run npm run test:e2e
+  * Keep the traces from a failed journey
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+Refreshing run status every 3 seconds. Press Ctrl+C to quit.
+
+* analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+* Format, lint, types, tests, build, journeys (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  * Run npx playwright install --with-deps chromium
+  * Run npm run test:e2e
+  * Keep the traces from a failed journey
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+Refreshing run status every 3 seconds. Press Ctrl+C to quit.
+
+* analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+* Format, lint, types, tests, build, journeys (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  * Run npx playwright install --with-deps chromium
+  * Run npm run test:e2e
+  * Keep the traces from a failed journey
+  * Post Run actions/setup-node@v4
+  * Post Run actions/checkout@v4
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+X analyse-journey Verify deeptricsllc/Dataverse_Migration#6 · 37898681068
+Triggered via pull_request about 6 minutes ago
+
+JOBS
+✓ Conformance against real database engines in 1m35s (ID 113715883522)
+  ✓ Set up job
+  ✓ Initialize containers
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Create the SQL Server test database
+  ✓ Conformance
+  ✓ Keep the evidence
+  ✓ Refuse evidence that no longer matches the engines
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Stop containers
+  ✓ Complete job
+X Format, lint, types, tests, build, journeys in 6m31s (ID 113715883891)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Run actions/setup-node@v4
+  ✓ Run npm ci
+  ✓ Run npm run format:check
+  ✓ Run npm run lint
+  ✓ Run npm run typecheck
+  ✓ Run npm test
+  ✓ Run npm run build
+  X Run npx playwright install --with-deps chromium
+  - Run npm run test:e2e
+  - Keep the traces from a failed journey
+  - Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Conformance against real database engines: .github#2
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Conformance against real database engines: .github#1
+
+X Canceling since a higher priority waiting request for Verify-refs/pull/6/merge exists
+Format, lint, types, tests, build, journeys: .github#1
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Format, lint, types, tests, build, journeys: .github#2
+
+X The operation was canceled.
+Format, lint, types, tests, build, journeys: .github#227
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1197
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1196
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1194
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1192
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1119
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#1118
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#195
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#189
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#188
+
+! Unexpected console statement. Only these console methods are allowed: warn, error
+Format, lint, types, tests, build, journeys: scripts/certify-dataverse-readonly.mjs#174
+
+- "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748"
+Format, lint, types, tests, build, journeys: .github#1
+

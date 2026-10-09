@@ -71,9 +71,17 @@ rather than observed, a protection rule on `main` would make it so.
 The repository has a single collaborator (`deeptricsllc`), so independent review needs either a second
 reviewer added or an explicit, recorded owner exception of the kind you granted once before for PR #5.
 
-CI has been re-run against each exact head as it moved. The last completed run before this report was
-green; the run for `1e4a8b62` was still in progress at the time of writing and must be green before any
-merge.
+CI has been re-run against each exact head as it moved. The final run is **green**: run `37899255612`
+on `e1509543`, both jobs — "Format, lint, types, tests, build, journeys" and "Conformance against real
+database engines", the latter being where evidence drift runs.
+
+`e1509543` differs from the certified commit `1e4a8b62` by one added documentation file (this one) and
+nothing else, so that run covers the deployed product tree exactly.
+
+One honest note on how that came about: the run for `1e4a8b62` itself was **cancelled**, not failed.
+Pushing the documentation commits superseded it under the workflow's branch concurrency. Nothing was
+skipped — the product tree was verified by the later run — but a cancelled run is not a passed one, and
+anyone reading the PR's check history will see the cancellation.
 
 ---
 
