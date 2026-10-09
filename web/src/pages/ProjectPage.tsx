@@ -117,7 +117,7 @@ function AnalysisProject({ project }: { project: ProjectDto }) {
     <div className="space-y-5">
       <Card
         title="Analyses"
-        subtitle="Each analysis is a point-in-time read of the source. Run as many as you need — nothing is overwritten."
+        subtitle="Each analysis is a point-in-time read of the source. Run as many as you need. Nothing is overwritten."
         data-testid="analyses"
         actions={
           <Button
@@ -335,7 +335,7 @@ function NewAnalysisModal({
             <span className="text-sm font-medium text-slate-700">
               Tables{' '}
               <span className="font-normal text-slate-500">
-                {selected.size === 0 ? '— all of them' : `— ${selected.size} selected`}
+                {selected.size === 0 ? 'all of them' : `${selected.size} selected`}
               </span>
             </span>
             <SearchInput value={search} onChange={setSearch} placeholder="Filter tables…" />
@@ -415,8 +415,8 @@ function ArchiveCard({ project }: { project: ProjectDto }) {
         }
       >
         <p className="text-sm text-slate-600">
-          The project leaves the default list. Everything inside it — analyses, plans, runs — stays readable,
-          because decisions were made on it.
+          The project leaves the default list. Everything inside it stays readable: analyses, plans and runs,
+          because decisions were made on them.
         </p>
         {archive.error && <ErrorState error={archive.error} />}
       </Modal>

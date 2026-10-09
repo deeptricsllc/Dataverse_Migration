@@ -138,7 +138,12 @@ export function ReadinessPanel({
               <p className="px-3 pb-2.5 text-xs text-slate-500">
                 {dimension.score === null
                   ? dimension.notAssessedReason
-                  : `${dimension.workings} — ${READINESS_DIMENSION_DESCRIPTIONS[dimension.dimension]}`}
+                  : /*
+                     * Two sentences, not a clause joined by a dash.
+                     * The workings end in a number more often than in a full stop ("100 - 1 critical
+                     * x 35 = 65"), so one is added when it is missing rather than always.
+                     */
+                    `${dimension.workings.replace(/\.?$/, '.')} ${READINESS_DIMENSION_DESCRIPTIONS[dimension.dimension]}`}
               </p>
               {isOpen && theirFindings.length > 0 && (
                 <div className="space-y-2 border-t border-slate-100 bg-slate-50/60 p-3">

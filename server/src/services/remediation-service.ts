@@ -165,7 +165,7 @@ export class RemediationService {
             ? `Only part of ${entity.displayName} was analysed, so the records listed here are a subset (${entity.recordsStored.toLocaleString()} rows).`
             : `The counts for ${entity.displayName} are complete, but this package lists ${entity.recordsStored.toLocaleString()} of its records: the per-action storage limit was reached.`,
           resolution:
-            'Fix what is listed, then re-run the preflight — the next pass reports what is still outstanding. For a complete per-record list, narrow the plan to fewer tables.',
+            'Fix what is listed, then re-run the preflight. The next pass reports what is still outstanding. For a complete per-record list, narrow the plan to fewer tables.',
           suggestedAction: 'Re-run the preflight after each pass of fixes',
         });
       }

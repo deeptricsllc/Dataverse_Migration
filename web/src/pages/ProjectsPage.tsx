@@ -303,7 +303,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
   const envOptions = [
     {
       value: '',
-      label: connected.length ? 'Choose a connection…' : 'No connections yet — add one first',
+      label: connected.length ? 'Choose a connection…' : 'No connections yet. Add one first',
     },
     ...connected.map((e) => ({ value: e.id, label: e.displayName })),
   ];
@@ -419,7 +419,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
           <Callout tone="warning" title="No connections yet">
             A project works on a system it can reach, so add one first: a Dataverse environment, a SQL Server,
             Azure SQL, PostgreSQL or MySQL database, or a CSV, Excel or XML file to upload. Use{' '}
-            <strong>Add a connection</strong> below — it opens here, and keeps what you have typed.
+            <strong>Add a connection</strong> below. It opens here and keeps what you have typed.
           </Callout>
         )}
 
@@ -481,8 +481,8 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
             <p className="flex items-start gap-2 text-xs text-slate-500">
               <Pill tone="teal">read-only</Pill>
               <span>
-                Both sides are only ever read. The two may be the same connection — comparing a staging table
-                against the live one inside one database is a comparison too.
+                Both sides are only ever read. They may be the same connection: comparing a staging table
+                against the live one inside a single database is a comparison too.
               </span>
             </p>
           </>
@@ -530,7 +530,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
                 options={[
                   {
                     value: '',
-                    label: analysisProjects.data?.length ? 'None' : 'None — no analysis projects yet',
+                    label: analysisProjects.data?.length ? 'None' : 'None. No analysis projects yet',
                   },
                   ...(analysisProjects.data ?? []).map((p) => ({ value: p.id, label: p.name })),
                 ]}

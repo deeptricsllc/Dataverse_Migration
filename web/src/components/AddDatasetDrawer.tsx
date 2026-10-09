@@ -468,7 +468,7 @@ function PreviewTable({
             <span className="font-mono">{table.keyColumn}</span> looks like a possible record identifier.
           </>
         ) : (
-          'No reliable record identifier was detected — rows will be counted rather than matched.'
+          'No reliable record identifier was detected. Rows will be counted rather than matched.'
         )}
       </div>
       <DetailWrapper selectable={selectable}>

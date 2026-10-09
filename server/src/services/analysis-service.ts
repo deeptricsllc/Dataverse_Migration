@@ -602,7 +602,7 @@ const clampSample = (value: number | undefined) =>
 
 const defaultAnalysisName = (tables: string[]) => {
   const when = new Date().toISOString().slice(0, 16).replace('T', ' ');
-  return tables.length === 0 ? `Full source analysis — ${when}` : `${tables.length} table(s) — ${when}`;
+  return tables.length === 0 ? `Full source analysis: ${when}` : `${tables.length} table(s): ${when}`;
 };
 
 /** Requested tables, or every migratable one when nothing was named. */

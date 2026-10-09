@@ -83,7 +83,7 @@ export function DemoWorkspaceBuilding({ onReady }: { onReady?: () => void }) {
         <div className="mt-1 flex items-center gap-3">
           <Spinner label="" />
           <span>
-            Demo data is being prepared. The two worked examples are migrated now — a clean one, and one with
+            Demo data is being prepared. The two worked examples are migrated now: a clean one, and one with
             real problems in the data. They are run, not loaded, which is why it takes a moment. This page
             updates itself.
           </span>

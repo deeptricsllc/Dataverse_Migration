@@ -223,8 +223,8 @@ export function DashboardPage() {
             >
               {d.recentAnalyses.length === 0 ? (
                 <p className="text-sm text-slate-500">
-                  No analyses yet. An analysis project reads a source and reports what is in it — read-only,
-                  with no target involved.
+                  No analyses yet. An analysis project reads a source and reports what is in it. It is
+                  read-only, with no target involved.
                 </p>
               ) : (
                 <Table>

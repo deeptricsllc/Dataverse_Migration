@@ -153,7 +153,7 @@ export function SettingsPage() {
 
       {/*
         The audit trail has its own destination now. It lived here, which is where a feature goes when
-        nobody has decided what it is — an audit trail is not a setting, it is the record somebody consults
+        nobody has decided what it is. An audit trail is not a setting, it is the record somebody consults
         when they are asked what happened. Left as a pointer rather than a second copy of the same view.
       */}
       <Card className="p-6">
@@ -185,7 +185,7 @@ export function SettingsPage() {
         <Callout tone="warning">
           This affects only the simulated DEMO environments stored by this application. Everyone evaluating
           the product shares this workspace, so every project in it is archived and the two worked examples
-          are migrated again from scratch — restoring the records is what makes that necessary, since the old
+          are migrated again from scratch. Restoring the records is what makes that necessary, since the old
           runs describe data that is no longer there. Archived projects stay readable behind “Show archived”
           on the projects page, and the rebuild takes a few seconds.
         </Callout>

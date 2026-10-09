@@ -217,7 +217,7 @@ export async function evidenceChain(db: AppDb, runId: string): Promise<EvidenceC
     links,
     means:
       'Each row follows one problem through the stages that saw it. A row marked MATCHED_ON_COLUMN was ' +
-      'joined because the stages name the same table and column — a strong inference, not a recorded ' +
+      'joined because the stages name the same table and column: a strong inference, not a recorded ' +
       'relationship. RECORDED means a prediction with nothing downstream, which is what a warning that ' +
       'did not come true looks like. UNMATCHED means a stage saw something no prediction accounts for, ' +
       'which is where the assessment has a gap.',

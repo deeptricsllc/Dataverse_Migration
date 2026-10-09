@@ -2257,11 +2257,11 @@ export const PROJECT_KIND_LABELS: Record<ProjectKind, string> = {
 
 export const PROJECT_KIND_DESCRIPTIONS: Record<ProjectKind, string> = {
   ANALYSIS:
-    'Connect to a source and understand it: tables, columns, volumes, data quality and relationships. Read-only — nothing is ever written.',
+    'Connect to a source and understand it: tables, columns, volumes, data quality and relationships. Read-only, so nothing is ever written.',
   MIGRATION:
     'Move data into a target. Can start from an analysis project, so the mapping begins from what the source actually contains.',
   COMPARISON:
-    'Compare two datasets record by record: what matches, what differs field by field, what exists on only one side. Read-only on both sides — it never writes anywhere.',
+    'Compare two datasets record by record: what matches, what differs field by field, what exists on only one side. Read-only on both sides, so it never writes anywhere.',
 };
 
 export type ProjectStatus = 'ACTIVE' | 'ARCHIVED';

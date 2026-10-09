@@ -211,8 +211,8 @@ export function UserMappingPage() {
               tone="warning"
               title={`${data.counts.ambiguous} identity/identities match more than one target`}
             >
-              The platform never picks a target when several match. Choose the correct one below — the
-              candidates are listed under each ambiguous row — or exclude the identity.
+              The platform never picks a target when several match. Choose the correct one below. The
+              candidates are listed under each ambiguous row. You can also exclude the identity.
             </Callout>
           )}
 

@@ -47,7 +47,7 @@ export function AccessRequestForm({ compact = false }: { compact?: boolean }) {
       >
         <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-300" aria-hidden />
         <div className="text-sm text-emerald-50">
-          <p className="font-semibold">Thank you — that has reached us.</p>
+          <p className="font-semibold">Thank you. That has reached us.</p>
           <p className="mt-1 text-emerald-100/80">
             We will reply to <span className="font-medium text-white">{sentTo}</span>. In the meantime the
             demo below is the whole product, running on simulated data.
@@ -107,7 +107,7 @@ export function AccessRequestForm({ compact = false }: { compact?: boolean }) {
           rows={3}
           maxLength={2000}
           className={field}
-          placeholder="e.g. a legacy SQL Server CRM into Dataverse — roughly 2 million rows across 40 tables."
+          placeholder="For example: a legacy SQL Server CRM into Dataverse, roughly 2 million rows across 40 tables."
         />
       </div>
       {/* Honeypot: hidden from people, irresistible to scripts. A filled one is dropped server-side. */}

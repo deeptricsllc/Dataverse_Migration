@@ -111,7 +111,7 @@ function CapabilityList({ capabilities }: { capabilities: ConnectorCapabilities 
           <li key={key}>
             <Pill
               tone={supported ? 'teal' : 'slate'}
-              title={`${help} — ${supported ? 'supported' : 'not supported'}`}
+              title={`${help}: ${supported ? 'supported' : 'not supported'}`}
             >
               {supported ? (
                 <Check className="mr-1 h-3 w-3" aria-hidden />
@@ -481,7 +481,7 @@ export function EnvironmentsPage() {
          */
         description={
           user.organization.isDemo
-            ? 'Systems this demo workspace can reach. Simulated — nothing real is contacted.'
+            ? 'Systems this demo workspace can reach. Simulated, so nothing real is contacted.'
             : 'Systems and storage locations available to your organization. Add one here, then use it in any project.'
         }
         actions={
@@ -652,7 +652,7 @@ export function EnvironmentsPage() {
             A database server has to be reachable from wherever this application runs. A hosted deployment
             normally cannot reach a server behind a corporate firewall; the agent that would connect outward
             from your network is designed in docs/ON_PREM_AGENT_ARCHITECTURE.md and does not exist yet. A file
-            source needs none of this — its data is uploaded rather than fetched.
+            source needs none of this, because its data is uploaded rather than fetched.
           </Callout>
         </div>
       )}

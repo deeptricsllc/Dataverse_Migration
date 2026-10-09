@@ -265,7 +265,7 @@ function TableDetail({ analysisId, logicalName }: { analysisId: string; logicalN
 
   return (
     <Card
-      title={`${d.displayName} — columns`}
+      title={`${d.displayName}: columns`}
       subtitle={
         <>
           <Mono>{d.logicalName}</Mono> · {fmtNumber(d.recordCount)} record(s), {fmtNumber(d.examined)}{' '}

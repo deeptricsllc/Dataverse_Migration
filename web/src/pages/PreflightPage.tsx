@@ -76,7 +76,7 @@ export function PreflightPage() {
   return (
     <>
       <PageHeader
-        title="Preflight — dry run"
+        title="Preflight: dry run"
         description={
           run ? (
             <>
@@ -223,7 +223,7 @@ export function PreflightPage() {
                       {e.recordsTruncated && (
                         <Pill
                           tone="amber"
-                          title={`The counts are complete. The record list below holds ${e.recordsStored.toLocaleString()} of them — enough to see the pattern, not every row.`}
+                          title={`The counts are complete. The record list below holds ${e.recordsStored.toLocaleString()} of them, enough to see the pattern but not every row.`}
                         >
                           list capped
                         </Pill>

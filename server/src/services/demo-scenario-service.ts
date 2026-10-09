@@ -32,8 +32,8 @@ import type { ValidationService } from './validation-service';
  */
 
 /** Marks the demo org as already set up. Also the project a buyer reads first. */
-export const DEMO_SUCCESS_PROJECT = 'Customer Migration — Successful';
-export const DEMO_PROBLEM_PROJECT = 'Customer Migration — Data Quality Issues';
+export const DEMO_SUCCESS_PROJECT = 'Customer Migration: Successful';
+export const DEMO_PROBLEM_PROJECT = 'Customer Migration: Data Quality Issues';
 
 const TERMINAL = ['COMPLETED', 'COMPLETED_WITH_WARNINGS', 'COMPLETED_WITH_ERRORS', 'FAILED', 'CANCELLED'];
 
@@ -345,7 +345,7 @@ export class DemoScenarioService {
       name: DEMO_PROBLEM_PROJECT,
       kind: 'MIGRATION',
       description:
-        'The legacy SQL Server into QA. The source contradicts what the target requires, so some records cannot be written — this is what the platform says about them.',
+        'The legacy SQL Server into QA. The source contradicts what the target requires, so some records cannot be written. This is what the platform says about them.',
       sourceEnvironmentId: sourceId,
       targetEnvironmentId: targetId,
     });

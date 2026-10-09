@@ -175,7 +175,7 @@ export function combineCoverage(parts: readonly ValidationCoverage[]): Validatio
  * matches" over a sample. `subject` is what was compared, e.g. "records" or "lookup references".
  */
 export function describeCoverage(c: ValidationCoverage, subject = 'records'): string {
-  if (c.mode === 'NOT_VERIFIED') return `Not verified — ${c.reason ?? 'this check could not run here.'}`;
+  if (c.mode === 'NOT_VERIFIED') return `Not verified: ${c.reason ?? 'this check could not run here.'}`;
   if (c.eligible === 0) return `No ${subject} to examine.`;
   if (c.mode === 'FULL') return `All ${c.eligible.toLocaleString()} ${subject} were examined.`;
   return `${c.examined.toLocaleString()} of ${c.eligible.toLocaleString()} ${subject} examined (${coveragePercent(c)}%).`;

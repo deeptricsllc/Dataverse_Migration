@@ -34,7 +34,7 @@ const CONNECTABLE: Connector[] = CONNECTORS.filter((c) => c.connectionType);
 
 /** The kinds that are a file or a list rather than a server, so the form asks for nothing. */
 const STAGED_HINT =
-  'This source holds data you import into it. Create it, then upload a file — there is no server to reach, so there is no host, port or password.';
+  'This source holds data you import into it. Create it, then upload a file. There is no server to reach, so there is no host, port or password.';
 
 const AUTH_LABELS: Record<SqlAuthType, string> = {
   SQL_LOGIN: 'SQL authentication (login and password)',
@@ -351,7 +351,7 @@ export function ConnectionModal({
           <>
             <Callout tone="info" title="Dataverse environments are discovered, not typed in">
               Discovery asks the Microsoft Global Discovery Service which environments your account can reach
-              and lists them here. An environment that does not appear is one your account has no access to —
+              and lists them here. An environment that does not appear is one your account has no access to,
               there is nothing to configure by hand.
             </Callout>
             <Button
@@ -400,7 +400,7 @@ export function ConnectionModal({
                 value={form.displayName}
                 onChange={(e) => update({ displayName: e.target.value })}
                 placeholder={
-                  isAzure ? 'Azure SQL — sales' : isPostgres ? 'Analytics Postgres' : 'Legacy SQL Server'
+                  isAzure ? 'Azure SQL (sales)' : isPostgres ? 'Analytics Postgres' : 'Legacy SQL Server'
                 }
                 maxLength={200}
                 className={INPUT}
@@ -465,7 +465,7 @@ export function ConnectionModal({
                 {(Object.keys(AUTH_LABELS) as SqlAuthType[]).map((a) => (
                   <option key={a} value={a} disabled={!SQL_AUTH_IMPLEMENTED.has(a)}>
                     {AUTH_LABELS[a]}
-                    {SQL_AUTH_IMPLEMENTED.has(a) ? '' : ' — not implemented yet'}
+                    {SQL_AUTH_IMPLEMENTED.has(a) ? '' : ' (not implemented yet)'}
                   </option>
                 ))}
               </select>

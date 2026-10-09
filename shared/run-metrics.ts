@@ -204,7 +204,7 @@ export const METRIC_DEFINITIONS: Record<MetricKey, { label: string; definition: 
   written: {
     label: 'Written by this run',
     definition:
-      'Created plus updated — the records this run actually put into the target. Records that were already there do not count.',
+      'Created plus updated: the records this run actually put into the target. Records that were already there do not count.',
   },
   expectedInTarget: {
     label: 'Expected in the target',

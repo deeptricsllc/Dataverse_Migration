@@ -98,7 +98,7 @@ export function PrivacyPage() {
     >
       <Section heading="The short version">
         <p>
-          We hold the details you give us so we can reply to you, and — if you connect a system — the
+          We hold the details you give us so we can reply to you and, if you connect a system, the
           configuration and the results of the work you ask the platform to do. Your data is never sent to an
           AI model, never sold, never used for advertising, and never shared with anyone except the systems
           you yourself connect.
@@ -140,10 +140,10 @@ export function PrivacyPage() {
             'The connection settings, and the credential encrypted with AES-GCM in a separate table. A credential is decrypted only to open a connection, is never returned by the API, and is never written to a log.',
             'The table metadata it reads: schemas, columns, keys and relationships.',
             'Analysis profiles: per-column statistics, counts and ranges.',
-            'Field values in three specific places — the preflight drill-down, validation differences and comparison differences. Each is capped per table, and columns marked as secured are masked before they are written.',
+            'Field values in three specific places: the preflight drill-down, validation differences and comparison differences. Each is capped per table, and columns marked as secured are masked before they are written.',
             'A map of source record identifier to target record identifier, which is what stops a re-run duplicating records.',
             'An audit trail of consequential actions.',
-            'Files you upload, and SharePoint lists you import, in full — there is nowhere else to read them back from.',
+            'Files you upload, and SharePoint lists you import, in full. There is nowhere else to read them back from.',
           ]}
         />
         <p>
@@ -161,8 +161,8 @@ export function PrivacyPage() {
         <p>
           There is no analytics service, no error-reporting service, no advertising technology and no
           third-party tracker. Where the operator of a deployment has configured an alerting webhook, a short
-          summary of consequential events — including that someone requested access — is posted to the
-          endpoint they chose.
+          summary of consequential events, including that someone requested access, is posted to the endpoint
+          they chose.
         </p>
       </Section>
 
@@ -263,7 +263,7 @@ export function TermsPage() {
         <p>
           This is a pre-release service. We may change it, take it offline for maintenance, or discontinue a
           deployment. We will give reasonable notice before removing a deployment you are relying on, and
-          these terms may be updated — the date above shows when they last were.
+          these terms may be updated. The date above shows when they last were.
         </p>
       </Section>
 

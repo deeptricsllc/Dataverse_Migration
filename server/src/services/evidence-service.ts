@@ -338,7 +338,7 @@ export class EvidenceService {
         ),
         describes: predicted
           ? 'The assessment this run was executed against, recorded before the work started: blockers, warnings, and any blocker accepted explicitly, with who accepted it and why.'
-          : 'An assessment of the plan made when this package was built. This run predates the platform recording its assessment, so this is NOT what was predicted before the migration — the plan may have changed and the target is now populated.',
+          : 'An assessment of the plan made when this package was built. This run predates the platform recording its assessment, so this is NOT what was predicted before the migration. The plan may have changed, and the target is now populated.',
       });
     }
 
@@ -554,7 +554,7 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null, 
       `>`,
       `> **This run is not complete.** Open it in the platform, reconcile the records it names, and`,
       `> re-generate this package. \`lineage/\` lists every one of them with the evidence available for`,
-      `> each — see the \`Write state\` and \`Recovery evidence\` columns.`,
+      `> each: see the \`Write state\` and \`Recovery evidence\` columns.`,
       ``,
     );
   }
@@ -678,7 +678,7 @@ function summaryMarkdown(run: MigrationRunDto, report: ValidationRunDto | null, 
     ``,
     `Compare the result against the \`sha256\` field for that path in \`manifest.json\`. The platform's`,
     `own check at **Evidence → Verify a package** does the same comparison for every file at once and`,
-    `tells you which, if any, disagree — but it is a convenience, not the authority. The arithmetic is`,
+    `tells you which, if any, disagree. It is a convenience, not the authority. The arithmetic is`,
     `the authority, and you can do it.`,
     ``,
   );

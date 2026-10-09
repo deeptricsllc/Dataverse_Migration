@@ -180,7 +180,7 @@ export class MappingWorkbookService {
           `Mapped columns: ${mappings.filter((m) => m.targetField).length} of ${mappings.length}`,
           analysis
             ? `Source facts from analysis: ${analysis.name}`
-            : 'No analysis linked — the source statistics columns are blank.',
+            : 'No analysis linked, so the source statistics columns are blank.',
         ],
       }),
       planTablesSheet(plan, analysis),
@@ -437,9 +437,9 @@ function overviewSheet(input: {
     [
       'Statistics',
       input.basis === 'EXACT'
-        ? 'Exact — every record was examined'
+        ? 'Exact: every record was examined'
         : input.basis === 'SAMPLED'
-          ? 'Sampled — the counts are a floor, not a total'
+          ? 'Sampled: the counts are a floor, not a total'
           : 'Not measured',
     ],
     ...input.lines.map((l) => ['', l] as XlsxValue[]),
@@ -551,7 +551,7 @@ function fieldSheet(rows: XlsxValue[][], hasTargets: boolean): XlsxSheet {
         ? 'Target table and Target field are read back on import. Everything else on this sheet is reference.'
         : 'Fill in Target table and Target field. Import this sheet into a migration project to apply them.',
       `Target field: a column name, blank to leave undecided, or ${IGNORE_TOKEN} to exclude the column deliberately.`,
-      'Transformation (reference) is a summary only — edit pipelines on the "Transformations" sheet.',
+      'Transformation (reference) is a summary only. Edit pipelines on the "Transformations" sheet.',
     ],
   };
 }
