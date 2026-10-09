@@ -144,7 +144,7 @@ function PreflightVignette() {
             Preflight: dry run
           </div>
           <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[11px] font-bold tracking-wide text-emerald-300">
-            NOTHING WRITTEN
+            PREVIEW ONLY
           </span>
         </div>
         {/* Five columns of five-digit numbers have a minimum width, and a grid item will not go
@@ -362,7 +362,7 @@ export function LandingPage() {
             */}
             <ul className="mt-6 grid max-w-xl gap-2 text-sm text-slate-300 sm:grid-cols-3">
               {[
-                ['Analyze data', 'Profile a source down to the column.'],
+                ['Analyse data', 'Profile a source down to the column.'],
                 ['Migrate with control', 'Preview every record before anything is written.'],
                 ['Validate results', 'Check the target against the source afterwards.'],
               ].map(([title, detail]) => (

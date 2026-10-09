@@ -85,7 +85,7 @@ export function LossyAcknowledgement({
                   )}
                   {l.examined !== null && (
                     <div>
-                      Total records analyzed: <span className="tabular-nums">{fmtNumber(l.examined)}</span>
+                      Total records analysed: <span className="tabular-nums">{fmtNumber(l.examined)}</span>
                     </div>
                   )}
                 </dl>

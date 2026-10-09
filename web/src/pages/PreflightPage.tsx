@@ -121,7 +121,7 @@ export function PreflightPage() {
       {run && ['QUEUED', 'RUNNING'].includes(run.status) && (
         <Card>
           <div className="flex items-center gap-3 text-sm text-slate-600">
-            <StatusBadge status={run.status} /> {run.progressMessage ?? 'Analyzing…'}
+            <StatusBadge status={run.status} /> {run.progressMessage ?? 'Analysing…'}
           </div>
         </Card>
       )}
@@ -131,7 +131,7 @@ export function PreflightPage() {
       {done && run && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Stat label="Source records" value={fmtNumber(run.totals.sourceRecords)} hint="analyzed" />
+            <Stat label="Source records" value={fmtNumber(run.totals.sourceRecords)} hint="analysed" />
             <Stat
               label="Create"
               tone="green"
@@ -216,7 +216,7 @@ export function PreflightPage() {
                       <span className="font-medium text-slate-900">{e.displayName}</span>{' '}
                       <Mono className="text-xs text-slate-500">{e.logicalName}</Mono>
                       {e.sampled && (
-                        <Pill tone="amber" title="Only part of this table was analyzed">
+                        <Pill tone="amber" title="Only part of this table was analysed">
                           sampled
                         </Pill>
                       )}

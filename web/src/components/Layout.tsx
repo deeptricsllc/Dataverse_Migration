@@ -258,7 +258,7 @@ export function Layout() {
           sound generated, on every screen in the product.
         */}
         <div className="px-5 py-4 text-[11px] leading-relaxed text-slate-500">
-          Analyze, migrate and validate your data.
+          Analyse, migrate and validate your data.
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
