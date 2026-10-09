@@ -22,3 +22,4 @@ qa-walk.log
 .capture-walk/
 .capture-cert/
 walk-cert.log
+.capture-main/
