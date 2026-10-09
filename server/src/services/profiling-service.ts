@@ -520,10 +520,14 @@ class FieldAccumulator {
      * Counted over every record, not over the distinct sample the semantic reader works from, so the
      * finding can say how many records a person has to fix rather than how many spellings of wrong
      * there were.
+     *
+     * Deliberately not `invalidValueCount`. That one means "could not be converted to the storage
+     * type", and `not-an-email` is a perfectly good String — counting it there raised a second
+     * finding saying the value could not be converted to String, which is false, and deducted for
+     * the same records twice.
      */
     if (this.isEmail && trimmed !== '' && !EMAIL_SHAPE.test(trimmed)) {
       this.invalidEmailCount++;
-      this.invalidValueCount++;
     }
 
     if (this.isDate) {
