@@ -23,6 +23,7 @@ import {
   ErrorState,
   Field,
   Modal,
+  ExportButton,
   PageHeader,
   Select,
   Spinner,
@@ -101,6 +102,22 @@ export function AnalysisWorkspacePage() {
         }
         actions={
           <>
+            {/*
+              The report, where the reader ends up.
+
+              Three analysis exports existed behind URLs and none of them was reachable from this
+              screen: somebody who had just been told their data is 81 out of 100 with one critical
+              problem had no way to take that to the meeting where it matters. Offered once there is
+              something to export, because a download of nothing is not a courtesy.
+            */}
+            {data.findings.length > 0 && (
+              <ExportButton
+                href={`/api/projects/${projectId}/findings.csv`}
+                label="Export findings"
+                size="md"
+                title="Every finding across every dataset in this project, with what it was measured from and what to do about it."
+              />
+            )}
             <Button
               variant="secondary"
               icon={<Plus className="h-4 w-4" />}

@@ -17,3 +17,6 @@ capture.log
 qa-review.log
 .capture-qa/
 provenance.log
+local-walk.log
+qa-walk.log
+.capture-walk/

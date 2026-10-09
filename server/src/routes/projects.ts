@@ -408,6 +408,56 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     );
   });
 
+  /**
+   * The findings of a whole analysis project, as one file.
+   *
+   * The per-run exports below cover one dataset each, which is how a run works — and it is not how
+   * the result is read. A project's Findings tab shows every dataset together, ranked, and that is
+   * the thing somebody takes to the meeting where the migration is decided. Until this existed the
+   * screen a user ends on had no export at all, while three CSVs sat behind URLs nobody could reach
+   * from it.
+   *
+   * The same rows the screen shows, in the same order, with the reasoning the screen keeps behind a
+   * disclosure: a reader who disagrees with a finding can see what it was derived from.
+   */
+  app.get('/api/projects/:id/findings.csv', EXPENSIVE, async (req, reply) => {
+    const { id } = idParams.parse(req.params);
+    const assessment = await s.assessments.forProject(req.ctx, id);
+    const project = await s.projects.get(req.ctx, id);
+    return sendCsv(
+      reply,
+      csvFileName(['analysis-findings', project.name]),
+      [
+        'Severity',
+        'Category',
+        'Dataset',
+        'Table',
+        'Columns',
+        'Finding',
+        'What was measured',
+        'Records affected',
+        'Share of records',
+        'Why it matters',
+        'What to do',
+        'Evidence',
+      ],
+      assessment.findings.map((f) => [
+        f.severity,
+        f.category,
+        f.dataset,
+        f.table,
+        f.columns.join(' '),
+        f.title,
+        f.summary,
+        f.affected,
+        f.affectedPercent === null ? '' : `${f.affectedPercent}%`,
+        f.whyItMatters,
+        f.recommendation,
+        f.evidence.join(' | '),
+      ]),
+    );
+  });
+
   app.get('/api/analyses/:id/findings.csv', async (req, reply) => {
     const { id } = idParams.parse(req.params);
     const q = z
