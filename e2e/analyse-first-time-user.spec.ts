@@ -125,6 +125,27 @@ test('a first-time user can analyse a messy export and understand the result', a
   await shot(page, 'landing');
   await page.getByTestId('try-demo-primary').first().click();
   await expect(page.getByRole('heading', { name: /Welcome, Demo/ })).toBeVisible();
+
+  /*
+   * Which build this walkthrough is certifying, read from the build rather than asserted in a report.
+   *
+   * Set EXPECTED_SHA when running against a deployment. Screenshots prove nothing about a candidate
+   * if nobody checked that the deployment serving them was built from it, and "I deployed it first"
+   * is not a check. Compared as a prefix because /api/settings shortens the commit to twelve
+   * characters; a different commit cannot share that prefix.
+   */
+  if (process.env.EXPECTED_SHA) {
+    const res = await page.request.get('/api/settings');
+    expect(res.ok(), `GET /api/settings -> ${res.status()}`).toBe(true);
+    const settings = await res.json();
+    expect(settings.build?.commit, 'the deployment reports a commit at all').toBeTruthy();
+    expect(
+      String(process.env.EXPECTED_SHA).startsWith(String(settings.build.commit)),
+      `deployment reports ${settings.build?.commit}, candidate is ${process.env.EXPECTED_SHA}`,
+    ).toBe(true);
+    console.warn(`[provenance] ${settings.build.branch}@${settings.build.commit}`);
+  }
+
   await shot(page, 'home-first-visit');
 
   // --- 2. create an analysis project --------------------------------------
