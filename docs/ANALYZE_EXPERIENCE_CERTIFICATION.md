@@ -16,6 +16,7 @@ brief requires, and the connectors a partner would ask about are simulated.
 | Deployment                           | `https://dataverse-migration-app-qa.up.railway.app` (Railway QA)                     |
 | Commit                               | `analyse-journey@1e4a8b628f90` (`1e4a8b628f9062c22953c8fd56bffecee29a9f98`)          |
 | Railway deployment                   | `6e3e61e3-…` superseded by the upload of this commit; previous deployments `REMOVED` |
+| Commits after it                     | documentation only (this file); no product change is untested or undeployed          |
 | Evidence run                         | `e2e/analyse-first-time-user.spec.ts`, 1 passed, 34.7s                               |
 | Console errors                       | 0                                                                                    |
 | Failed network requests (HTTP ≥ 400) | 0                                                                                    |
