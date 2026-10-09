@@ -187,6 +187,38 @@ describe('a simulated target edited outside a migration', () => {
     expect(serialised).not.toContain('Renamed in the target');
   }, 120_000);
 
+  it('copies a record under a new identifier, and the comparison counts it as neither', async () => {
+    const offices = (await mapsFor('dtx_office')).filter((m) => m.targetId);
+    /*
+     * Two copies, because an earlier case in this file removed a record from the same table. One
+     * copy would only put the target back level with the source, and the check this is about
+     * reports a target that holds *more* rows than the source.
+     */
+    for (const [i, id] of [
+      '00000000-0000-4000-8000-00000000c0p1',
+      '00000000-0000-4000-8000-00000000c0p2',
+    ].entries()) {
+      await api.post('/api/demo/target-edit', {
+        environmentId: uat.id,
+        table: 'dtx_office',
+        recordId: offices[3 + i]!.targetId,
+        duplicateAs: id,
+      });
+    }
+
+    const report = await validate();
+    const dataset = report.entities.find((e) => e.logicalName === 'dtx_office')!;
+    /*
+     * A row no migration wrote. The comparison scope is the records this run claims, so it is
+     * neither matched nor missing nor different — it is one more row in the target, and the row
+     * count is where that is reported.
+     */
+    expect(dataset.matched + dataset.different + dataset.missing).toBe(dataset.checkedRecords);
+    const rowCount = dataset.checks.find((c) => c.check === 'ROW_COUNT')!;
+    expect(rowCount.message).toMatch(/more row/);
+    expect(rowCount.outcome, 'a shared target holding extra rows is not this run failing').toBe('WARNING');
+  }, 600_000);
+
   // --- the fence ------------------------------------------------------------
 
   it('refuses an environment with no simulated data behind it', async () => {

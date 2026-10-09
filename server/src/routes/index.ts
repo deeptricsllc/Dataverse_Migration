@@ -1816,6 +1816,14 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         set: z.record(z.string(), z.unknown()).optional(),
         /** True removes the record, which is what a target record deleted after a run looks like. */
         remove: z.boolean().default(false),
+        /**
+         * Copies the record under a new identifier instead of changing it.
+         *
+         * A target row no migration wrote, which is what another integration or an earlier import
+         * leaves behind. It cannot be produced by configuring a migration either, and it is the
+         * condition the row-count check exists to report.
+         */
+        duplicateAs: z.string().min(1).max(200).optional(),
       })
       .parse(req.body);
     const env = (await s.environments.list(req.ctx)).find((e) => e.id === body.environmentId);
@@ -1835,7 +1843,23 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const [existing] = await s.db.select().from(demoRecords).where(scope);
     if (!existing) throw notFound('Record in the simulated environment');
 
-    if (body.remove) {
+    if (body.duplicateAs) {
+      /*
+       * The copy carries the new identifier wherever the old one appeared in its own data, which is
+       * how the simulated store holds a primary key: as a column whose value is the record id. A
+       * copy that kept the original's key would be a duplicate key rather than an extra record.
+       */
+      const data = Object.fromEntries(
+        Object.entries(existing.data).map(([k, v]) => [k, v === body.recordId ? body.duplicateAs : v]),
+      );
+      await s.db.insert(demoRecords).values({
+        organizationId: req.ctx.organizationId,
+        environmentKey,
+        logicalName: body.table,
+        recordId: body.duplicateAs,
+        data,
+      });
+    } else if (body.remove) {
       await s.db.delete(demoRecords).where(scope);
     } else {
       await s.db
@@ -1855,8 +1879,9 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
         table: body.table,
         recordId: body.recordId,
         // The column names, not the values: a value here is data somebody put in a column.
-        columns: body.remove ? null : Object.keys(body.set ?? {}),
+        columns: body.remove || body.duplicateAs ? null : Object.keys(body.set ?? {}),
         removed: body.remove,
+        duplicatedAs: body.duplicateAs ?? null,
       },
     });
     return {
@@ -1864,9 +1889,12 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       table: body.table,
       recordId: body.recordId,
       removed: body.remove,
-      means: body.remove
-        ? 'The record is no longer in the target. A validation of the run that wrote it will report it missing.'
-        : 'The target now holds a different value from the one the run wrote. A validation will report the difference.',
+      duplicatedAs: body.duplicateAs ?? null,
+      means: body.duplicateAs
+        ? 'The target holds one more record than the source. No migration wrote it, so a validation reports it as a row-count difference rather than as a finding against the run.'
+        : body.remove
+          ? 'The record is no longer in the target. A validation of the run that wrote it will report it missing.'
+          : 'The target now holds a different value from the one the run wrote. A validation will report the difference.',
     };
   });
 

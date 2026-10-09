@@ -136,6 +136,10 @@ type Report = {
     logicalName: string;
     displayName: string;
     outcome: string;
+    matched: number;
+    different: number;
+    missing: number;
+    checkedRecords: number;
     duplicates: { occurrences: number }[] | null;
     checks: { check: string; outcome: string; message: string }[];
   }[];
@@ -532,27 +536,58 @@ test('the validation experience, state by state', async ({ page }) => {
 
   // --------------------------------------------- 14. Unexpected records in the target
   /*
-   * There is no "unexpected record" finding for a migration validation, on purpose. The comparison
-   * scope is the records this run claims, and a shared target holds rows from other sources, from
-   * earlier runs and from people working in the system — so an unaccounted row is reported as a
-   * row-count difference rather than as this migration's failure. This captures that reporting.
+   * A target row no migration wrote.
+   *
+   * There is no "unexpected record" finding for a migration validation, on purpose: the comparison
+   * scope is the records the run claims, and a shared target holds rows from other sources, from
+   * earlier runs and from people working in the system. Reporting every unaccounted row as this
+   * migration's problem would make a correct migration into a shared table read as a failure. It is
+   * reported as a row-count difference instead, and this captures that reporting.
+   *
+   * Caused, not waited for. It used to look through whatever validations the workspace happened to
+   * hold and take the first with more target rows than source rows, which depended on what else had
+   * run.
    */
-  const withExtraRows = [...existing, { id: incomplete.report.id, outcome: null }];
-  let rowCountState = false;
-  for (const v of withExtraRows) {
-    const report = await settled(page, v.id);
-    const dataset = report.entities.find((e) =>
-      e.checks.some((c) => c.check === 'ROW_COUNT' && /more row/.test(c.message)),
-    );
-    if (!dataset) continue;
-    await page.goto(`/validation/${report.id}`);
-    await page.getByTestId(`validation-entity-${dataset.logicalName}`).click();
-    await expect(page.getByText(/more row\(s\) than source/).first()).toBeVisible();
-    await shot(page, 'unexpected-records');
-    rowCountState = true;
-    break;
+  /*
+   * Two copies, not one. The failed state removed a record from this same table, so one copy would
+   * only put the target back level with the source — and the check this state is about reports a
+   * target holding *more* rows than the source.
+   */
+  const extraRecords = ['00000000-0000-4000-8000-00000000bee1', '00000000-0000-4000-8000-00000000bee2'];
+  const regionsForCount: { items: { targetId: string | null; entity: string }[] } = await api.get(
+    page,
+    `/api/runs/${failRun.runId}/records?limit=10`,
+  );
+  // Not the one the failed state removed from the target: it is still in the run's identity map,
+  // and copying a record that is no longer there is a 404 rather than an extra row.
+  const stillThere = regionsForCount.items.filter((m) => m.targetId && m.targetId !== removed!.targetId);
+  expect(stillThere.length, 'records still in the target to copy').toBeGreaterThan(1);
+  for (const [i, id] of extraRecords.entries()) {
+    await api.post(page, '/api/demo/target-edit', {
+      environmentId: uat.id,
+      table: 'dtx_applicationconfig',
+      recordId: stillThere[i]!.targetId,
+      duplicateAs: id,
+    });
   }
-  expect(rowCountState, 'a target holding rows this run did not write').toBe(true);
+  const withExtra = await api.post(page, '/api/validations', { migrationRunId: failRun.runId });
+  const extraReport = await settled(page, withExtra.id);
+  const countDataset = extraReport.entities.find((e) =>
+    e.checks.some((c) => c.check === 'ROW_COUNT' && /more row/.test(c.message)),
+  );
+  expect(
+    countDataset,
+    `row counts: ${JSON.stringify(extraReport.entities.map((e) => e.checks.filter((c) => c.check === 'ROW_COUNT')))}`,
+  ).toBeTruthy();
+  await page.goto(`/validation/${extraReport.id}`);
+  await page.getByTestId(`validation-entity-${countDataset!.logicalName}`).click();
+  await expect(page.getByText(/more row\(s\) than source/).first()).toBeVisible();
+  // And it is not counted as a record this comparison examined.
+  expect(countDataset!.matched + countDataset!.different + countDataset!.missing).toBe(
+    countDataset!.checkedRecords,
+  );
+  await page.getByTestId(`validation-entity-${countDataset!.logicalName}`).scrollIntoViewIfNeeded();
+  await shot(page, 'unexpected-records');
 
   // --------------- 15, 16, 17, 18. Mismatches, and an identity that is not single-valued
   /*
