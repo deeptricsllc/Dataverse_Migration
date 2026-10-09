@@ -16,3 +16,4 @@ validation-performance.txt
 capture.log
 qa-review.log
 .capture-qa/
+provenance.log

@@ -184,7 +184,7 @@ export function RunDetailPage() {
         What happened, before anything else. The page used to open on a progress bar, which answers "is
         it still going" — a question nobody asks about a run that finished an hour ago.
       */}
-      <RunOutcome run={r} onReviewFailures={() => setTab('errors')} />
+      <RunOutcome run={r} onReviewFailures={() => setTab('errors')} onValidate={() => validate.mutate()} />
       {/*
         Below the outcome, because the question it answers comes after "what happened". One control, whose
         wording and whose existence both come from the server's own assessment.
