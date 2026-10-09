@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { FieldProfileDto, TableProfileDto } from '../../shared/domain';
+import type {
+  ConversionProfileDto,
+  DuplicationProfileDto,
+  FieldProfileDto,
+  TableProfileDto,
+} from '../../shared/domain';
 import type { AttributeMeta } from '../../shared/metadata';
 import { findingsForTable, type Finding } from '../../shared/findings';
 import { assessReadiness, executiveSummary } from '../../shared/analysis-readiness';
@@ -85,6 +90,274 @@ const run = (
 
 const byRule = (findings: Finding[], fragment: string) => findings.filter((f) => f.id.includes(fragment));
 const titles = (findings: Finding[]) => findings.map((f) => f.title);
+
+const duplication = (over: Partial<DuplicationProfileDto> = {}): DuplicationProfileDto => ({
+  examined: 60,
+  distinctValues: 48,
+  nullOrBlank: 0,
+  duplicateGroups: 12,
+  rowsInCollision: 24,
+  largestGroup: 2,
+  examples: [{ value: 'CUST-1004', count: 2, recordIds: ['r4', 'r52'] }],
+  truncated: false,
+  ...over,
+});
+
+const conversion = (over: Partial<ConversionProfileDto> = {}): ConversionProfileDto => ({
+  examined: 60,
+  populated: 60,
+  numbers: 48,
+  currency: 12,
+  booleans: 0,
+  dates: 0,
+  text: 0,
+  currencyMarkers: ['$'],
+  decimalSeparators: ['dot'],
+  booleanSpellings: [],
+  maxDecimals: 2,
+  overTwoDecimals: 0,
+  samples: [
+    { shape: 'CURRENCY', values: ['$1,200.50'] },
+    { shape: 'NUMBER', values: ['1007'] },
+  ],
+  ...over,
+});
+
+describe('conversion and type intelligence', () => {
+  it('reports money kept as text, in records, with the conversion it proposes', () => {
+    const findings = run([field({ field: 'credit_limit', examined: 60, conversion: conversion() })], [], {
+      examined: 60,
+      totalRecords: 60,
+      columns: 1,
+    });
+    const [money] = byRule(findings, 'MONEY_AS_TEXT');
+    expect(money, 'raised even though the column is mostly plain numbers').toBeTruthy();
+    expect(money.affected).toBe(12);
+    expect(money.affectedPercent).toBe(20);
+    expect(money.evidence.join(' | ')).toContain('"$1,200.50"');
+    expect(money.recommendation, 'a proposal, naming the scale').toContain('decimal');
+    expect(money.migrationImpact).toBeTruthy();
+  });
+
+  it('treats two notations in one column as the ambiguity it is', () => {
+    const findings = run(
+      [
+        field({
+          field: 'amount',
+          examined: 60,
+          conversion: conversion({ decimalSeparators: ['comma', 'dot'] }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    const [money] = byRule(findings, 'MONEY_AS_TEXT');
+    expect(money.severity, 'the amounts are already wrong, not merely awkward').toBe('CRITICAL');
+    expect(money.evidence.join(' ')).toContain('both a dot and a comma'.replace('both', 'Both'));
+    expect(money.whyItMatters, 'the factor-of-a-thousand problem').toContain('1.234,56');
+  });
+
+  it('reports a column holding two kinds of thing', () => {
+    const findings = run(
+      [
+        field({
+          field: 'reference',
+          examined: 60,
+          conversion: conversion({ numbers: 50, currency: 0, text: 10, populated: 60, samples: [] }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    const [mixed] = byRule(findings, 'MIXED_VALUE_TYPES');
+    expect(mixed.affected, 'the minority is the work').toBe(10);
+  });
+
+  it('says nothing about a column where a couple of values are odd', () => {
+    // Below the floor this is a data-entry slip the owning rule already reports.
+    const findings = run(
+      [
+        field({
+          field: 'reference',
+          examined: 1000,
+          conversion: conversion({ examined: 1000, numbers: 999, currency: 0, text: 1, populated: 1000 }),
+        }),
+      ],
+      [],
+      { examined: 1000, totalRecords: 1000, columns: 1 },
+    );
+    expect(byRule(findings, 'MIXED_VALUE_TYPES')).toHaveLength(0);
+  });
+
+  it('reports three spellings of yes but not two', () => {
+    const three = run(
+      [
+        field({
+          field: 'active',
+          examined: 60,
+          conversion: conversion({
+            numbers: 0,
+            currency: 0,
+            booleans: 60,
+            booleanSpellings: ['n', 'no', 'yes'],
+            currencyMarkers: [],
+          }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    expect(byRule(three, 'INCONSISTENT_BOOLEAN')).toHaveLength(1);
+
+    const two = run(
+      [
+        field({
+          field: 'active',
+          examined: 60,
+          conversion: conversion({
+            numbers: 0,
+            currency: 0,
+            booleans: 60,
+            booleanSpellings: ['no', 'yes'],
+            currencyMarkers: [],
+          }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    expect(byRule(two, 'INCONSISTENT_BOOLEAN'), 'yes/no is a convention, not a defect').toHaveLength(0);
+  });
+
+  it('warns about precision only where the extra places exist', () => {
+    const findings = run(
+      [
+        field({
+          field: 'rate',
+          examined: 60,
+          conversion: conversion({ maxDecimals: 6, overTwoDecimals: 14 }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    const [precision] = byRule(findings, 'NUMERIC_PRECISION');
+    expect(precision.severity, 'a decision, not a defect').toBe('INFO');
+    expect(precision.affected).toBe(14);
+    expect(precision.recommendation).toContain('6 decimal places');
+
+    const clean = run(
+      [
+        field({
+          field: 'rate',
+          examined: 60,
+          conversion: conversion({ maxDecimals: 2, overTwoDecimals: 0 }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    expect(byRule(clean, 'NUMERIC_PRECISION')).toHaveLength(0);
+  });
+});
+
+describe('duplicate business keys', () => {
+  it('quantifies the collision and names records, rather than reporting that duplicates exist', () => {
+    const findings = run(
+      [
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    const [dup] = byRule(findings, 'DUPLICATE_BUSINESS_KEY');
+    expect(dup, 'the finding is raised').toBeTruthy();
+    expect(dup.severity, 'nothing else can identify these records').toBe('CRITICAL');
+    expect(dup.affected, 'records in a collision, not groups and not excess rows').toBe(24);
+    expect(dup.affectedPercent).toBe(40);
+
+    const evidence = dup.evidence.join(' | ');
+    expect(evidence).toContain('60 records examined');
+    expect(evidence).toContain('48 distinct values');
+    expect(evidence).toContain('12 values held by more than one record');
+    expect(evidence).toContain('24 records involved in a collision');
+    expect(evidence).toContain('0 records with no value at all');
+    expect(evidence, 'a record a person can go and open').toContain('records r4, r52');
+  });
+
+  it('does not call expected repetition a defect', () => {
+    /*
+     * A status column with four values across sixty records is the column working. Reporting it
+     * would teach a reader to skim the section where the real collisions live.
+     */
+    const findings = run(
+      [
+        field({
+          field: 'status',
+          examined: 60,
+          distinctCount: 4,
+          duplicateCount: 56,
+          duplication: duplication({ distinctValues: 4, duplicateGroups: 4, rowsInCollision: 60 }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    expect(byRule(findings, 'DUPLICATE_BUSINESS_KEY')).toHaveLength(0);
+  });
+
+  it('is a warning, not a blocker, when some other column can still identify the record', () => {
+    const findings = run(
+      [
+        field({ field: 'account_id', examined: 60, distinctCount: 60 }),
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 2 },
+    );
+    expect(byRule(findings, 'NO_RELIABLE_KEY'), 'account_id is a key').toHaveLength(0);
+    const [dup] = byRule(findings, 'DUPLICATE_BUSINESS_KEY');
+    expect(dup.severity).toBe('WARNING');
+  });
+
+  it('deducts once for one defect, however many findings describe it', () => {
+    const findings = run(
+      [
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    // Both findings are present, because they answer different questions.
+    expect(byRule(findings, 'NO_RELIABLE_KEY')).toHaveLength(1);
+    expect(byRule(findings, 'DUPLICATE_BUSINESS_KEY')).toHaveLength(1);
+
+    const readiness = assessReadiness(findings, { profiled: true, relationships: false });
+    const identity = readiness.dimensions.find((d) => d.dimension === 'IDENTITY')!;
+    // One critical deduction, not two: 100 − 35, not 100 − 70.
+    expect(identity.score).toBe(65);
+    expect(identity.workings).toContain('1 critical');
+    expect(identity.workings).toContain('not deducted again');
+  });
+});
 
 describe('findings that have to be arithmetically true, not merely plausible', () => {
   /*

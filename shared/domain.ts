@@ -731,6 +731,93 @@ export interface ValueFrequencyDto {
   count: number;
 }
 
+/**
+ * One record that holds a value shared with another record.
+ *
+ * The record id is the connector's own identifier, which for an imported file is the row the importer
+ * assigned. It is what a person types into a filter to go and look at the offending row, which is the
+ * only reason to carry it.
+ */
+export interface CollisionExampleDto {
+  /** The shared value, masked when the column is secured. */
+  value: string | null;
+  /** How many records hold it. */
+  count: number;
+  /** Up to a few of those records, so the reader can go and look. */
+  recordIds: string[];
+}
+
+/**
+ * How well a column could identify a record, measured rather than guessed.
+ *
+ * Reported for every column, because which column was *meant* to be the key is a judgement and the
+ * measurements should not depend on having made it. The judgement lives in the findings; this is the
+ * arithmetic they quote, and every number here is independently checkable against the source.
+ *
+ * `duplicateGroups` and `rowsInCollision` are deliberately both present and are not the same thing: a
+ * column where twelve values each appear twice has twelve groups and twenty-four rows in collision,
+ * and `FieldProfileDto.duplicateCount` -- rows beyond one per value -- is twelve. Three different
+ * true answers to three different questions, and quoting the wrong one understates the work.
+ */
+export interface DuplicationProfileDto {
+  /** Records examined. */
+  examined: number;
+  /** Distinct values, excluding null and blank. */
+  distinctValues: number;
+  /** Records with no usable value, so no identity at all. */
+  nullOrBlank: number;
+  /** Distinct values held by more than one record. */
+  duplicateGroups: number;
+  /** Records holding a value that another record also holds. */
+  rowsInCollision: number;
+  /** The largest number of records sharing any one value. */
+  largestGroup: number;
+  /** A few of the colliding values, worst first. */
+  examples: CollisionExampleDto[];
+  /**
+   * True when the distinct-value cap was reached, which makes every count here a lower bound.
+   *
+   * Reported rather than hidden: a column with more distinct values than the profiler will hold is
+   * exactly the column where a silent undercount would be most expensive.
+   */
+  truncated: boolean;
+}
+
+/**
+ * What the values in a column actually look like, counted per record.
+ *
+ * Distinct from the semantic reading on the same column, and deliberately so. The reader decides
+ * what a column *means* from a distinct sample, which is right for "this holds email addresses" and
+ * wrong for "how many records will fail to convert" — a sample counts spellings and a migration
+ * converts records. It is also why a column holding `$1,200.50` in twelve rows and plain numbers in
+ * the other forty-eight reads as neither money nor number: four fifths of the sample has to agree
+ * before the reader will call it anything, and this column never will.
+ *
+ * Nothing here is converted. These are observations, and the findings that quote them propose.
+ */
+export interface ConversionProfileDto {
+  examined: number;
+  /** Records with any value at all. */
+  populated: number;
+  /** Records by the shape of their value. These sum to `populated`. */
+  numbers: number;
+  currency: number;
+  booleans: number;
+  dates: number;
+  text: number;
+  /** Distinct currency marks seen, e.g. ["$","EUR"]. More than one means the column mixes currencies. */
+  currencyMarkers: string[];
+  /** Distinct decimal conventions seen, "dot" and/or "comma". More than one is an ambiguity. */
+  decimalSeparators: string[];
+  /** Distinct boolean spellings seen, e.g. ["yes","n","true"]. Capped. */
+  booleanSpellings: string[];
+  /** The most decimal places on any value, and how many records carry more than two. */
+  maxDecimals: number | null;
+  overTwoDecimals: number;
+  /** A few real values per shape, so a finding can show rather than assert. Empty when secured. */
+  samples: { shape: string; values: string[] }[];
+}
+
 export interface FieldProfileDto {
   field: string;
   displayName: string;
@@ -770,6 +857,25 @@ export interface FieldProfileDto {
   invalidEmailCount: number;
   /** Values that could not be converted at all (non-numeric in a numeric column, …). */
   invalidValueCount: number;
+  /**
+   * Collision arithmetic for this column. Optional for profiles written before it existed.
+   */
+  duplication?: DuplicationProfileDto | null;
+  /**
+   * Per-record value shapes, for conversion and type findings. Optional for older profiles, and
+   * absent for columns where the question does not arise (a lookup has no spelling).
+   */
+  conversion?: ConversionProfileDto | null;
+  /**
+   * Distinct values with their record counts, for comparing this column against columns in other
+   * tables. Present only where a relationship could plausibly run through the column.
+   *
+   * Carried with counts rather than as a bare set because the question a reader asks about a broken
+   * reference is "how many records", and a set of values can only answer "how many values". Absent
+   * for secured columns: masking collapses every value to one string, which would make any two
+   * secured columns look perfectly related.
+   */
+  valueSample?: { values: ValueFrequencyDto[]; truncated: boolean } | null;
   /** The distinct values and their counts, for choice mapping. Capped. */
   topValues: ValueFrequencyDto[];
   topValuesTruncated: boolean;

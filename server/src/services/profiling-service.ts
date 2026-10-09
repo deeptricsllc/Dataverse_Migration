@@ -20,6 +20,8 @@ import type { Logger } from 'pino';
 import type {
   DataQualityIssueDto,
   DataQualityRuleDto,
+  ConversionProfileDto,
+  DuplicationProfileDto,
   FieldProfileDto,
   StatisticBasis,
   TableProfileDto,
@@ -34,7 +36,15 @@ import {
   type FieldValue,
   type TableMetadata,
 } from '../../../shared/metadata';
+import { KEY_LIKE_NAME } from '../../../shared/findings';
 import { EMAIL_SHAPE } from '../../../shared/semantic-types';
+import {
+  currencyMarker,
+  decimalPlaces,
+  decimalSeparator,
+  shapeOf,
+  type ValueShape,
+} from '../../../shared/value-shapes';
 import type { MigrationConnector } from '../connectors/types';
 import type { ConnectionFactory } from '../dataverse/factory';
 import type { AppDb } from '../db/client';
@@ -64,6 +74,21 @@ export const FULL_PROFILE_LIMIT = 200_000;
 export const DISTINCT_VALUE_CAP = 50_000;
 /** Most frequent values returned per column (for choice mapping). */
 export const TOP_VALUES_LIMIT = 50;
+/** How many colliding values carry example records, and how many records each one names. */
+export const COLLISION_EXAMPLE_VALUES = 200;
+/** How many colliding values are reported in a finding. */
+export const COLLISION_EXAMPLES = 5;
+/** Example values kept per value shape, and distinct notations tracked per column. */
+export const SHAPE_SAMPLES = 3;
+export const NOTATION_CAP = 20;
+/**
+ * Distinct values kept per column for cross-table comparison.
+ *
+ * Only for columns a relationship could run through, and bounded, because this is the one part of a
+ * profile that grows with the data rather than with the schema.
+ */
+export const RELATIONSHIP_SAMPLE_CAP = 1_000;
+export const COLLISION_EXAMPLE_RECORDS = 5;
 /** Offending values kept per issue, so a person can recognise the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
 /** Columns profiled in one pass, so a pathologically wide table cannot stall a request. */
@@ -433,6 +458,22 @@ class FieldAccumulator {
   private invalidValueCount = 0;
   private invalidDateCount = 0;
   private invalidEmailCount = 0;
+  /**
+   * value -> the first few records holding it, for values held by more than one record.
+   *
+   * Bounded twice over: at most COLLISION_EXAMPLE_VALUES values are tracked, and at most
+   * COLLISION_EXAMPLE_RECORDS records per value. A column where every value repeats would otherwise
+   * carry a copy of the whole table into the stored profile.
+   */
+  private collisionRecords = new Map<string, string[]>();
+  /** Per-record value shapes, for the conversion findings. Only where the question arises. */
+  private readonly shapeCounts = new Map<ValueShape, number>();
+  private readonly shapeSamples = new Map<ValueShape, string[]>();
+  private readonly currencyMarkers = new Set<string>();
+  private readonly decimalSeparators = new Set<string>();
+  private readonly booleanSpellings = new Set<string>();
+  private maxDecimals: number | null = null;
+  private overTwoDecimals = 0;
   private minLength: number | null = null;
   private maxLength: number | null = null;
   private lengthSum = 0;
@@ -454,6 +495,8 @@ class FieldAccumulator {
   private readonly isNumeric: boolean;
   private readonly isDate: boolean;
   private readonly isEmail: boolean;
+  private readonly shapesApply: boolean;
+  private readonly sampleForRelationships: boolean;
   private readonly isLookup: boolean;
 
   constructor(
@@ -466,6 +509,24 @@ class FieldAccumulator {
     this.isNumeric = NUMERIC_TYPES.has(attr.type);
     this.isDate = attr.type === 'DateTime';
     this.isEmail = attr.semantic?.type === 'EMAIL';
+    // A lookup holds a reference, not a spelling, so none of the conversion questions apply to it.
+    /*
+     * Boolean columns included deliberately. Inference reads a column of Yes/no/TRUE/y as Boolean
+     * because it can interpret all four, which is exactly the column worth reporting: the target
+     * accepts one convention, and a loader written for one spelling treats the others as false
+     * rather than as an error. The inference succeeding is not the same as the data being clean.
+     */
+    this.shapesApply = (this.isText || this.isNumeric || attr.type === 'Boolean') && !this.isLookup;
+    /*
+     * Whether this column is worth comparing against other tables.
+     *
+     * A reference is nearly always spelled like one -- customer_number, accountid, order_ref -- or
+     * is a lookup, which declares it. Sampling every column instead would multiply the size of a
+     * stored profile by the size of the data for the sake of comparing surnames against postcodes.
+     */
+    this.sampleForRelationships =
+      !attr.isSecured &&
+      (this.isLookup || KEY_LIKE_NAME.test(attr.logicalName) || attr.semantic?.type === 'IDENTIFIER');
     for (const rule of rules) {
       if (rule.kind === 'REGEX_PATTERN') this.patterns.set(ruleKey(rule), compilePattern(rule.pattern));
     }
@@ -493,6 +554,22 @@ class FieldAccumulator {
     if (seen !== undefined) this.freq.set(text, seen + 1);
     else if (this.freq.size >= DISTINCT_VALUE_CAP) this.distinctOverflow = true;
     else this.freq.set(text, 1);
+
+    /*
+     * Which records collide, not merely how many.
+     *
+     * "Twelve records share a customer number" is a statistic; "records 4 and 52 both say CUST-1004"
+     * is something a person can act on before lunch. Only non-blank values are tracked, because a
+     * column of blanks is a completeness problem and not a collision.
+     */
+    if (trimmed !== '') {
+      const holders = this.collisionRecords.get(text);
+      if (holders !== undefined) {
+        if (holders.length < COLLISION_EXAMPLE_RECORDS) holders.push(recordId);
+      } else if (this.collisionRecords.size < COLLISION_EXAMPLE_VALUES) {
+        this.collisionRecords.set(text, [recordId]);
+      }
+    }
 
     if (this.isText) {
       const len = text.length;
@@ -528,6 +605,38 @@ class FieldAccumulator {
      */
     if (this.isEmail && trimmed !== '' && !EMAIL_SHAPE.test(trimmed)) {
       this.invalidEmailCount++;
+    }
+
+    /*
+     * The shape of this one value, tallied per record.
+     *
+     * Counted here rather than derived from the frequency map so the answer is in records. A single
+     * misspelled amount repeated across ten thousand rows is one distinct value and ten thousand
+     * records to fix, and only the second number tells anyone how long the work takes.
+     */
+    if (this.shapesApply && trimmed !== '') {
+      const shape = shapeOf(trimmed);
+      this.shapeCounts.set(shape, (this.shapeCounts.get(shape) ?? 0) + 1);
+      const held = this.shapeSamples.get(shape);
+      if (held === undefined) this.shapeSamples.set(shape, [trimmed]);
+      else if (held.length < SHAPE_SAMPLES) held.push(trimmed);
+
+      if (shape === 'CURRENCY') {
+        const marker = currencyMarker(trimmed);
+        if (marker && this.currencyMarkers.size < NOTATION_CAP) this.currencyMarkers.add(marker);
+      }
+      if (shape === 'CURRENCY' || shape === 'NUMBER') {
+        const sep = decimalSeparator(trimmed);
+        if (sep && this.decimalSeparators.size < NOTATION_CAP) this.decimalSeparators.add(sep);
+      }
+      if (shape === 'BOOLEAN' && this.booleanSpellings.size < NOTATION_CAP) {
+        this.booleanSpellings.add(trimmed.toLowerCase());
+      }
+      const places = decimalPlaces(trimmed);
+      if (places !== null) {
+        if (this.maxDecimals === null || places > this.maxDecimals) this.maxDecimals = places;
+        if (places > 2) this.overTwoDecimals++;
+      }
     }
 
     if (this.isDate) {
@@ -640,6 +749,88 @@ class FieldAccumulator {
     return this.violations;
   }
 
+  /**
+   * The collision arithmetic, derived from the frequency map rather than counted separately.
+   *
+   * Blank is not a value. A blank is an absent identity, which is a different problem with a
+   * different remedy, and folding the blanks into a "duplicates" count would turn one missing
+   * customer number into evidence that customer numbers repeat.
+   */
+  private duplication(): DuplicationProfileDto {
+    let distinctValues = 0;
+    let duplicateGroups = 0;
+    let rowsInCollision = 0;
+    let largestGroup = 0;
+    const colliding: { value: string; count: number }[] = [];
+    for (const [value, count] of this.freq) {
+      if (value.trim() === '') continue;
+      distinctValues++;
+      if (count > 1) {
+        duplicateGroups++;
+        rowsInCollision += count;
+        colliding.push({ value, count });
+      }
+      if (count > largestGroup) largestGroup = count;
+    }
+    const examples = colliding
+      .sort((a, b) => b.count - a.count || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+      .slice(0, COLLISION_EXAMPLES)
+      .map(({ value, count }) => ({
+        value: this.mask(value),
+        count,
+        // Masked columns name no records: the values are indistinguishable once masked, so pointing
+        // at rows would invite a reader to compare things they cannot see.
+        recordIds: this.attr.isSecured ? [] : (this.collisionRecords.get(value) ?? []),
+      }));
+    return {
+      examined: this.examined,
+      distinctValues,
+      nullOrBlank: this.nullCount + this.blankCount,
+      duplicateGroups,
+      rowsInCollision,
+      largestGroup,
+      examples,
+      truncated: this.distinctOverflow,
+    };
+  }
+
+  /** The per-record shape tallies, assembled for the findings that quote them. */
+  private conversion(): ConversionProfileDto {
+    const count = (shape: ValueShape) => this.shapeCounts.get(shape) ?? 0;
+    const numbers = count('NUMBER');
+    const currency = count('CURRENCY');
+    // A normalised Boolean column reads as text or number here; its records are still booleans.
+    const booleans = this.attr.type === 'Boolean' ? this.nonNull : count('BOOLEAN');
+    const dates = count('DATE');
+    const text = count('TEXT');
+    return {
+      examined: this.examined,
+      populated: numbers + currency + booleans + dates + text,
+      numbers,
+      currency,
+      booleans,
+      dates,
+      text,
+      currencyMarkers: [...this.currencyMarkers].sort(),
+      decimalSeparators: [...this.decimalSeparators].sort(),
+      /*
+       * For a column inference read as Boolean the values reaching here are already normalised, so
+       * the spellings come from where they still existed. For a text column they are counted from
+       * the values like everything else.
+       */
+      booleanSpellings:
+        this.attr.type === 'Boolean' && this.attr.sourceSpellings?.length
+          ? [...this.attr.sourceSpellings].sort()
+          : [...this.booleanSpellings].sort(),
+      maxDecimals: this.maxDecimals,
+      overTwoDecimals: this.overTwoDecimals,
+      // A secured column shows nothing. The counts are still true and still useful.
+      samples: this.attr.isSecured
+        ? []
+        : [...this.shapeSamples.entries()].map(([shape, values]) => ({ shape, values })),
+    };
+  }
+
   toDto(basis: StatisticBasis): FieldProfileDto {
     const distinctCount = this.distinctOverflow ? null : this.freq.size;
     const topValues: ValueFrequencyDto[] = [...this.freq.entries()]
@@ -671,6 +862,20 @@ class FieldAccumulator {
       invalidDateCount: this.invalidDateCount,
       invalidEmailCount: this.invalidEmailCount,
       invalidValueCount: this.invalidValueCount,
+      duplication: this.duplication(),
+      conversion: this.shapesApply ? this.conversion() : null,
+      valueSample: this.sampleForRelationships
+        ? {
+            values: [...this.freq.entries()]
+              .filter(([value]) => value.trim() !== '')
+              .slice(0, RELATIONSHIP_SAMPLE_CAP)
+              .map(([value, count]) => ({ value, count })),
+            // Truncated either because the column overflowed the distinct cap, or because it has
+            // more distinct values than we keep for comparison. Either way the set is incomplete,
+            // and a missing value would otherwise read as a broken reference.
+            truncated: this.distinctOverflow || this.freq.size > RELATIONSHIP_SAMPLE_CAP,
+          }
+        : null,
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,
       issues: [],
