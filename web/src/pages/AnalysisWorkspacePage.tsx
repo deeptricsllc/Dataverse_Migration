@@ -818,8 +818,16 @@ function DatasetState({ dataset }: { dataset: AssessedDatasetDto }) {
  */
 function RunHistory({ runs }: { runs: AnalysisRunSummaryDto[] }) {
   if (runs.length === 0) return null;
+  /*
+   * "One connection", not "one dataset".
+   *
+   * The list above this card calls each sheet a dataset and counts three of them for one workbook.
+   * A run is per connection, so this card showed a single row named FinanceExport.xlsx under a
+   * caption promising one dataset per run — the same word meaning a sheet six inches higher and a
+   * whole file here. The row names a connection, so the caption says connection.
+   */
   return (
-    <Card title="Analysis history" subtitle="Each run covers one dataset. Newest first.">
+    <Card title="Analysis history" subtitle="Each run covers one connection. Newest first.">
       <ol className="space-y-1.5 text-sm">
         {runs.slice(0, 12).map((run) => (
           <li key={run.id} className="flex flex-wrap items-baseline justify-between gap-3">
