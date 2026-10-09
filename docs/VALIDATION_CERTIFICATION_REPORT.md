@@ -15,13 +15,13 @@ three things a migration engineer needs before they sign a cutover off, and all 
 | --------------------- | --------------------------------------------------------------------------------------- |
 | Branch                | `validation-experience`                                                                 |
 | Starting `main`       | `bbe2243e9cd6c5c7a9c665f5a24451e1dab3ef4c`                                              |
-| Reviewed and deployed | `46f57f9e62726d62ff4235a370bef0f59d54d097`                                              |
-| Branch head           | `46f57f9` plus this report, which cannot contain its own commit                         |
+| Reviewed and deployed | `e3d38ac5152f48849cba416ab1867ed737dd0660`                                              |
+| Branch head           | `e3d38ac` plus this report. `git diff e3d38ac..HEAD` touches `docs/` only               |
 | PR                    | [#5](https://github.com/deeptricsllc/Dataverse_Migration/pull/5) — **open, not merged** |
 
 ## 3. Release gate and CI
 
-Local gate on `46f57f9`: **7 passed, 0 failed, 0 did not run, 1 skipped.**
+Local gate on `e3d38ac`: **7 passed, 0 failed, 0 did not run, 1 skipped.**
 
 | Check                                | Result                                                                                                                                                                                    |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,7 +35,7 @@ Local gate on `46f57f9`: **7 passed, 0 failed, 0 did not run, 1 skipped.**
 | evidence drift                       | **skipped** — it compares a committed snapshot against a fresh engine run, which CI does after the engine suites. Not run locally on purpose; it is not a check this change could affect. |
 
 GitHub CI (`verify.yml`, both jobs including the real PostgreSQL / MySQL / SQL Server engines) is
-green on the preceding candidates and running on `46f57f9` at the time of writing.
+green on the preceding candidates and running on `e3d38ac` at the time of writing.
 
 ## 4. QA deployment and provenance
 
@@ -43,7 +43,7 @@ Deployed from `validation-experience` with `scripts/deploy.mjs`, which derives `
 `BUILD_COMMIT` from the repository it is about to upload and refuses a dirty tree, a detached HEAD or
 a commit absent from the remote.
 
-`/api/settings` reports `validation-experience@46f57f9e6272`; `/api/health` reports ok. The 24-state
+`/api/settings` reports `validation-experience@e3d38ac5152f`; `/api/health` reports ok. The 24-state
 review asserts the deployed commit itself before it captures anything, so a review of the wrong image
 fails rather than passing quietly. Migration 0033 applied on start; the deployed reports render the
 comparison rules, which only exist in that column.
@@ -170,6 +170,15 @@ appear on two pages or on none; and the export's category filter was missing `VA
 ## 11. Remaining blockers
 
 None.
+
+### A note on the review harness
+
+Each of the 24 states now **causes** the condition it reviews rather than waiting for a worked
+example to provide one. That was not true when this started, and three separate failures came from
+it: a state that depended on what had run before it will certify the wrong thing the first time
+somebody adds another. Two states still share a table — the failed state removes a record from
+`dtx_applicationconfig` and the unexpected-record state copies one — and both carry a comment saying
+so. A reviewer adding a state to that table should read them first.
 
 ## 12. Recommended next gate
 
