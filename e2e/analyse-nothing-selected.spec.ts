@@ -1,4 +1,24 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+
+/** Writes the screen at both review widths when CAPTURE_DIR is set. Evidence, not decoration. */
+const CAPTURE_DIR = process.env.CAPTURE_DIR;
+let shotNumber = 0;
+async function shot(page: Page, name: string) {
+  shotNumber += 1;
+  if (!CAPTURE_DIR) return;
+  for (const w of [
+    { label: '1440x900', width: 1440, height: 900 },
+    { label: '1920x1080', width: 1920, height: 1080 },
+  ]) {
+    await page.setViewportSize({ width: w.width, height: w.height });
+    await page.waitForTimeout(250);
+    const dir = `${CAPTURE_DIR}/${w.label}`;
+    mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: `${dir}/${String(shotNumber).padStart(2, '0')}-${name}.png` });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
 
 /**
  * The reported failure, driven through the browser, and the way out of it.
@@ -69,6 +89,7 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
    * from a list of connections — which includes ones holding nothing — is what produced the trap.
    */
   await expect(page.getByTestId('create-project')).toBeEnabled();
+  await shot(page, 'new-analysis-project-no-connection-required');
   await page.getByTestId('create-project').click();
   await page.waitForURL(/\/projects\/[0-9a-f-]{36}/);
 
@@ -89,6 +110,7 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
   const preview = page.getByTestId('dataset-preview');
   await preview.waitFor({ timeout: 60_000 });
   await expect(preview).toContainText('8 rows');
+  await shot(page, 'choose-the-data-before-analysing');
   await page.getByTestId('confirm-add-dataset').click();
   await expect(page.getByTestId('dataset-row')).toHaveCount(1);
 
@@ -96,9 +118,26 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
   const analyse = page.getByTestId('analyse');
   await expect(analyse).toBeEnabled();
   await expect(analyse).toContainText(/Analyse/);
+  await shot(page, 'analyse-offered-once-data-is-chosen');
   await analyse.click();
 
   // --- and the result is about the file that was chosen ---------------------
-  await expect(page.getByTestId('dataset-row')).toContainText('8', { timeout: 180_000 });
+  /*
+   * Waited for, not glanced at. The first version of this asserted "8" while the run was still
+   * queued — and "8 records" was already on the row from the import, so it would have passed over
+   * an analysis that never finished. The state badge is the thing that changes.
+   */
+  await expect(page.getByTestId('dataset-row')).toContainText('Analysed', { timeout: 300_000 });
+  await shot(page, 'analysis-result-for-the-chosen-file');
+
+  /*
+   * And the findings are about this file. Eight rows of three clean columns with a unique
+   * identifier is not a dataset with problems, so the honest result is a readable summary rather
+   * than invented findings — what must be true is that the numbers are the file's own.
+   */
+  await page.getByRole('tab', { name: /Overview/ }).click();
+  const overview = page.getByRole('main');
+  await expect(overview).toContainText('8');
+  await shot(page, 'overview-of-the-analysed-file');
   expect(consoleErrors, consoleErrors.join('\n')).toEqual([]);
 });
