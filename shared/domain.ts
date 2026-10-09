@@ -731,6 +731,58 @@ export interface ValueFrequencyDto {
   count: number;
 }
 
+/**
+ * One record that holds a value shared with another record.
+ *
+ * The record id is the connector's own identifier, which for an imported file is the row the importer
+ * assigned. It is what a person types into a filter to go and look at the offending row, which is the
+ * only reason to carry it.
+ */
+export interface CollisionExampleDto {
+  /** The shared value, masked when the column is secured. */
+  value: string | null;
+  /** How many records hold it. */
+  count: number;
+  /** Up to a few of those records, so the reader can go and look. */
+  recordIds: string[];
+}
+
+/**
+ * How well a column could identify a record, measured rather than guessed.
+ *
+ * Reported for every column, because which column was *meant* to be the key is a judgement and the
+ * measurements should not depend on having made it. The judgement lives in the findings; this is the
+ * arithmetic they quote, and every number here is independently checkable against the source.
+ *
+ * `duplicateGroups` and `rowsInCollision` are deliberately both present and are not the same thing: a
+ * column where twelve values each appear twice has twelve groups and twenty-four rows in collision,
+ * and `FieldProfileDto.duplicateCount` -- rows beyond one per value -- is twelve. Three different
+ * true answers to three different questions, and quoting the wrong one understates the work.
+ */
+export interface DuplicationProfileDto {
+  /** Records examined. */
+  examined: number;
+  /** Distinct values, excluding null and blank. */
+  distinctValues: number;
+  /** Records with no usable value, so no identity at all. */
+  nullOrBlank: number;
+  /** Distinct values held by more than one record. */
+  duplicateGroups: number;
+  /** Records holding a value that another record also holds. */
+  rowsInCollision: number;
+  /** The largest number of records sharing any one value. */
+  largestGroup: number;
+  /** A few of the colliding values, worst first. */
+  examples: CollisionExampleDto[];
+  /**
+   * True when the distinct-value cap was reached, which makes every count here a lower bound.
+   *
+   * Reported rather than hidden: a column with more distinct values than the profiler will hold is
+   * exactly the column where a silent undercount would be most expensive.
+   */
+  truncated: boolean;
+}
+
 export interface FieldProfileDto {
   field: string;
   displayName: string;
@@ -770,6 +822,10 @@ export interface FieldProfileDto {
   invalidEmailCount: number;
   /** Values that could not be converted at all (non-numeric in a numeric column, …). */
   invalidValueCount: number;
+  /**
+   * Collision arithmetic for this column. Optional for profiles written before it existed.
+   */
+  duplication?: DuplicationProfileDto | null;
   /** The distinct values and their counts, for choice mapping. Capped. */
   topValues: ValueFrequencyDto[];
   topValuesTruncated: boolean;

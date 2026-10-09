@@ -97,6 +97,17 @@ export interface Finding {
    * ready** — which is backwards, and was visible the first time the demo dataset ran.
    */
   deducts?: false;
+  /**
+   * An identifier for the underlying defect, where several findings describe one.
+   *
+   * A business key that collides produces two true statements: the table has no reliable identifier,
+   * and this column repeats across these records. Both are worth saying — one is the conclusion and
+   * the other is the detail a person acts on — but there is one defect, and readiness must deduct for
+   * it once. Findings sharing a root cause deduct once within their dimension, most severe winning.
+   *
+   * Absent means the finding stands alone, which is the common case.
+   */
+  rootCause?: string;
 }
 
 /** A finding counts against readiness unless it explicitly opts out. */
@@ -191,6 +202,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       id: id('NO_RELIABLE_KEY'),
       category: 'IDENTITY',
       severity: 'CRITICAL',
+      rootCause: `IDENTITY:${profile.table}`,
       title: 'No reliable record identifier',
       summary: `No column in ${profile.displayName} that could identify a record is both unique and filled in for every record, so there is nothing that reliably identifies a row.`,
       dataset,
@@ -236,6 +248,14 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       evidence: [
         `${candidate.distinctCount?.toLocaleString() ?? '?'} distinct values across ${candidate.examined.toLocaleString()} examined records.`,
         'No empty values.',
+        // The same arithmetic the collision rule quotes, so a clean key is clean for a stated reason
+        // rather than by the absence of a finding.
+        ...(candidate.duplication
+          ? [
+              `${candidate.duplication.duplicateGroups} values are held by more than one record.`,
+              `${candidate.duplication.nullOrBlank} records have no value.`,
+            ]
+          : []),
         caveat,
       ],
       whyItMatters:
@@ -272,6 +292,71 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       migrationImpact:
         'These records would be blocked at preflight, or duplicated if the match key is changed to something weaker.',
       confidence,
+      basis: profile.basis,
+    });
+  }
+
+  /*
+   * --- Business keys that do not identify ----------------------------------
+   *
+   * Only for columns that could be an identifier. A status column with four values repeating across
+   * ten thousand records is the column working correctly, and a product that calls that a duplicate
+   * problem trains its reader to skim the duplicate section. Expected repetition is not reported;
+   * a column that was meant to be unique and is not, is.
+   */
+  for (const field of profile.fields) {
+    const d = field.duplication;
+    if (!d || !couldIdentify(field) || d.duplicateGroups === 0) continue;
+
+    /*
+     * Critical when this collision is *why* the table has no identity, a warning when some other
+     * column is a usable key. In the second case the migration can still match records; this column
+     * is a data-quality problem rather than a blocker.
+     */
+    const blocksIdentity = keyCandidates.length === 0;
+    const exact = field.basis === 'EXACT' && !d.truncated;
+    const examples = d.examples.map((e) => {
+      const where = e.recordIds.length > 0 ? ` (records ${e.recordIds.join(', ')})` : '';
+      return `${e.value ?? '—'} is held by ${plural(e.count, 'record')}${where}.`;
+    });
+    found.push({
+      id: id('DUPLICATE_BUSINESS_KEY', field.field),
+      category: 'IDENTITY',
+      severity: blocksIdentity ? 'CRITICAL' : 'WARNING',
+      rootCause: blocksIdentity ? `IDENTITY:${profile.table}` : undefined,
+      title: `${field.field} does not uniquely identify a record`,
+      summary:
+        `${field.field} looks like a business key, and ${plural(d.duplicateGroups, 'value')} ` +
+        `${d.duplicateGroups === 1 ? 'is' : 'are'} held by more than one record: ` +
+        `${plural(d.rowsInCollision, 'record')} of ${d.examined.toLocaleString()} collide.`,
+      dataset,
+      table: profile.displayName,
+      columns: [field.field],
+      affected: d.rowsInCollision,
+      affectedPercent: pct(d.rowsInCollision, d.examined),
+      evidence: [
+        `${d.examined.toLocaleString()} records examined.`,
+        `${d.distinctValues.toLocaleString()} distinct values, excluding blanks.`,
+        `${plural(d.duplicateGroups, 'value')} held by more than one record.`,
+        `${plural(d.rowsInCollision, 'record')} involved in a collision.`,
+        `${plural(d.nullOrBlank, 'record')} with no value at all.`,
+        `The largest group is ${plural(d.largestGroup, 'record')} sharing one value.`,
+        ...examples,
+        ...(d.truncated
+          ? ['More distinct values than the profiler holds, so these counts are lower bounds.']
+          : []),
+        caveat,
+      ],
+      whyItMatters: blocksIdentity
+        ? 'This is the column a migration would match on, and it does not tell two records apart. Matching on it merges records that are not the same; not matching on it means every run creates new records instead of updating.'
+        : 'Another column can identify these records, so the migration can still run — but a key that was meant to be unique and is not usually means the export ran twice, or two systems were merged without reconciling.',
+      recommendation:
+        `Decide what the repeats are before migrating: if they are the same record exported twice, merge them at source; ` +
+        `if they are genuinely different records, ${field.field} is not the key and something must be added to it to tell them apart.`,
+      migrationImpact: blocksIdentity
+        ? 'Each colliding group collapses into one target record or creates duplicates, depending on the strategy. Both are silent.'
+        : 'These records migrate, but any later reconciliation that joins on this column will join the wrong rows together.',
+      confidence: exact ? 'HIGH' : 'MEDIUM',
       basis: profile.basis,
     });
   }

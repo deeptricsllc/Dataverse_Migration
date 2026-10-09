@@ -20,6 +20,7 @@ import type { Logger } from 'pino';
 import type {
   DataQualityIssueDto,
   DataQualityRuleDto,
+  DuplicationProfileDto,
   FieldProfileDto,
   StatisticBasis,
   TableProfileDto,
@@ -64,6 +65,11 @@ export const FULL_PROFILE_LIMIT = 200_000;
 export const DISTINCT_VALUE_CAP = 50_000;
 /** Most frequent values returned per column (for choice mapping). */
 export const TOP_VALUES_LIMIT = 50;
+/** How many colliding values carry example records, and how many records each one names. */
+export const COLLISION_EXAMPLE_VALUES = 200;
+/** How many colliding values are reported in a finding. */
+export const COLLISION_EXAMPLES = 5;
+export const COLLISION_EXAMPLE_RECORDS = 5;
 /** Offending values kept per issue, so a person can recognise the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
 /** Columns profiled in one pass, so a pathologically wide table cannot stall a request. */
@@ -433,6 +439,14 @@ class FieldAccumulator {
   private invalidValueCount = 0;
   private invalidDateCount = 0;
   private invalidEmailCount = 0;
+  /**
+   * value -> the first few records holding it, for values held by more than one record.
+   *
+   * Bounded twice over: at most COLLISION_EXAMPLE_VALUES values are tracked, and at most
+   * COLLISION_EXAMPLE_RECORDS records per value. A column where every value repeats would otherwise
+   * carry a copy of the whole table into the stored profile.
+   */
+  private collisionRecords = new Map<string, string[]>();
   private minLength: number | null = null;
   private maxLength: number | null = null;
   private lengthSum = 0;
@@ -493,6 +507,22 @@ class FieldAccumulator {
     if (seen !== undefined) this.freq.set(text, seen + 1);
     else if (this.freq.size >= DISTINCT_VALUE_CAP) this.distinctOverflow = true;
     else this.freq.set(text, 1);
+
+    /*
+     * Which records collide, not merely how many.
+     *
+     * "Twelve records share a customer number" is a statistic; "records 4 and 52 both say CUST-1004"
+     * is something a person can act on before lunch. Only non-blank values are tracked, because a
+     * column of blanks is a completeness problem and not a collision.
+     */
+    if (trimmed !== '') {
+      const holders = this.collisionRecords.get(text);
+      if (holders !== undefined) {
+        if (holders.length < COLLISION_EXAMPLE_RECORDS) holders.push(recordId);
+      } else if (this.collisionRecords.size < COLLISION_EXAMPLE_VALUES) {
+        this.collisionRecords.set(text, [recordId]);
+      }
+    }
 
     if (this.isText) {
       const len = text.length;
@@ -640,6 +670,51 @@ class FieldAccumulator {
     return this.violations;
   }
 
+  /**
+   * The collision arithmetic, derived from the frequency map rather than counted separately.
+   *
+   * Blank is not a value. A blank is an absent identity, which is a different problem with a
+   * different remedy, and folding the blanks into a "duplicates" count would turn one missing
+   * customer number into evidence that customer numbers repeat.
+   */
+  private duplication(): DuplicationProfileDto {
+    let distinctValues = 0;
+    let duplicateGroups = 0;
+    let rowsInCollision = 0;
+    let largestGroup = 0;
+    const colliding: { value: string; count: number }[] = [];
+    for (const [value, count] of this.freq) {
+      if (value.trim() === '') continue;
+      distinctValues++;
+      if (count > 1) {
+        duplicateGroups++;
+        rowsInCollision += count;
+        colliding.push({ value, count });
+      }
+      if (count > largestGroup) largestGroup = count;
+    }
+    const examples = colliding
+      .sort((a, b) => b.count - a.count || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+      .slice(0, COLLISION_EXAMPLES)
+      .map(({ value, count }) => ({
+        value: this.mask(value),
+        count,
+        // Masked columns name no records: the values are indistinguishable once masked, so pointing
+        // at rows would invite a reader to compare things they cannot see.
+        recordIds: this.attr.isSecured ? [] : (this.collisionRecords.get(value) ?? []),
+      }));
+    return {
+      examined: this.examined,
+      distinctValues,
+      nullOrBlank: this.nullCount + this.blankCount,
+      duplicateGroups,
+      rowsInCollision,
+      largestGroup,
+      examples,
+      truncated: this.distinctOverflow,
+    };
+  }
+
   toDto(basis: StatisticBasis): FieldProfileDto {
     const distinctCount = this.distinctOverflow ? null : this.freq.size;
     const topValues: ValueFrequencyDto[] = [...this.freq.entries()]
@@ -671,6 +746,7 @@ class FieldAccumulator {
       invalidDateCount: this.invalidDateCount,
       invalidEmailCount: this.invalidEmailCount,
       invalidValueCount: this.invalidValueCount,
+      duplication: this.duplication(),
       topValues,
       topValuesTruncated: this.distinctOverflow || this.freq.size > TOP_VALUES_LIMIT,
       issues: [],

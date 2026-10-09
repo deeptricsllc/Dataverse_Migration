@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FieldProfileDto, TableProfileDto } from '../../shared/domain';
+import type { DuplicationProfileDto, FieldProfileDto, TableProfileDto } from '../../shared/domain';
 import type { AttributeMeta } from '../../shared/metadata';
 import { findingsForTable, type Finding } from '../../shared/findings';
 import { assessReadiness, executiveSummary } from '../../shared/analysis-readiness';
@@ -85,6 +85,116 @@ const run = (
 
 const byRule = (findings: Finding[], fragment: string) => findings.filter((f) => f.id.includes(fragment));
 const titles = (findings: Finding[]) => findings.map((f) => f.title);
+
+const duplication = (over: Partial<DuplicationProfileDto> = {}): DuplicationProfileDto => ({
+  examined: 60,
+  distinctValues: 48,
+  nullOrBlank: 0,
+  duplicateGroups: 12,
+  rowsInCollision: 24,
+  largestGroup: 2,
+  examples: [{ value: 'CUST-1004', count: 2, recordIds: ['r4', 'r52'] }],
+  truncated: false,
+  ...over,
+});
+
+describe('duplicate business keys', () => {
+  it('quantifies the collision and names records, rather than reporting that duplicates exist', () => {
+    const findings = run(
+      [
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    const [dup] = byRule(findings, 'DUPLICATE_BUSINESS_KEY');
+    expect(dup, 'the finding is raised').toBeTruthy();
+    expect(dup.severity, 'nothing else can identify these records').toBe('CRITICAL');
+    expect(dup.affected, 'records in a collision, not groups and not excess rows').toBe(24);
+    expect(dup.affectedPercent).toBe(40);
+
+    const evidence = dup.evidence.join(' | ');
+    expect(evidence).toContain('60 records examined');
+    expect(evidence).toContain('48 distinct values');
+    expect(evidence).toContain('12 values held by more than one record');
+    expect(evidence).toContain('24 records involved in a collision');
+    expect(evidence).toContain('0 records with no value at all');
+    expect(evidence, 'a record a person can go and open').toContain('records r4, r52');
+  });
+
+  it('does not call expected repetition a defect', () => {
+    /*
+     * A status column with four values across sixty records is the column working. Reporting it
+     * would teach a reader to skim the section where the real collisions live.
+     */
+    const findings = run(
+      [
+        field({
+          field: 'status',
+          examined: 60,
+          distinctCount: 4,
+          duplicateCount: 56,
+          duplication: duplication({ distinctValues: 4, duplicateGroups: 4, rowsInCollision: 60 }),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    expect(byRule(findings, 'DUPLICATE_BUSINESS_KEY')).toHaveLength(0);
+  });
+
+  it('is a warning, not a blocker, when some other column can still identify the record', () => {
+    const findings = run(
+      [
+        field({ field: 'account_id', examined: 60, distinctCount: 60 }),
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 2 },
+    );
+    expect(byRule(findings, 'NO_RELIABLE_KEY'), 'account_id is a key').toHaveLength(0);
+    const [dup] = byRule(findings, 'DUPLICATE_BUSINESS_KEY');
+    expect(dup.severity).toBe('WARNING');
+  });
+
+  it('deducts once for one defect, however many findings describe it', () => {
+    const findings = run(
+      [
+        field({
+          field: 'customer_number',
+          examined: 60,
+          distinctCount: 48,
+          duplicateCount: 12,
+          duplication: duplication(),
+        }),
+      ],
+      [],
+      { examined: 60, totalRecords: 60, columns: 1 },
+    );
+    // Both findings are present, because they answer different questions.
+    expect(byRule(findings, 'NO_RELIABLE_KEY')).toHaveLength(1);
+    expect(byRule(findings, 'DUPLICATE_BUSINESS_KEY')).toHaveLength(1);
+
+    const readiness = assessReadiness(findings, { profiled: true, relationships: false });
+    const identity = readiness.dimensions.find((d) => d.dimension === 'IDENTITY')!;
+    // One critical deduction, not two: 100 − 35, not 100 − 70.
+    expect(identity.score).toBe(65);
+    expect(identity.workings).toContain('1 critical');
+    expect(identity.workings).toContain('not deducted again');
+  });
+});
 
 describe('findings that have to be arithmetically true, not merely plausible', () => {
   /*

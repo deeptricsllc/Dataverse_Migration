@@ -127,13 +127,41 @@ export interface AssessedDimensions {
   relationships: boolean;
 }
 
+/**
+ * One deduction per underlying defect.
+ *
+ * Several findings can describe one problem from different angles -- the table has no identifier,
+ * and the column that should have been the identifier collides. Both are worth reading. Deducting
+ * for both would make a single defect cost twice as much as an unrelated pair of defects, which
+ * would make the score a count of how thoroughly a problem was described.
+ *
+ * Most severe wins, so adding a detailed finding beside a general one can never lower the score.
+ */
+function onePerRootCause(findings: Finding[]): Finding[] {
+  const best = new Map<string, Finding>();
+  const standalone: Finding[] = [];
+  for (const f of findings) {
+    if (!f.rootCause) {
+      standalone.push(f);
+      continue;
+    }
+    const held = best.get(f.rootCause);
+    if (!held || SEVERITY_RANK[f.severity] > SEVERITY_RANK[held.severity]) best.set(f.rootCause, f);
+  }
+  return [...standalone, ...best.values()];
+}
+
+const SEVERITY_RANK: Record<FindingSeverity, number> = { INFO: 0, WARNING: 1, CRITICAL: 2 };
+
 export function assessReadiness(findings: Finding[], assessed: AssessedDimensions): AnalysisReadiness {
   const counts: Record<FindingSeverity, number> = { CRITICAL: 0, WARNING: 0, INFO: 0 };
   for (const f of findings) counts[f.severity] += 1;
 
   const dimensions = READINESS_DIMENSIONS.map<DimensionScore>((dimension) => {
     // Only the findings that are problems. A discovered business key belongs to IDENTITY and is good news.
-    const mine = findings.filter((f) => DIMENSION_FOR[f.category] === dimension && findingDeducts(f));
+    const deducting = findings.filter((f) => DIMENSION_FOR[f.category] === dimension && findingDeducts(f));
+    const mine = onePerRootCause(deducting);
+    const absorbed = deducting.length - mine.length;
     const critical = mine.filter((f) => f.severity === 'CRITICAL').length;
     const warning = mine.filter((f) => f.severity === 'WARNING').length;
     const info = mine.filter((f) => f.severity === 'INFO').length;
@@ -175,7 +203,10 @@ export function assessReadiness(findings: Finding[], assessed: AssessedDimension
       workings:
         parts.length === 0
           ? 'Nothing was found against this dimension, so it keeps its full 100.'
-          : `100 − ${parts.join(' − ')} = ${score}${deduction > 100 ? ', floored at 0' : ''}`,
+          : `100 − ${parts.join(' − ')} = ${score}${deduction > 100 ? ', floored at 0' : ''}` +
+            (absorbed > 0
+              ? ` (${absorbed === 1 ? 'one further finding describes' : `${absorbed} further findings describe`} the same defect and ${absorbed === 1 ? 'is' : 'are'} not deducted again)`
+              : ''),
     };
   });
 
@@ -194,7 +225,21 @@ export function assessReadiness(findings: Finding[], assessed: AssessedDimension
 
   return {
     score,
-    band: score === null ? null : bandFor(score, counts.CRITICAL),
+    /*
+     * The band counts critical *defects*, not critical findings.
+     *
+     * `counts` stays a count of findings, because the screen lists findings and the two numbers
+     * agreeing matters. The band is a judgement about how much is wrong, and describing one defect
+     * in two findings does not make the data worse -- without this, adding the detailed collision
+     * finding beside the general one would have pushed tables toward HIGH_RISK for no new problem.
+     */
+    band:
+      score === null
+        ? null
+        : bandFor(
+            score,
+            onePerRootCause(findings.filter(findingDeducts)).filter((f) => f.severity === 'CRITICAL').length,
+          ),
     dimensions,
     counts,
     method:

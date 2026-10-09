@@ -107,6 +107,68 @@ const field = (p: TableProfileDto, name: string): FieldProfileDto => {
 
 // ---------------------------------------------------------------------------
 
+describe('collision arithmetic, proven against the rows that produced it', () => {
+  /*
+   * The numbers a reader is asked to act on. Three of them are easy to confuse and all three are
+   * reported, so each is asserted against a fixture whose contents can be counted by hand.
+   */
+  it('separates duplicate groups from rows in collision from excess rows', async () => {
+    // Sixty customer numbers where the last twelve repeat the first twelve: the double-export shape.
+    const values = Array.from({ length: 60 }, (_, i) =>
+      i < 48 ? `CUST-${1000 + i}` : `CUST-${1000 + (i - 48)}`,
+    );
+    const meta = table('account', [attr('customer_number', 'String')]);
+    const { result } = await profile(meta, rows('customer_number', values));
+    const d = field(result, 'customer_number').duplication!;
+
+    expect(d.examined).toBe(60);
+    expect(d.distinctValues, '48 numbers appear at all').toBe(48);
+    expect(d.duplicateGroups, '12 of them are held twice').toBe(12);
+    expect(d.rowsInCollision, 'those 12 groups account for 24 records').toBe(24);
+    expect(d.largestGroup).toBe(2);
+    expect(d.nullOrBlank).toBe(0);
+    expect(d.truncated).toBe(false);
+    // The pre-existing count means something different again: rows beyond one per value.
+    expect(field(result, 'customer_number').duplicateCount).toBe(12);
+  });
+
+  it('names the records that collide, so the reader can go and look', async () => {
+    const meta = table('account', [attr('code', 'String')]);
+    const { result } = await profile(meta, rows('code', ['A', 'B', 'A', 'C', 'A']));
+    const d = field(result, 'code').duplication!;
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.rowsInCollision).toBe(3);
+    expect(d.largestGroup).toBe(3);
+    expect(d.examples[0].value).toBe('A');
+    expect(d.examples[0].count).toBe(3);
+    expect(d.examples[0].recordIds, 'rows 0, 2 and 4 hold it').toEqual(['r0', 'r2', 'r4']);
+  });
+
+  it('does not count an absent value as a repeated one', async () => {
+    /*
+     * Three records with nothing in the column is a completeness problem with a different remedy.
+     * Folding them into the duplicate count would report one missing code as evidence that codes
+     * repeat.
+     */
+    const meta = table('account', [attr('code', 'String')]);
+    const { result } = await profile(meta, rows('code', ['A', 'A', '', '  ', null]));
+    const d = field(result, 'code').duplication!;
+    expect(d.distinctValues, 'only A is a value').toBe(1);
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.rowsInCollision).toBe(2);
+    expect(d.nullOrBlank, 'two blanks and a null').toBe(3);
+  });
+
+  it('names no records for a secured column, because the values are indistinguishable once masked', async () => {
+    const meta = table('account', [attr('ssn', 'String', { isSecured: true })]);
+    const { result } = await profile(meta, rows('ssn', ['X', 'X', 'Y']));
+    const d = field(result, 'ssn').duplication!;
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.examples[0].value).toBe(MASKED_VALUE);
+    expect(d.examples[0].recordIds).toEqual([]);
+  });
+});
+
 describe('profiling basis', () => {
   const meta = table('account', [attr('code', 'String')]);
 
