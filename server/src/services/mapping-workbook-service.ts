@@ -87,7 +87,7 @@ export class MappingWorkbookService {
         basis: run.basis,
         when: run.completedAt ?? run.createdAt,
         lines: [
-          `Tables analysed: ${run.totals.tables}`,
+          `Tables analyzed: ${run.totals.tables}`,
           `Columns: ${run.totals.columns}`,
           `Records: ${run.totals.records.toLocaleString()}${run.totals.recordsApproximate ? ' (estimated)' : ''}`,
           `Findings: ${run.totals.blockers} blocker(s), ${run.totals.warnings} warning(s)`,
@@ -521,13 +521,13 @@ function planTablesSheet(
       { header: 'Target table', width: 30 },
     ],
     rows: plan.entities.map((e) => {
-      const analysed = byName.get(e.logicalName);
+      const analyzed = byName.get(e.logicalName);
       return [
         e.logicalName,
         e.displayName,
-        analysed?.recordCount ?? e.sourceCount ?? 0,
-        analysed?.blockers ?? '',
-        analysed?.warnings ?? '',
+        analyzed?.recordCount ?? e.sourceCount ?? 0,
+        analyzed?.blockers ?? '',
+        analyzed?.warnings ?? '',
         e.targetLogicalName ?? '',
       ];
     }),

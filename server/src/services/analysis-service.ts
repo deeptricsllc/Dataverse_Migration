@@ -38,7 +38,7 @@ import { isMigratableTable, type MetadataService } from './metadata-service';
 import type { ProjectService } from './project-service';
 import { deriveTargetRules, type ProfilingService } from './profiling-service';
 
-/** Upper bound per analysis, so "analyse everything" on a large org stays a bounded job. */
+/** Upper bound per analysis, so "analyze everything" on a large org stays a bounded job. */
 const MAX_TABLES_PER_ANALYSIS = 200;
 const DEFAULT_SAMPLE_SIZE = 10_000;
 
@@ -79,10 +79,10 @@ export class AnalysisService {
       sampleSize?: number;
       full?: boolean;
       /**
-       * Which dataset to analyse.
+       * Which dataset to analyze.
        *
-       * An analysis project has several, and each run covers one — so "analyse this project" is several
-       * runs rather than one, and a dataset added later can be analysed without redoing the others.
+       * An analysis project has several, and each run covers one — so "analyze this project" is several
+       * runs rather than one, and a dataset added later can be analyzed without redoing the others.
        * Omitted means the primary source, which is what every existing caller means.
        */
       environmentId?: string;
@@ -125,14 +125,14 @@ export class AnalysisService {
     }
 
     /**
-     * What to analyse: what the caller asked for, or what the project already chose.
+     * What to analyze: what the caller asked for, or what the project already chose.
      *
-     * An empty list reaches `selectTables` as "every table in the catalogue". That is the right
+     * An empty list reaches `selectTables` as "every table in the catalog". That is the right
      * default for a connection nobody has narrowed, and the wrong one for a project where somebody
      * picked three tables out of two hundred — the selection is recorded on the project source, and
      * reading past it analyses a hundred and ninety-seven tables nobody asked about.
      *
-     * The fan-out behind the Analyse button already passed the selection, so this closed a gap
+     * The fan-out behind the Analyze button already passed the selection, so this closed a gap
      * between two routes to the same work rather than a gap nobody could reach: the per-dataset
      * endpoint is what a second screen, a retry or a script would call.
      */
@@ -210,14 +210,14 @@ export class AnalysisService {
         analysisRunId: runId,
       });
 
-      await progress('Reading the table catalogue');
+      await progress('Reading the table catalog');
       const catalog = await this.metadata.getCatalog(env.id, conn);
       const chosen = selectTables(catalog, run.options.tables);
       if (chosen.length === 0) {
         /*
          * Two different situations, and they had one message between them.
          *
-         * An empty catalogue means the connection holds nothing to read — nothing was chosen, or
+         * An empty catalog means the connection holds nothing to read — nothing was chosen, or
          * what was chosen is gone. `None of the requested tables exist in this source` described
          * neither: no table was requested, and the source has no tables to speak of. A run that
          * reaches here is also a run the checks above should have refused, so it says that too.
@@ -226,12 +226,12 @@ export class AnalysisService {
           const resolution = await resolveDataset(this.db, env);
           throw badRequest(
             resolution.resolves
-              ? `${env.displayName} holds nothing to analyse. Select the data to analyse, then run it again.`
+              ? `${env.displayName} holds nothing to analyze. Select the data to analyze, then run it again.`
               : `${resolution.message} ${resolution.whatToDo}`,
           );
         }
         throw badRequest(
-          `None of the selected tables are in ${env.displayName} any more. Select the data to analyse, then run it again.`,
+          `None of the selected tables are in ${env.displayName} any more. Select the data to analyze, then run it again.`,
         );
       }
 
@@ -250,7 +250,7 @@ export class AnalysisService {
       );
       const metas = [...metaByName.values()];
 
-      // Relationships and a dependency-safe order, from the source alone. Passing the analysed set
+      // Relationships and a dependency-safe order, from the source alone. Passing the analyzed set
       // as the "known" set means a reference to a table outside the analysis is reported as
       // out-of-scope rather than as missing.
       const inScope = new Set(metas.map((m) => m.logicalName));
@@ -266,7 +266,7 @@ export class AnalysisService {
 
       for (const [i, meta] of metas.entries()) {
         await heartbeat();
-        await progress(`Analysing ${meta.displayName} (${i + 1}/${metas.length})`);
+        await progress(`Analyzing ${meta.displayName} (${i + 1}/${metas.length})`);
         const profile = await this.profiling.profileTable(
           { organizationId: run.organizationId, userId: run.createdByUserId ?? '' } as RequestContext,
           {
@@ -366,7 +366,7 @@ export class AnalysisService {
   // ---------------------------------------------------------------------------
 
   /**
-   * The analysed tables as an entity relationship diagram.
+   * The analyzed tables as an entity relationship diagram.
    *
    * Built from the same `analyzeDependencies` the run itself used, rather than from a second reading
    * of the relationships: the diagram and the load order are one answer, and drawing them from
@@ -534,7 +534,7 @@ export class AnalysisService {
       .select()
       .from(analysisTables)
       .where(and(eq(analysisTables.analysisRunId, runId), eq(analysisTables.logicalName, logicalName)));
-    if (!row) throw notFound('Analysed table');
+    if (!row) throw notFound('Analyzed table');
     const findings = await this.db
       .select()
       .from(analysisFindings)

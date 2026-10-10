@@ -64,7 +64,7 @@ export const FULL_PROFILE_LIMIT = 200_000;
 export const DISTINCT_VALUE_CAP = 50_000;
 /** Most frequent values returned per column (for choice mapping). */
 export const TOP_VALUES_LIMIT = 50;
-/** Offending values kept per issue, so a person can recognise the problem. */
+/** Offending values kept per issue, so a person can recognize the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
 /** Columns profiled in one pass, so a pathologically wide table cannot stall a request. */
 export const MAX_PROFILED_COLUMNS = 300;
@@ -341,7 +341,7 @@ export function evaluateRules(
             rule.severity,
             hit.count,
             `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'holds', 'hold')} a value that is not a recognisable phone number.`,
-            'Normalise the numbers in the source before migrating.',
+            'Normalize the numbers in the source before migrating.',
             samples,
           );
         }

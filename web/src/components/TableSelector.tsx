@@ -122,7 +122,7 @@ export function TableSelector({
           value={effectiveFilter}
           onChange={(v) => setFilter(v as Filter)}
           options={[
-            { value: 'ANALYZED', label: `Analysed tables (${analyzedCount})` },
+            { value: 'ANALYZED', label: `Analyzed tables (${analyzedCount})` },
             { value: 'ALL', label: `All tables (${candidates.length})` },
             { value: 'SELECTED', label: `Selected (${selected.size})` },
             { value: 'CUSTOM', label: 'Custom tables' },
@@ -252,7 +252,7 @@ export function TableSelector({
                     {c.schemaStatus ? (
                       <StatusBadge status={c.schemaStatus} />
                     ) : (
-                      <span className="text-xs text-slate-400">not analysed</span>
+                      <span className="text-xs text-slate-400">not analyzed</span>
                     )}
                   </Td>
                   <Td className="text-xs text-slate-600">

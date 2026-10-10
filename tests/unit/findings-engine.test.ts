@@ -455,7 +455,7 @@ describe('the executive summary is assembled from findings, not generated', () =
      * datasets" beside it and then quote a score, which reads as the score for the whole project.
      */
     expect(summary).toContain('contains 4 datasets');
-    expect(summary).toContain('3 have been analysed so far');
+    expect(summary).toContain('3 have been analyzed so far');
     expect(summary).toContain('not counted in anything below');
     expect(summary, 'the old sentence claimed the project was only what had been assessed').not.toContain(
       'contains 3 datasets',
@@ -475,7 +475,7 @@ describe('the executive summary is assembled from findings, not generated', () =
     });
     // Not "contains 0 datasets" above a list of four.
     expect(summary).toContain('Fresh contains 4 datasets');
-    expect(summary).toContain('Nothing has been analysed yet');
+    expect(summary).toContain('Nothing has been analyzed yet');
   });
 
   it('does not pretend to assess an empty project', () => {
@@ -488,6 +488,6 @@ describe('the executive summary is assembled from findings, not generated', () =
       readiness,
       findings: [],
     });
-    expect(summary).toContain('Nothing has been analysed yet');
+    expect(summary).toContain('Nothing has been analyzed yet');
   });
 });

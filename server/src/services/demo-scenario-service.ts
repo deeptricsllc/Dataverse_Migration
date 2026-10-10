@@ -416,7 +416,7 @@ export class DemoScenarioService {
     }
 
     if (plan.blockerCount > 0) {
-      // Refusing to run a blocked plan is correct behaviour, so the demo stops here rather than
+      // Refusing to run a blocked plan is correct behavior, so the demo stops here rather than
       // forcing it through. The project still shows the plan and what it is waiting on.
       this.logger.warn(
         { blockers: plan.issues.filter((i) => i.severity === 'BLOCKER').map((i) => i.code) },

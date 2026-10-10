@@ -99,7 +99,7 @@ export function LoginPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/60">
             <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Analyse, map, migrate and validate with your organizational account.
+              Analyze, map, migrate and validate with your organizational account.
             </p>
             <div className="mt-6 space-y-3">
               {errorCode && (

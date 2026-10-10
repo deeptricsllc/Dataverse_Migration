@@ -68,7 +68,7 @@ export function countOutcomes(outcomes: Iterable<RecordOutcome>): RecordAccounti
  * exactly what cannot work on the table where the count matters. A `GROUP BY outcome` returns five
  * numbers for ten million records, and this turns those five numbers into the same shape.
  *
- * An outcome this version does not recognise is counted nowhere rather than guessed at, so a future
+ * An outcome this version does not recognize is counted nowhere rather than guessed at, so a future
  * outcome cannot quietly inflate one of these five.
  */
 export function accountingFromCounts(counts: Iterable<{ outcome: string; n: number }>): RecordAccounting {

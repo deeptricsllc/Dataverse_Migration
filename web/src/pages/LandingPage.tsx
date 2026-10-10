@@ -205,7 +205,7 @@ const SOURCES = [
 const LIFECYCLE = [
   {
     icon: ScanSearch,
-    name: 'Analyse',
+    name: 'Analyze',
     text: 'Profile every column, and find what the source contradicts about itself.',
   },
   { icon: Table2, name: 'Map', text: 'In the app, or export a workbook and map it in Excel.' },
@@ -362,7 +362,7 @@ export function LandingPage() {
             */}
             <ul className="mt-6 grid max-w-xl gap-2 text-sm text-slate-300 sm:grid-cols-3">
               {[
-                ['Analyse data', 'Profile a source down to the column.'],
+                ['Analyze data', 'Profile a source down to the column.'],
                 ['Migrate with control', 'Preview every record before anything is written.'],
                 ['Validate results', 'Check the target against the source afterwards.'],
               ].map(([title, detail]) => (
@@ -406,16 +406,20 @@ export function LandingPage() {
               apart. The product marks them Simulated on the connection card; the front page was
               claiming the opposite of what the product itself says.
             */}
-            <span className="text-slate-500">Verified against real systems:</span>
-            <span>CSV, Excel &amp; XML</span>
-            <span>SQL Server</span>
-            <span>PostgreSQL</span>
-            <span>MySQL</span>
-            <span className="text-slate-500">Simulated, not yet run against a real tenant:</span>
+            <span className="text-slate-500">Files on your computer:</span>
+            <span>CSV</span>
+            <span>Excel (.xlsx)</span>
+            <span>XML</span>
+            <span className="text-slate-500">Verified against real servers:</span>
+            <span className="text-emerald-300/90">SQL Server 2022</span>
+            <span className="text-emerald-300/90">PostgreSQL 16</span>
+            <span className="text-emerald-300/90">MySQL 8.4</span>
+            <span className="text-slate-500">Built, not yet run live:</span>
+            <span className="text-sky-300/80">Azure SQL</span>
+            <span className="text-sky-300/80">OneDrive</span>
+            <span className="text-sky-300/80">SharePoint</span>
+            <span className="text-slate-500">Simulated:</span>
             <span className="text-amber-300/80">Microsoft Dataverse</span>
-            <span className="text-amber-300/80">Azure SQL</span>
-            <span className="text-amber-300/80">OneDrive</span>
-            <span className="text-amber-300/80">SharePoint</span>
           </div>
         </div>
       </div>
@@ -714,7 +718,7 @@ export function LandingPage() {
             {signUpEnabled
               ? 'There is no separate password to create. Signing in with a Microsoft work account creates your workspace the first time somebody from your tenant arrives, and that first person becomes its administrator. Everyone after them joins the same workspace as a member.'
               : 'Sign-in uses Microsoft Entra ID with your organizational account. This deployment is restricted to approved tenants, so ask us for access and we will enable yours.'}{' '}
-            Members plan, analyse, preflight and migrate to non-production. An administrator is needed for
+            Members plan, analyze, preflight and migrate to non-production. An administrator is needed for
             what outlives the task: writing to production, writing unattended, and deleting shared
             configuration.
           </Faq>

@@ -856,7 +856,7 @@ export interface DataQualityIssueDto {
   affected: number;
   basis: StatisticBasis;
   resolution?: string | null;
-  /** A few offending values, for a person to recognise the problem. Masked when secured. */
+  /** A few offending values, for a person to recognize the problem. Masked when secured. */
   samples?: { recordId: string; value: string | null }[];
 }
 
@@ -2059,7 +2059,7 @@ export type PreflightAction = 'CREATE' | 'UPDATE' | 'UNCHANGED' | 'CONFLICT' | '
 
 export interface PreflightTotals {
   sourceRecords: number;
-  analyzed: number;
+  analysed: number;
   create: number;
   update: number;
   unchanged: number;
@@ -2076,7 +2076,7 @@ export interface PreflightEntityResultDto extends PreflightTotals {
   /**
    * How many records the drill-down actually holds.
    *
-   * Separate from the totals on purpose. The totals count every record analysed; the per-record list
+   * Separate from the totals on purpose. The totals count every record analyzed; the per-record list
    * is capped per action, so a table can report 47,000 blocked records and store 2,000 of them. That
    * gap is invisible unless it is stated, and the remediation package — the artefact a migration team
    * works from — is built from the stored list.
@@ -2272,7 +2272,7 @@ export interface ProjectDto {
   kind: ProjectKind;
   description: string | null;
   status: ProjectStatus;
-  /** The source being analysed or migrated. Set on both kinds once chosen. */
+  /** The source being analyzed or migrated. Set on both kinds once chosen. */
   sourceEnvironment: EnvRef | null;
   /**
    * Every dataset this project is about, in the order they were added.
@@ -2579,7 +2579,7 @@ export interface ComparisonSuggestionDto {
 export type AnalysisStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
 export interface AnalysisOptions {
-  /** Tables to analyse. Empty means every migratable table in the source. */
+  /** Tables to analyze. Empty means every migratable table in the source. */
   tables: string[];
   /** Records examined per table when not running a full analysis. */
   sampleSize: number;
@@ -2693,7 +2693,7 @@ export interface AnalysisTableDto {
   duplicateKeyCount: number;
 }
 
-/** The full column-level profile of one analysed table, loaded on demand. */
+/** The full column-level profile of one analyzed table, loaded on demand. */
 export interface AnalysisTableDetailDto extends AnalysisTableDto {
   profile: TableProfileDto;
   findings: AnalysisFindingDto[];
@@ -2702,7 +2702,7 @@ export interface AnalysisTableDetailDto extends AnalysisTableDto {
 /**
  * How far an analysis of one dataset has got.
  *
- * `STALE` is the one worth naming: the dataset was analysed, and then it changed. Showing the old findings
+ * `STALE` is the one worth naming: the dataset was analyzed, and then it changed. Showing the old findings
  * without saying so is how somebody acts on an assessment of data that no longer exists.
  */
 export type DatasetAnalysisState = 'NOT_ANALYSED' | 'QUEUED' | 'RUNNING' | 'ANALYSED' | 'STALE' | 'FAILED';
@@ -2784,10 +2784,10 @@ export interface AssessedDatasetDto {
   environmentId: string;
   name: string;
   /**
-   * Why this connection cannot be analysed, when it cannot be.
+   * Why this connection cannot be analyzed, when it cannot be.
    *
    * Null means it can. The screen must not work this out for itself from an empty `objects` list:
-   * a database that has never been analysed has no objects either, and is perfectly analysable —
+   * a database that has never been analyzed has no objects either, and is perfectly analysable —
    * its tables live on its side and nothing has looked yet. Only the server knows the difference,
    * so it says, and says what the person has to go and do about it.
    */
@@ -2796,7 +2796,7 @@ export interface AssessedDatasetDto {
   provider: string | null;
   analysed: boolean;
   state: DatasetAnalysisState;
-  /** Set when the last run failed, so the screen can say what went wrong rather than "not analysed". */
+  /** Set when the last run failed, so the screen can say what went wrong rather than "not analyzed". */
   failureMessage: string | null;
   analysisRunId: string | null;
   analysedAt: string | null;
@@ -2809,7 +2809,7 @@ export interface AssessedDatasetDto {
    * The concrete content this dataset resolves to.
    *
    * Empty means the connection is in the project but nothing in it has been selected or seen yet —
-   * which the server already refuses to analyse, and which the screen should say plainly rather than
+   * which the server already refuses to analyze, and which the screen should say plainly rather than
    * showing a dataset that is not one.
    */
   objects: AssessedObjectDto[];

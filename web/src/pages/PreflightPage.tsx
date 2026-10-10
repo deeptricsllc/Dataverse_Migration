@@ -121,7 +121,7 @@ export function PreflightPage() {
       {run && ['QUEUED', 'RUNNING'].includes(run.status) && (
         <Card>
           <div className="flex items-center gap-3 text-sm text-slate-600">
-            <StatusBadge status={run.status} /> {run.progressMessage ?? 'Analysing…'}
+            <StatusBadge status={run.status} /> {run.progressMessage ?? 'Analyzing…'}
           </div>
         </Card>
       )}
@@ -216,7 +216,7 @@ export function PreflightPage() {
                       <span className="font-medium text-slate-900">{e.displayName}</span>{' '}
                       <Mono className="text-xs text-slate-500">{e.logicalName}</Mono>
                       {e.sampled && (
-                        <Pill tone="amber" title="Only part of this table was analysed">
+                        <Pill tone="amber" title="Only part of this table was analyzed">
                           sampled
                         </Pill>
                       )}

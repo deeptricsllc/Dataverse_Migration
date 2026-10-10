@@ -44,7 +44,7 @@ export function ReadinessPanel({
     return (
       <Card title="Migration readiness">
         <p className="text-sm text-slate-600">
-          Nothing has been analysed yet, so there is no assessment. Add a dataset and run the analysis.
+          Nothing has been analyzed yet, so there is no assessment. Add a dataset and run the analysis.
         </p>
       </Card>
     );

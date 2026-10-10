@@ -322,7 +322,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
    * SharePoint connection nobody has chosen a file from is reusable access to a system, not data.
    * Requiring a choice from that list is how somebody picked an empty connection, created the
    * project around it, and met `None of the requested tables exist in this source` when they
-   * pressed Analyse.
+   * pressed Analyze.
    *
    * Datasets are added in the workspace, where choosing a sheet, a table or a list is the whole
    * interaction and cannot be skipped. The shortcut on this same page already created analysis
@@ -448,7 +448,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
           />
           {kind === 'ANALYSIS' && (
             <p className="mt-1 text-xs text-slate-500">
-              Optional. You choose the sheets, tables or lists to analyse in the project itself.
+              Optional. You choose the sheets, tables or lists to analyze in the project itself.
             </p>
           )}
         </Field>

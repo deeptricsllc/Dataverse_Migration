@@ -61,7 +61,7 @@ export function MigrationPage() {
           <EmptyState
             icon={<Truck className="h-8 w-8" />}
             title="No migration plans yet"
-            description="Start by selecting environments, analysing them and choosing tables."
+            description="Start by selecting environments, analyzing them and choosing tables."
             action={
               <Button variant="primary" onClick={() => navigate(ready ? '/migration/new' : '/environments')}>
                 New Migration

@@ -136,10 +136,10 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
   app.post('/api/demo/analysis-project', VERY_EXPENSIVE, async (req) => s.demoAnalysis.build(req.ctx));
 
   /**
-   * Analyse every dataset in this project that needs it.
+   * Analyze every dataset in this project that needs it.
    *
    * One run per dataset, because each covers one. `all` re-analyses the ones already done as well, which
-   * is what the re-analyse action means after data has changed.
+   * is what the re-analyze action means after data has changed.
    */
   app.post('/api/projects/:id/analyse', VERY_EXPENSIVE, async (req) => {
     const { id } = idParams.parse(req.params);
@@ -217,7 +217,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
         tables: z.array(tableName).max(200).optional(),
         sampleSize: z.coerce.number().int().min(100).max(200_000).optional(),
         full: z.boolean().optional(),
-        /** Which dataset to analyse. Omitted means the project's primary source. */
+        /** Which dataset to analyze. Omitted means the project's primary source. */
         environmentId: uuid.optional(),
       })
       .parse(req.body ?? {});
@@ -354,7 +354,7 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
     return s.analysis.table(req.ctx, id, table);
   });
 
-  /** The analysed tables as a diagram. Reads metadata, so it carries the expensive-route limit. */
+  /** The analyzed tables as a diagram. Reads metadata, so it carries the expensive-route limit. */
   app.get('/api/analyses/:id/erd', EXPENSIVE, async (req) =>
     s.analysis.erd(req.ctx, idParams.parse(req.params).id),
   );

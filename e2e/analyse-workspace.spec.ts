@@ -178,7 +178,13 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
   await expect(page.getByTestId('connector-dataverse')).toContainText('Simulated');
   await expect(page.getByTestId('connector-dataverse')).toContainText('Never run against a real Dataverse');
-  await expect(page.getByTestId('connector-azuresql')).toContainText('Simulated');
+  /*
+   * Azure SQL is not simulated, which is a different and weaker claim than it used to carry here.
+   * It is implemented, shares SQL Server's driver, and has never been pointed at a real Azure SQL
+   * database. The card says so in those words.
+   */
+  await expect(page.getByTestId('connector-azuresql')).toContainText('Not live verified');
+  await expect(page.getByTestId('connector-sqlserver')).toContainText('Live verified');
 
   // --- the preview shows what is in the file, and stores nothing -------------
   await page.getByTestId('connector-csv').click();
@@ -201,10 +207,10 @@ test('raw files become an assessment without ever leaving the workspace', async 
   for (const name of ['Orders', 'Customers', 'Contacts']) {
     await expect(page.getByTestId('dataset-name').filter({ hasText: name })).toHaveCount(1);
   }
-  await expect(page.getByTestId('dataset-state').first()).toHaveText('Not analysed');
+  await expect(page.getByTestId('dataset-state').first()).toHaveText('Not analyzed');
 
   await page.getByRole('tab', { name: 'Overview' }).click();
-  await expect(page.getByText('Nothing has been analysed yet')).toBeVisible();
+  await expect(page.getByText('Nothing has been analyzed yet')).toBeVisible();
 
   await runAnalysis(page);
   await expect(page.getByTestId('readiness-score')).toBeVisible({ timeout: 30_000 });
@@ -352,7 +358,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
 
   // The card said what this is before anybody started, and the step says it again.
   await expect(page.getByText('SharePoint is not certified')).toBeVisible();
-  await expect(page.getByText(/Never run against a real SharePoint tenant/)).toBeVisible();
+  await expect(page.getByText(/never run against a real SharePoint tenant/i)).toBeVisible();
   await expect(page.getByText(/Connecting does not add any data/)).toBeVisible();
 
   await page.getByTestId('new-connection').click();
@@ -410,7 +416,7 @@ test('a dataset added after an analysis is picked up by the next one', async ({ 
 
   await page.getByRole('tab', { name: 'Overview' }).click();
   // The button says what is left to do rather than offering to redo everything.
-  await expect(page.getByTestId('analyse')).toHaveText(/Analyse 1 of 2/);
+  await expect(page.getByTestId('analyse')).toHaveText(/Analyze 1 of 2/);
   await runAnalysis(page);
 
   const after = await assessment(page);

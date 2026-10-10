@@ -427,7 +427,7 @@ export class TransformationService {
         // A key the preflight did not report is a rule that ran but never discarded anything:
         // zero affected records, which is exactly what the acknowledgement should say.
         item.affected = hit?.affected ?? 0;
-        item.examined = table.totals?.analyzed ?? 0;
+        item.examined = table.totals?.analysed ?? 0;
         // A preflight that stopped at the per-table cap read a prefix of the table, not all of it.
         item.basis = table.sampled ? 'SAMPLED' : 'EXACT';
         item.maxSourceLength = hit?.maxSourceLength ?? null;

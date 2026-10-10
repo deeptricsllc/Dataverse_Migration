@@ -10,7 +10,7 @@ import type { AttributeType } from '../../../../shared/metadata';
  * producing a `db.table` name that MySQL would reject.
  *
  * Read-only, and every one filters to the connected database — a login with rights on several must
- * not have another one's tables appear in this connection's catalogue.
+ * not have another one's tables appear in this connection's catalog.
  */
 
 /**

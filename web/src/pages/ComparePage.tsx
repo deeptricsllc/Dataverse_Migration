@@ -223,7 +223,7 @@ export function ComparePage() {
       {completed && s && (
         <div className="space-y-5">
           <p className="text-xs text-slate-500">
-            Analysed {fmtRelative(run.data!.completedAt)} by {run.data!.createdBy ?? 'unknown'} ·{' '}
+            Analyzed {fmtRelative(run.data!.completedAt)} by {run.data!.createdBy ?? 'unknown'} ·{' '}
             {s.deepCompared} tables compared column by column
           </p>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -349,7 +349,7 @@ export function ComparePage() {
                                 <span className="text-slate-500">{t.columns.length} match</span>
                               )
                             ) : (
-                              <span className="text-slate-400">not analysed</span>
+                              <span className="text-slate-400">not analyzed</span>
                             )}
                           </Td>
                           <Td className="text-xs text-slate-500">

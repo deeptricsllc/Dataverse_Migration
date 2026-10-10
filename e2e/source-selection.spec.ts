@@ -71,12 +71,18 @@ test('the connections screen offers files, grouped with everything else it can r
   await expect(dialog).toContainText('Business applications');
 
   // Status is on the card, so nobody plans around a simulator.
+  // Four categories, each meaning something different and each read from the evidence matrix.
   await expect(dialog.getByTestId('connector-dataverse')).toContainText('Simulated');
-  await expect(dialog.getByTestId('connector-azuresql')).toContainText('Simulated');
+  await expect(
+    dialog.getByTestId('connector-azuresql'),
+    'built but never run live is not the same claim as simulated',
+  ).toContainText('Not live verified');
+  await expect(dialog.getByTestId('connector-sqlserver')).toContainText('Live verified');
+  await expect(dialog.getByTestId('connector-upload')).toContainText('Local file');
   await expect(
     dialog.getByTestId('connector-postgres'),
-    'a verified connector is not labelled as simulated',
-  ).not.toContainText('Simulated');
+    'a connector with real conformance evidence is not labelled as simulated',
+  ).toContainText('Live verified');
   await shot(page, 'add-connection-source-gallery');
 
   // And it leads somewhere, rather than explaining where to go.
@@ -139,8 +145,8 @@ test('a spreadsheet can be uploaded, previewed and analysed without any connecti
   // --- and the whole point: analysis, with no connection configured --------
   await page.getByTestId('analyse').click();
   const main = page.getByRole('main');
-  await expect(main).toContainText('Analysed', { timeout: 600_000 });
-  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  await expect(main).toContainText('Analyzed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analyzed yet', { timeout: 600_000 });
 
   const exportLink = page.getByRole('link', { name: /Export findings/ });
   await expect(exportLink).toBeVisible();
@@ -210,8 +216,8 @@ test('CSV and XML upload through the browser, each read as its own shape', async
 
   await page.getByTestId('analyse').click();
   const main = page.getByRole('main');
-  await expect(main).toContainText('Analysed', { timeout: 600_000 });
-  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  await expect(main).toContainText('Analyzed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analyzed yet', { timeout: 600_000 });
   // Both files are in the one project, and neither needed a connection.
   await expect(main).toContainText('5 records');
   await shot(page, 'csv-and-xml-analysed-together');

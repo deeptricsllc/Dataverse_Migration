@@ -35,7 +35,7 @@ interface Workflow {
 const WORKFLOWS: Workflow[] = [
   {
     kind: 'ANALYSIS',
-    name: 'Analyse',
+    name: 'Analyze',
     question: 'What is in my data, and what should I know about it?',
     blurb:
       'Profile one dataset or several together. Find the problems that would break a migration before you plan one.',

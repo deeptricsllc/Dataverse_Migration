@@ -16,7 +16,7 @@ import { api } from '../lib/api';
 import { ObjectPicker } from './ObjectPicker';
 import { describeCount } from '../lib/format';
 import { ConnectionModal } from './ConnectionForm';
-import { CONNECTORS, SourceGallery, type Connector } from './SourceGallery';
+import { availabilityOf, CONNECTORS, SourceGallery, type Connector } from './SourceGallery';
 
 /**
  * What the upload step accepts, and how much of it.
@@ -356,7 +356,7 @@ function FileDataset({
 
           {multi && (
             <p className="text-sm text-slate-600">
-              Which sheets do you want to analyse? Each one becomes its own dataset.
+              Which sheets do you want to analyze? Each one becomes its own dataset.
             </p>
           )}
 
@@ -434,7 +434,7 @@ function PreviewTable({
               type="checkbox"
               checked={checked}
               onChange={onToggle}
-              aria-label={`Analyse ${table.displayName}`}
+              aria-label={`Analyze ${table.displayName}`}
               data-testid={`sheet-${table.sheet}`}
               className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
             />
@@ -452,7 +452,7 @@ function PreviewTable({
     >
       {/*
         The identifier question, answered here rather than three screens later. Whether a row can be
-        recognised again decides whether this data can be compared, de-duplicated or migrated at all, and
+        recognized again decides whether this data can be compared, de-duplicated or migrated at all, and
         it is cheap to say now and expensive to discover during a run.
       */}
       <div
@@ -653,11 +653,11 @@ function ChooseConnection({
 
   return (
     <div className="space-y-4">
-      {connector.availability !== 'FULL' && connector.caveat && (
+      {connector.caveat && (
         <Callout
-          tone={connector.availability === 'SIMULATED' ? 'warning' : 'info'}
+          tone={availabilityOf(connector) === 'SIMULATED' ? 'warning' : 'info'}
           title={
-            connector.availability === 'SIMULATED'
+            availabilityOf(connector) === 'SIMULATED'
               ? `${connector.name} is not certified`
               : `What ${connector.name} can do today`
           }
@@ -840,7 +840,7 @@ function ObjectPreview({
 
   const fields = profile.data ? profile.data.nullStats.slice(0, 12) : [];
   const sample = profile.data?.sampleRecords.slice(0, 5) ?? [];
-  // Enough columns to recognise the table, few enough that the row does not have to be scrolled to read.
+  // Enough columns to recognize the table, few enough that the row does not have to be scrolled to read.
   const sampleColumns = profile.data ? profile.data.nullStats.slice(0, 6).map((f) => f.field) : [];
 
   return (

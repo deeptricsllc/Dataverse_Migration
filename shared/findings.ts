@@ -212,7 +212,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         caveat,
       ],
       whyItMatters:
-        'Matching a source record to a target record is what stops a migration creating duplicates, and what lets a second run recognise work it has already done. Without a stable identifier there is nothing to match on.',
+        'Matching a source record to a target record is what stops a migration creating duplicates, and what lets a second run recognize work it has already done. Without a stable identifier there is nothing to match on.',
       recommendation:
         'Choose a business key that is unique and always present. One column, or a combination. Failing that, have the source system supply one before migrating.',
       migrationImpact:
@@ -266,7 +266,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         caveat,
       ],
       whyItMatters:
-        'A record with no identifier cannot be matched, so it cannot be updated and cannot be recognised on a second run.',
+        'A record with no identifier cannot be matched, so it cannot be updated and cannot be recognized on a second run.',
       recommendation:
         'Fill in the missing identifiers at source, or exclude these records from the migration deliberately rather than discovering them part-way through it.',
       migrationImpact:
@@ -744,7 +744,7 @@ function fromSemantic(
       evidence: [reading.evidence],
       whyItMatters:
         'Inconsistent formatting is harmless to store and costly to match on. If a phone number is ever part of how records are matched or deduplicated, the format decides the answer.',
-      recommendation: reading.suggestedTransformation ?? 'Normalise to one format before migrating.',
+      recommendation: reading.suggestedTransformation ?? 'Normalize to one format before migrating.',
       migrationImpact:
         'Matching and deduplication on this column will be less accurate than the data allows.',
     };

@@ -5,7 +5,7 @@ import type { environments } from '../db/schema';
 import { connectionFamily, isStagedConnection } from '../../../shared/domain';
 
 /**
- * Whether a connection actually resolves to data somebody can analyse.
+ * Whether a connection actually resolves to data somebody can analyze.
  *
  * ## The distinction this exists to enforce
  *

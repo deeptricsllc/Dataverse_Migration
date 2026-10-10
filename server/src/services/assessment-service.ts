@@ -45,15 +45,15 @@ import type { RequestContext } from './context';
  *
  * ## One project, many datasets
  *
- * An analysis project has several sources, each analysed separately. This joins them: every finding is
+ * An analysis project has several sources, each analyzed separately. This joins them: every finding is
  * tagged with the dataset it came from, the readiness is assessed over all of them together, and the
  * summary is a paragraph about the project rather than about one spreadsheet.
  */
 /**
- * Whether a dataset changed after it was analysed.
+ * Whether a dataset changed after it was analyzed.
  *
  * The second of tolerance is not superstition: an import and the analysis that follows it can land in the
- * same moment, and a dataset reporting itself stale the instant it finished being analysed would teach
+ * same moment, and a dataset reporting itself stale the instant it finished being analyzed would teach
  * people to ignore the word.
  */
 const isStale = (changedAt: Date | undefined, analysedAt: Date | null) =>
@@ -106,8 +106,8 @@ export class AssessmentService {
     /**
      * The latest completed analysis per dataset.
      *
-     * Per dataset, not per project: analysing one source must not make the others look stale, and a
-     * project where three of four datasets have been analysed should report on the three rather than
+     * Per dataset, not per project: analyzing one source must not make the others look stale, and a
+     * project where three of four datasets have been analyzed should report on the three rather than
      * refusing to report at all.
      */
     const allRuns = await this.db
@@ -234,9 +234,9 @@ export class AssessmentService {
        *
        * Two different answers because two different kinds of connection. A staged one — a file, a
        * SharePoint list — holds its content here, so `staged_tables` is the truth and is known before
-       * anything is analysed. A database or a Dataverse environment keeps its tables on their side, so
+       * anything is analyzed. A database or a Dataverse environment keeps its tables on their side, so
        * until an analysis has looked there is nothing this can honestly list; it reports what the last
-       * run saw rather than inventing a catalogue.
+       * run saw rather than inventing a catalog.
        */
       const staged = imports
         .filter((row) => row.environmentId === s.environment.id)
@@ -281,7 +281,7 @@ export class AssessmentService {
       /*
        * Whether this connection resolves to anything, answered once here so every screen reading
        * the assessment gets the same answer the run would give. Inferring it from `objects.length`
-       * on the client would call a never-analysed database unusable, which it is not.
+       * on the client would call a never-analyzed database unusable, which it is not.
        */
       const gap = unusableByEnvironment.get(s.environment.id) ?? null;
       const attempt = newestAttemptByEnvironment.get(s.environment.id);
@@ -291,7 +291,7 @@ export class AssessmentService {
       /**
        * `STALE` is the state worth having.
        *
-       * The dataset was analysed, and then it changed — a file re-uploaded, more rows imported. Showing
+       * The dataset was analyzed, and then it changed — a file re-uploaded, more rows imported. Showing
        * the old findings without saying so is how somebody acts on an assessment of data that no longer
        * exists, and there is nothing on the screen to tell them. `updatedAt` on the environment moves
        * whenever its contents are replaced, so comparing it against the run's completion is enough.
@@ -381,7 +381,7 @@ export class AssessmentService {
   /**
    * Starts an analysis for every dataset that needs one.
    *
-   * "Needs one" means never analysed, failed, or changed since it was last analysed. `all` includes the
+   * "Needs one" means never analyzed, failed, or changed since it was last analyzed. `all` includes the
    * ones that are up to date, which is what a deliberate re-analysis means. Datasets already queued or
    * running are skipped either way, so pressing the button twice does not double the work.
    */
@@ -396,7 +396,7 @@ export class AssessmentService {
      * Analysis needs a dataset, and a connection is not one.
      *
      * Rejected here rather than queued and failed, because a request that cannot succeed should be
-     * refused when it is made. The previous behaviour accepted it, queued a run, and reported the result
+     * refused when it is made. The previous behavior accepted it, queued a run, and reported the result
      * as a failed analysis — which reads as "the product is broken" rather than "you have not chosen any
      * data yet". The second is true and is the thing the person can act on.
      */
@@ -425,11 +425,11 @@ export class AssessmentService {
 
     for (const dataset of assessment.datasets) {
       if (dataset.state === 'QUEUED' || dataset.state === 'RUNNING') {
-        skipped.push({ dataset: dataset.name, reason: 'already being analysed' });
+        skipped.push({ dataset: dataset.name, reason: 'already being analyzed' });
         continue;
       }
       if (!opts.all && dataset.state === 'ANALYSED') {
-        skipped.push({ dataset: dataset.name, reason: 'already analysed and unchanged' });
+        skipped.push({ dataset: dataset.name, reason: 'already analyzed and unchanged' });
         continue;
       }
       if (unusableIds.has(dataset.environmentId)) {
@@ -439,7 +439,7 @@ export class AssessmentService {
       }
       /*
        * Only the tables the project chose. Without this, adding one table of a two-hundred-table database
-       * analysed all two hundred — the selection would have been a label on the screen rather than a fact
+       * analyzed all two hundred — the selection would have been a label on the screen rather than a fact
        * about the work, which is the difference this whole model is about.
        */
       const tables = chosenFor.get(dataset.environmentId) ?? [];

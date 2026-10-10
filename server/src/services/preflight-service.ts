@@ -55,7 +55,7 @@ const MAX_PERSISTED_RECORDS_PER_ACTION = 2_000;
 
 const emptyTotals = (): PreflightTotals => ({
   sourceRecords: 0,
-  analyzed: 0,
+  analysed: 0,
   create: 0,
   update: 0,
   unchanged: 0,
@@ -297,7 +297,7 @@ export class PreflightService {
     let sampled = false;
 
     for await (const page of p.sConn.queryRecords(source, sourceColumns, { pageSize: 200 })) {
-      if (totals.analyzed >= MAX_RECORDS_PER_TABLE) {
+      if (totals.analysed >= MAX_RECORDS_PER_TABLE) {
         sampled = true;
         break;
       }
@@ -336,7 +336,7 @@ export class PreflightService {
         const match = await matcher.match(entity, target, record, prepared, prefetched, compareColumns);
         const decision = decideAction(entity, options, target, prepared, match);
         const action = classify(decision);
-        totals.analyzed++;
+        totals.analysed++;
         totals[action.toLowerCase() as 'create'] += 1;
         if (persisted[action] < MAX_PERSISTED_RECORDS_PER_ACTION) {
           persisted[action] += 1;
@@ -375,7 +375,7 @@ export class PreflightService {
     // The rules that discarded something did so across this many records; the acknowledgement
     // shows "38 of 145,283", so both halves have to come from the same pass.
     for (const entry of p.lossy.values()) {
-      if (entry.table === entity.logicalName) entry.examined = totals.analyzed;
+      if (entry.table === entity.logicalName) entry.examined = totals.analysed;
     }
 
     const recordsStored = Object.values(persisted).reduce((n, v) => n + v, 0);

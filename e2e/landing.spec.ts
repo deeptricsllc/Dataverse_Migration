@@ -31,7 +31,7 @@ test('an anonymous visitor gets the product, not a sign-in box', async ({ page }
   // The FAQ answers are behind a disclosure, so the page is scannable.
   const faq = page.getByRole('button', { name: /How do accounts work\?/ });
   await faq.click();
-  await expect(page.getByText(/Members plan, analyse, preflight and migrate/)).toBeVisible();
+  await expect(page.getByText(/Members plan, analyze, preflight and migrate/)).toBeVisible();
 
   expect(problems, `\n${problems.join('\n')}\n`).toEqual([]);
 });

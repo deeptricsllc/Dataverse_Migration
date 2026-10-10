@@ -122,7 +122,7 @@ export function PrivacyPage() {
       <Section heading="If you sign in">
         <p>
           Sign-in uses Microsoft Entra ID. We receive your name, email address, and the identifiers Microsoft
-          issues for you and your organisation. We never see or ask for your password.
+          issues for you and your organization. We never see or ask for your password.
         </p>
         <Bullets
           items={[
@@ -204,7 +204,7 @@ export function PrivacyPage() {
       <Section heading="Self-hosting">
         <p>
           This platform can be run inside your own network, on your own database. In that case none of the
-          data described above leaves your estate, and your organisation is the controller of all of it.
+          data described above leaves your estate, and your organization is the controller of all of it.
         </p>
       </Section>
     </Shell>
@@ -235,7 +235,7 @@ export function TermsPage() {
 
       <Section heading="Your data stays yours">
         <p>
-          You keep all rights in the data you connect, upload or produce with the service. We claim no licence
+          You keep all rights in the data you connect, upload or produce with the service. We claim no license
           over it beyond what is needed to operate the service for you. We do not use it to train any model,
           and we do not sell or share it.
         </p>

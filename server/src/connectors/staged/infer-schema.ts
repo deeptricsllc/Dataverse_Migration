@@ -28,7 +28,7 @@ const BLANKS = new Set(['', '-', 'n/a', 'na', 'null', 'nil', '(blank)', '(null)'
 const TRUE_WORDS = new Set(['true', 'yes', 'y', '1', 't']);
 const FALSE_WORDS = new Set(['false', 'no', 'n', '0', 'f']);
 
-// Wide enough to recognise a 20-digit account number AS a whole number, so it can be reported as
+// Wide enough to recognize a 20-digit account number AS a whole number, so it can be reported as
 // one that must stay text rather than as an unrecognisable mix.
 const INTEGER = /^-?\d{1,25}$/;
 const DECIMAL = /^-?\d{1,15}(\.\d{1,10})?$/;
@@ -56,7 +56,7 @@ const NAME_LIKE = /name$|^name|title|description|label|subject/i;
 /*
  * A name that claims to identify a row.
  *
- * The suffix list has to match the bare list, and it did not: `code` was recognised as a suffix but
+ * The suffix list has to match the bare list, and it did not: `code` was recognized as a suffix but
  * `number` was not, so `customer_code` was found to be an identifier and `customer_number` — the most
  * common business key in a legacy extract, and `accountnumber` in Dataverse — was not, and the file was
  * reported as having no reliable identifier at all. Uniqueness and never being empty are still required

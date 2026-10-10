@@ -1431,7 +1431,7 @@ export class MigrationRunService {
       .where(and(eq(migrationRunEntities.runId, runId), eq(migrationRunEntities.logicalName, entity)));
 
     /*
-     * The evidence a person needs to recognise the record and see what the failure names — not every
+     * The evidence a person needs to recognize the record and see what the failure names — not every
      * column. A failure screen that dumped the whole record would put source data on a page about an
      * error, which is both more than the question needs and more than the reader may be entitled to.
      */

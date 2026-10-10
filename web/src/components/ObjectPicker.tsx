@@ -10,10 +10,10 @@ import { api } from '../lib/api';
  * What is in a connection, and which of it you want.
  *
  * One component, two callers. Adding datasets to an analysis project and choosing a migration's scope are
- * the same question asked about the same catalogue — "which of these tables do you mean" — and building
+ * the same question asked about the same catalog — "which of these tables do you mean" — and building
  * that twice is how the two screens drift until one of them groups by schema and the other does not.
  *
- * Deliberately knows nothing about what the selection is for. It reads the catalogue, lets somebody
+ * Deliberately knows nothing about what the selection is for. It reads the catalog, lets somebody
  * search and tick, and hands back logical names; the caller decides whether that becomes a project source
  * or a migration's scope.
  *

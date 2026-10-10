@@ -1,4 +1,6 @@
 import { Database, FileCode, FileSpreadsheet, Plug, Upload, type LucideIcon } from 'lucide-react';
+import type { ConnectionType } from '@shared/domain';
+import { CONNECTOR_VERIFICATION, ENGINE_PROVABLE, summaryLevel } from '@shared/connector-verification';
 import { cx } from './ui';
 
 /**
@@ -15,7 +17,21 @@ import { cx } from './ui';
  * same honesty about whether it has ever been run against a real system.
  */
 
-export type Availability = 'FULL' | 'CONNECTION_ONLY' | 'SIMULATED' | 'COMING_SOON';
+/**
+ * How far each source has actually been proved, in the four kinds the product can tell apart.
+ *
+ * Derived from `CONNECTOR_VERIFICATION`, which is the evidence matrix the conformance suite writes
+ * into and a unit test polices. The gallery used to carry its own hand-written `availability`, and
+ * a hand-written claim beside a measured one drifts: Azure SQL, OneDrive and SharePoint were all
+ * labelled "Simulated" here while the matrix recorded them as implemented and never run live,
+ * which is a different and more accurate thing to say.
+ *
+ * LOCAL_FILE is not a weaker rung of the same ladder. A spreadsheet is not an external system that
+ * might be unreachable; it is read by this product, from your computer, through a path the
+ * journeys exercise on every run. It gets its own word so nothing implies a CSV is a live
+ * integration.
+ */
+export type Availability = 'LOCAL_FILE' | 'LIVE_VERIFIED' | 'NOT_LIVE_VERIFIED' | 'SIMULATED';
 
 export type SourceCategory = 'Files' | 'Databases' | 'Business applications';
 
@@ -25,7 +41,6 @@ export interface Connector {
   category: SourceCategory;
   blurb: string;
   icon: LucideIcon;
-  availability: Availability;
   /** What the state means for this connector, in one line. Required for anything short of `FULL`. */
   caveat?: string;
   /** Which step of the add-dataset drawer this opens. Absent for cards that only exist elsewhere. */
@@ -46,36 +61,33 @@ export const CONNECTORS: Connector[] = [
     id: 'csv',
     name: 'CSV',
     category: 'Files',
-    blurb: 'Comma, semicolon or tab separated. The usual shape of a legacy export.',
+    blurb: 'Comma, semicolon or tab separated. Read from your computer, not from a server.',
     icon: FileSpreadsheet,
-    availability: 'FULL',
     step: 'file',
   },
   {
     id: 'excel',
     name: 'Excel',
     category: 'Files',
-    blurb: 'An .xlsx workbook. Choose which sheets you want, so the notes tab stays behind.',
+    blurb: 'An .xlsx workbook from your computer. Choose the sheets you want, so the notes tab stays behind.',
     icon: FileSpreadsheet,
-    availability: 'FULL',
     step: 'file',
   },
   {
     id: 'xml',
     name: 'XML',
     category: 'Files',
-    blurb: 'A record-per-element export. Attributes and child elements become columns.',
+    blurb: 'A record-per-element file from your computer. Attributes and child elements become columns.',
     icon: FileCode,
-    availability: 'FULL',
     step: 'file',
   },
   {
     id: 'sqlserver',
     name: 'SQL Server',
     category: 'Databases',
-    blurb: 'On-premises or hosted. Verified against real SQL Server instances.',
+    blurb: 'On-premises or hosted.',
+    caveat: 'Conformance suite passed against SQL Server 2022 through the tedious driver.',
     icon: Database,
-    availability: 'FULL',
     step: 'connection',
     connectionType: 'SQL_SERVER',
   },
@@ -85,9 +97,8 @@ export const CONNECTORS: Connector[] = [
     category: 'Databases',
     blurb: 'Azure SQL Database.',
     icon: Database,
-    availability: 'SIMULATED',
     caveat:
-      'Never run against a real Azure SQL database. Shares a driver with SQL Server, which is not evidence.',
+      'Implemented and never run against a real Azure SQL database. It shares a driver with SQL Server, and sharing an implementation is not evidence: Entra sign-in, firewall rules and throttling are what differ, and they are what break a connection.',
     step: 'connection',
     connectionType: 'AZURE_SQL',
   },
@@ -95,9 +106,9 @@ export const CONNECTORS: Connector[] = [
     id: 'postgres',
     name: 'PostgreSQL',
     category: 'Databases',
-    blurb: 'Verified against real PostgreSQL servers.',
+    blurb: 'Self-hosted or managed.',
+    caveat: 'Conformance suite passed against PostgreSQL 16 through the pg driver.',
     icon: Database,
-    availability: 'FULL',
     step: 'connection',
     connectionType: 'POSTGRES',
   },
@@ -105,9 +116,9 @@ export const CONNECTORS: Connector[] = [
     id: 'mysql',
     name: 'MySQL',
     category: 'Databases',
-    blurb: 'Verified against real MySQL servers.',
+    blurb: 'MySQL 8 or MariaDB.',
+    caveat: 'Conformance suite passed against MySQL 8.4 through the mysql2 driver.',
     icon: Database,
-    availability: 'FULL',
     step: 'connection',
     connectionType: 'MYSQL',
   },
@@ -117,9 +128,8 @@ export const CONNECTORS: Connector[] = [
     category: 'Business applications',
     blurb: 'A list, or a spreadsheet in a document library.',
     icon: Plug,
-    availability: 'SIMULATED',
     caveat:
-      'Built on Microsoft Graph and tested against a simulator. Never run against a real SharePoint tenant, and it needs a Microsoft sign-in, so a demo workspace cannot reach it.',
+      'Implemented on Microsoft Graph and never run against a real SharePoint tenant. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
     step: 'microsoft',
     connectionType: 'SHAREPOINT',
   },
@@ -129,9 +139,8 @@ export const CONNECTORS: Connector[] = [
     category: 'Business applications',
     blurb: 'A spreadsheet in your own OneDrive.',
     icon: Plug,
-    availability: 'SIMULATED',
     caveat:
-      'Built on Microsoft Graph and tested against a simulator. Never run against a real OneDrive, and it needs a Microsoft sign-in, so a demo workspace cannot reach it.',
+      'Implemented on Microsoft Graph and never run against a real OneDrive. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
     step: 'microsoft',
     connectionType: 'ONEDRIVE',
   },
@@ -141,8 +150,8 @@ export const CONNECTORS: Connector[] = [
     category: 'Business applications',
     blurb: 'Dynamics 365 and Power Platform environments.',
     icon: Plug,
-    availability: 'SIMULATED',
-    caveat: 'Built and tested against a simulator. Never run against a real Dataverse environment.',
+    caveat:
+      'Exercised only against our Dataverse simulator, which behaves like the real thing and is not it. Never run against a real Dataverse environment.',
     step: 'connection',
     connectionType: 'DATAVERSE',
   },
@@ -160,17 +169,51 @@ export const UPLOAD_FROM_COMPUTER: Connector = {
   id: 'upload',
   name: 'Upload from your computer',
   category: 'Files',
-  blurb: 'Excel (.xlsx), CSV or XML. Added straight to a project, with no connection to set up.',
+  blurb:
+    'Excel (.xlsx), CSV or XML from your computer. Added straight to a project, with no connection to set up.',
   icon: Upload,
-  availability: 'FULL',
 };
 
 export const AVAILABILITY_CHIP: Record<Availability, { label: string; cls: string } | null> = {
-  FULL: null,
-  CONNECTION_ONLY: { label: 'Connection only', cls: 'bg-sky-50 text-sky-800 ring-sky-200' },
+  LOCAL_FILE: { label: 'Local file', cls: 'bg-slate-100 text-slate-600 ring-slate-200' },
+  LIVE_VERIFIED: { label: 'Live verified', cls: 'bg-emerald-50 text-emerald-800 ring-emerald-200' },
+  NOT_LIVE_VERIFIED: { label: 'Not live verified', cls: 'bg-sky-50 text-sky-800 ring-sky-200' },
   SIMULATED: { label: 'Simulated', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
-  COMING_SOON: { label: 'Coming soon', cls: 'bg-slate-100 text-slate-500 ring-slate-200' },
 };
+
+/**
+ * The status for a connector, read from the evidence matrix rather than asserted here.
+ *
+ * ENGINE_VERIFIED means the conformance suite ran against a real server of that engine, through
+ * the driver and network path the product uses, and recorded the version it saw. Anything below
+ * that has not been run live, whatever else is true of it.
+ */
+export function availabilityOf(connector: {
+  connectionType?: string;
+  category: SourceCategory;
+}): Availability {
+  if (connector.category === 'Files') return 'LOCAL_FILE';
+  const type = connector.connectionType as ConnectionType | undefined;
+  if (!type) return 'NOT_LIVE_VERIFIED';
+  /*
+   * Judged on the capabilities a server can actually prove, not on every row.
+   *
+   * `summaryLevel` takes the worst level in the matrix, and `transformations` sits at IMPLEMENTED
+   * for every connector by design: transformations run in the engine above the connector, so their
+   * level is a statement about our code rather than about anybody's database. Including it dragged
+   * SQL Server, PostgreSQL and MySQL down to "Not live verified" while the conformance evidence
+   * recorded ten of ten passing against real servers.
+   */
+  const row = CONNECTOR_VERIFICATION[type];
+  if (!row) return 'NOT_LIVE_VERIFIED';
+  const provable = ENGINE_PROVABLE.map((k) => row[k]).filter(
+    (l): l is NonNullable<typeof l> => Boolean(l) && l !== 'NOT_SUPPORTED',
+  );
+  if (provable.length > 0 && provable.every((l) => l === 'ENGINE_VERIFIED' || l === 'ENVIRONMENT_VERIFIED'))
+    return 'LIVE_VERIFIED';
+  if (summaryLevel(type) === 'SIMULATED') return 'SIMULATED';
+  return 'NOT_LIVE_VERIFIED';
+}
 
 const CATEGORY_ORDER: SourceCategory[] = ['Files', 'Databases', 'Business applications'];
 
@@ -195,21 +238,18 @@ export function SourceGallery({
                 .filter((c) => c.category === category)
                 .map((connector) => {
                   const Icon = connector.icon;
-                  const chip = AVAILABILITY_CHIP[connector.availability];
-                  const disabled = connector.availability === 'COMING_SOON';
+                  const availability = availabilityOf(connector);
+                  const chip = AVAILABILITY_CHIP[availability];
                   return (
                     <button
                       key={connector.id}
                       type="button"
                       data-testid={`connector-${connector.id}`}
-                      disabled={disabled}
                       onClick={() => onChoose(connector)}
                       className={cx(
-                        'flex gap-3 rounded-lg border p-3 text-left transition-colors',
+                        'flex gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition-colors',
+                        'hover:border-brand-300 hover:bg-brand-50/30',
                         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600',
-                        disabled
-                          ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
-                          : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/30',
                       )}
                     >
                       <Icon className="mt-0.5 h-5 w-5 flex-none text-slate-400" aria-hidden />
@@ -233,8 +273,8 @@ export function SourceGallery({
                             className={cx(
                               'mt-1 text-xs leading-relaxed',
                               // A limit and a warning are different things, and reading identically
-                              // made the blue "connection only" chip argue with its own explanation.
-                              connector.availability === 'SIMULATED' ? 'text-amber-800' : 'text-slate-500',
+                              // made the blue chip argue with its own explanation.
+                              availability === 'SIMULATED' ? 'text-amber-800' : 'text-slate-500',
                             )}
                           >
                             {connector.caveat}

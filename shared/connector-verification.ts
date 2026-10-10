@@ -80,7 +80,7 @@ export const VERIFICATION_LABELS: Record<
   ENVIRONMENT_VERIFIED: {
     label: 'Environment verified',
     meaning:
-      'Run against a hosted environment matching how customers deploy it, including its authentication and network behaviour.',
+      'Run against a hosted environment matching how customers deploy it, including its authentication and network behavior.',
     evidence: 'Conformance tests against a managed or cloud-hosted instance.',
   },
 };
