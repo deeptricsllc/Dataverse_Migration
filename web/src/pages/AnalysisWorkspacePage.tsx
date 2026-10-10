@@ -73,7 +73,7 @@ export function AnalysisWorkspacePage() {
     },
   });
 
-  const analyse = useMutation({
+  const analyze = useMutation({
     mutationFn: (all: boolean) => api('POST', `/api/projects/${projectId}/analyse`, { all }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['assessment', projectId] }),
   });
@@ -82,7 +82,7 @@ export function AnalysisWorkspacePage() {
   if (project.error) return <ErrorState error={project.error} onRetry={() => project.refetch()} />;
   if (assessment.error) return <ErrorState error={assessment.error} onRetry={() => assessment.refetch()} />;
   const data = assessment.data!;
-  const analysed = data.datasets.filter((d) => d.analysed).length;
+  const analyzed = data.datasets.filter((d) => d.analysed).length;
   /*
    * How many datasets there are, counted the way the list counts them and the way a person would: the
    * sheets and tables, not the connections carrying them. The header said "1 dataset" above a list of
@@ -128,8 +128,8 @@ export function AnalysisWorkspacePage() {
             </Button>
             <AnalyseButton
               datasets={data.datasets}
-              running={analyse.isPending}
-              onAnalyse={(all) => analyse.mutate(all)}
+              running={analyze.isPending}
+              onAnalyse={(all) => analyze.mutate(all)}
             />
           </>
         }
@@ -138,17 +138,17 @@ export function AnalysisWorkspacePage() {
       {/* The scale of what was looked at, in the words a person would use. */}
       <p className="-mt-3 mb-5 text-sm text-slate-500">
         {/*
-          Table and record counts are only known once something has been analysed. Printing "0 tables ·
+          Table and record counts are only known once something has been analyzed. Printing "0 tables ·
           0 records" beside three files that plainly contain data reads as "these files are empty",
           which is both wrong and the opposite of reassuring.
         */}
         {datasetCount === 0
           ? 'No datasets.'
-          : analysed === 0
+          : analyzed === 0
             ? describeCount(datasetCount, 'dataset')
             : `${describeCount(datasetCount, 'dataset')} · ${data.records.toLocaleString()} records`}
         {analysedCount < datasetCount && datasetCount > 0 && (
-          <span className="text-amber-700"> · {datasetCount - analysedCount} not analysed yet</span>
+          <span className="text-amber-700"> · {datasetCount - analysedCount} not analyzed yet</span>
         )}
       </p>
 
@@ -169,7 +169,7 @@ export function AnalysisWorkspacePage() {
           data={data}
           onSeeAll={() => setSection('findings')}
           onAddDataset={() => setAdding(true)}
-          onAnalyse={() => analyse.mutate(false)}
+          onAnalyse={() => analyze.mutate(false)}
         />
       )}
       {section === 'datasets' && (
@@ -178,7 +178,7 @@ export function AnalysisWorkspacePage() {
           datasets={data.datasets}
           runs={data.runs}
           onAddDataset={() => setAdding(true)}
-          onAnalyseAll={() => analyse.mutate(true)}
+          onAnalyseAll={() => analyze.mutate(true)}
         />
       )}
       {section === 'findings' && (
@@ -208,7 +208,7 @@ export function AnalysisWorkspacePage() {
 /**
  * The one obvious next action, which depends on where the project has got to.
  *
- * Nothing analysed yet, something changed since it was, or everything up to date are three different
+ * Nothing analyzed yet, something changed since it was, or everything up to date are three different
  * situations, and a button that says "Analyse" in all three leaves the user to work out which they are
  * in. The count of what needs doing is on the button.
  */
@@ -227,7 +227,7 @@ function AnalyseButton({
    * Only the connections that resolve to something to read.
    *
    * A connection holding nothing chosen is not an analysable dataset, and the server refuses to
-   * analyse one. Offering the action anyway is how somebody pressed Analyse over a SharePoint
+   * analyze one. Offering the action anyway is how somebody pressed Analyze over a SharePoint
    * connection with no file selected and met `None of the requested tables exist in this source`
    * several minutes later. `unusable` comes from the server, because the screen cannot tell the
    * difference between a connection holding nothing and a database nobody has looked at yet — both
@@ -237,13 +237,13 @@ function AnalyseButton({
   if (usable.length === 0) {
     return (
       <Button variant="primary" disabled data-testid="analyse">
-        {datasets.length === 1 ? 'Nothing selected to analyse' : 'Nothing selected in any dataset'}
+        {datasets.length === 1 ? 'Nothing selected to analyze' : 'Nothing selected in any dataset'}
       </Button>
     );
   }
 
   /*
-   * Counted in datasets as the person sees them. A run covers a whole connection, but "Analyse 1 dataset"
+   * Counted in datasets as the person sees them. A run covers a whole connection, but "Analyze 1 dataset"
    * over a workbook they just chose three sheets from describes the machinery rather than the work.
    */
   const count = (of: AssessedDatasetDto[]) => of.reduce((n, d) => n + Math.max(d.objects.length, 1), 0);
@@ -256,7 +256,7 @@ function AnalyseButton({
   if (busy > 0) {
     return (
       <Button variant="primary" disabled loading data-testid="analyse">
-        Analysing {busy} of {total}
+        Analyzing {busy} of {total}
       </Button>
     );
   }
@@ -268,10 +268,10 @@ function AnalyseButton({
       onClick={() => onAnalyse(pending === 0)}
     >
       {pending === 0
-        ? 'Re-analyse'
+        ? 'Re-analyze'
         : pending === total
-          ? `Analyse ${total === 1 ? 'dataset' : `${total} datasets`}`
-          : `Analyse ${pending} of ${total}`}
+          ? `Analyze ${total === 1 ? 'dataset' : `${total} datasets`}`
+          : `Analyze ${pending} of ${total}`}
     </Button>
   );
 }
@@ -311,9 +311,9 @@ function Overview({
   const stale = data.datasets.filter((d) => d.state === 'STALE');
 
   /**
-   * Datasets exist but none has been analysed, so there is nothing to report yet.
+   * Datasets exist but none has been analyzed, so there is nothing to report yet.
    *
-   * Said as the next step rather than as an absence: "no findings" on a project nobody has analysed
+   * Said as the next step rather than as an absence: "no findings" on a project nobody has analyzed
    * reads as a clean bill of health, which is the opposite of the truth.
    */
   if (data.datasets.every((d) => !d.analysed)) {
@@ -321,16 +321,16 @@ function Overview({
       <Card>
         <EmptyState
           icon={<Database className="h-8 w-8" />}
-          title={busy ? 'Analysing your data…' : 'Nothing has been analysed yet'}
+          title={busy ? 'Analyzing your data…' : 'Nothing has been analyzed yet'}
           description={
             busy
               ? 'Reading every column, counting what is missing, looking for keys and duplicates. This page updates when it finishes.'
-              : `Analyse ${unanalysed.length === 1 ? 'this dataset' : `these ${unanalysed.length} datasets`} to discover migration risks, data-quality problems, structural issues and how ready the data is.`
+              : `Analyze ${unanalysed.length === 1 ? 'this dataset' : `these ${unanalysed.length} datasets`} to discover migration risks, data-quality problems, structural issues and how ready the data is.`
           }
           action={
             busy ? undefined : (
               <Button variant="primary" onClick={onAnalyse}>
-                Analyse {unanalysed.length === 1 ? 'dataset' : `${unanalysed.length} datasets`}
+                Analyze {unanalysed.length === 1 ? 'dataset' : `${unanalysed.length} datasets`}
               </Button>
             )
           }
@@ -354,7 +354,7 @@ function Overview({
           title={`${stale.length === 1 ? 'A dataset has' : `${stale.length} datasets have`} changed since this analysis`}
         >
           {stale.map((d) => d.name).join(', ')} {stale.length === 1 ? 'was' : 'were'} updated after the
-          analysis ran, so what follows may be out of date. Re-analyse to bring it up to date.
+          analysis ran, so what follows may be out of date. Re-analyze to bring it up to date.
         </Callout>
       )}
 
@@ -431,7 +431,7 @@ function Datasets({
    * Every dataset, flattened out of the connections that hold them.
    *
    * A connection with nothing selected yet is kept as a row of its own rather than dropped. It is in the
-   * project, the server will refuse to analyse it, and saying so is the only way the person finds out what
+   * project, the server will refuse to analyze it, and saying so is the only way the person finds out what
    * they have not finished doing.
    */
   const rows = useMemo<DatasetRow[]>(
@@ -518,7 +518,7 @@ function Datasets({
         </Button>
         {datasets.some((d) => d.analysed) && (
           <Button variant="ghost" onClick={onAnalyseAll}>
-            Re-analyse everything
+            Re-analyze everything
           </Button>
         )}
       </div>
@@ -602,7 +602,7 @@ function DatasetRowItem({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-slate-900">{dataset.name}</p>
           <p className="text-xs text-slate-500">
-            {datasetKindLabel(dataset)} · its tables are listed once it has been analysed.
+            {datasetKindLabel(dataset)} · its tables are listed once it has been analyzed.
           </p>
         </div>
         <DatasetState dataset={dataset} />
@@ -780,10 +780,10 @@ function RemoveDataset({
  */
 function DatasetState({ dataset }: { dataset: AssessedDatasetDto }) {
   const chip: Record<DatasetAnalysisState, { label: string; cls: string }> = {
-    NOT_ANALYSED: { label: 'Not analysed', cls: 'bg-slate-100 text-slate-600 ring-slate-200' },
+    NOT_ANALYSED: { label: 'Not analyzed', cls: 'bg-slate-100 text-slate-600 ring-slate-200' },
     QUEUED: { label: 'Queued', cls: 'bg-sky-50 text-sky-700 ring-sky-200' },
-    RUNNING: { label: 'Analysing…', cls: 'bg-sky-50 text-sky-700 ring-sky-200' },
-    ANALYSED: { label: 'Analysed', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+    RUNNING: { label: 'Analyzing…', cls: 'bg-sky-50 text-sky-700 ring-sky-200' },
+    ANALYSED: { label: 'Analyzed', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
     STALE: { label: 'Changed since analysis', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
     FAILED: { label: 'Analysis failed', cls: 'bg-red-50 text-red-700 ring-red-200' },
   };

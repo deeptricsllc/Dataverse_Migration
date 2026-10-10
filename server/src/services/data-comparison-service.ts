@@ -400,7 +400,7 @@ export class DataComparisonService {
         : {
             check: 'SCHEMA',
             outcome: 'WARNING',
-            message: `${gaps.onlyInLeft.length} column(s) exist only on the left and ${gaps.onlyInRight.length} only on the right. A column missing on one side is never a value difference — it is reported here instead.`,
+            message: `${gaps.onlyInLeft.length} column(s) exist only on the left and ${gaps.onlyInRight.length} only on the right. A column missing on one side is never a value difference, so it is reported here instead.`,
           },
     );
 
@@ -583,7 +583,7 @@ export class DataComparisonService {
               // different key here, exactly as it is a different value everywhere else in the
               // product. Saying so costs a sentence and saves the first hour of investigation.
               (totals.onlyInLeft > 0 && totals.onlyInRight > 0
-                ? '. Unmatched on both sides at once often means the key itself does not line up — a key differing only in case or leading whitespace counts as a different key, so the same record appears in both lists.'
+                ? '. Unmatched on both sides at once often means the key itself does not line up: a key differing only in case or leading whitespace counts as a different key, so the same record appears in both lists.'
                 : ''),
           },
     );

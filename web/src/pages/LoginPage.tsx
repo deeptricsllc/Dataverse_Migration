@@ -99,7 +99,7 @@ export function LoginPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/60">
             <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Analyse, map, migrate and validate — with your organizational account.
+              Analyze, map, migrate and validate with your organizational account.
             </p>
             <div className="mt-6 space-y-3">
               {errorCode && (
@@ -187,7 +187,7 @@ export function LoginPage() {
             {config.data?.signUpEnabled ? (
               <p className="mt-1.5 leading-relaxed text-slate-600">
                 There is nothing separate to create. Signing in with a Microsoft work account sets up your
-                workspace the first time somebody from your tenant arrives — and that first person becomes its
+                workspace the first time somebody from your tenant arrives, and that first person becomes its
                 administrator. Everyone after them joins the same workspace.
               </p>
             ) : (

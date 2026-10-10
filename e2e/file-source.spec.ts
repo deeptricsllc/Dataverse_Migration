@@ -45,8 +45,16 @@ test('a file is a dataset, and Connections is for systems', async ({ page }) => 
   // And a file is not something you connect to.
   await page.getByTestId('add-connection').click();
   await expect(page.getByText('What are you connecting to?')).toBeVisible();
-  await expect(page.getByTestId('connection-type-SQL_SERVER')).toBeVisible();
-  await expect(page.getByTestId('connection-type-FILE')).toHaveCount(0);
+  await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
+  /*
+   * Files are offered here now, and still are not a connection.
+   * The screen used to prove that by having no file option at all, which taught nobody anything
+   * and sent people away believing the product could not read a spreadsheet. The card says where
+   * files go instead, and choosing it creates a project rather than a connection.
+   */
+  const upload = page.getByTestId('connector-upload');
+  await expect(upload).toBeVisible();
+  await expect(upload).toContainText('Upload from your computer');
   // No type chosen yet, so the dialog offers only a way out. The footer one, not the header's X.
   await page
     .getByRole('dialog', { name: 'Add connection' })

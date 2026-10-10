@@ -117,7 +117,7 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
   // Now — and only now — the action is offered, and it names what it will do.
   const analyse = page.getByTestId('analyse');
   await expect(analyse).toBeEnabled();
-  await expect(analyse).toContainText(/Analyse/);
+  await expect(analyse).toContainText(/Analyze/);
   await shot(page, 'analyse-offered-once-data-is-chosen');
   await analyse.click();
 
@@ -127,7 +127,7 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
    * queued — and "8 records" was already on the row from the import, so it would have passed over
    * an analysis that never finished. The state badge is the thing that changes.
    */
-  await expect(page.getByTestId('dataset-row')).toContainText('Analysed', { timeout: 300_000 });
+  await expect(page.getByTestId('dataset-row')).toContainText('Analyzed', { timeout: 300_000 });
   await shot(page, 'analysis-result-for-the-chosen-file');
 
   /*

@@ -17,23 +17,24 @@ import { AlertTriangle, CheckCircle2, CircleDashed, PlugZap, RefreshCw, XCircle 
 import { useState, type ReactNode } from 'react';
 import { patch, post } from '../lib/api';
 import { Button, Callout, ErrorState, Modal } from './ui';
+import { CONNECTORS, SourceGallery, UPLOAD_FROM_COMPUTER, type Connector } from './SourceGallery';
 
 type SqlType = SqlConnectionType;
 
-const TYPE_HINTS: Record<ConnectionType, string> = {
-  DATAVERSE: 'Discovered from your Microsoft account.',
-  SQL_SERVER: 'On-premises or self-hosted SQL Server.',
-  AZURE_SQL: 'Azure SQL Database or Managed Instance.',
-  POSTGRES: 'PostgreSQL 12 or later — self-hosted or managed (RDS, Cloud SQL, Neon, Supabase).',
-  MYSQL: 'MySQL 8 or MariaDB 10.5 or later.',
-  FILE: 'Upload a file from this computer: CSV, Excel or XML. Read-only — a file is never a migration target.',
-  ONEDRIVE: 'A spreadsheet in OneDrive or a SharePoint document library. Read-only.',
-  SHAREPOINT: 'A SharePoint list. Read-only.',
-};
+/**
+ * The sources this screen offers, which is every connector that is reached by configuring access,
+ * plus one card for files.
+ *
+ * The three file formats are collapsed into a single "Upload from your computer" card here. Inside
+ * a project the distinction between CSV, Excel and XML matters, because each one asks a different
+ * next question. On this screen it does not: the answer to all three is the same, and it is "not
+ * here, in a project".
+ */
+const CONNECTABLE: Connector[] = CONNECTORS.filter((c) => c.connectionType);
 
 /** The kinds that are a file or a list rather than a server, so the form asks for nothing. */
 const STAGED_HINT =
-  'This source holds data you import into it. Create it, then upload a file — there is no server to reach, so there is no host, port or password.';
+  'This source holds data you import into it. Create it, then upload a file. There is no server to reach, so there is no host, port or password.';
 
 const AUTH_LABELS: Record<SqlAuthType, string> = {
   SQL_LOGIN: 'SQL authentication (login and password)',
@@ -162,6 +163,7 @@ export function ConnectionModal({
   onSaved,
   onDiscover,
   discovering,
+  onUploadChosen,
 }: {
   connection: EnvironmentDto | null;
   /**
@@ -175,6 +177,14 @@ export function ConnectionModal({
   onSaved: (connection: EnvironmentDto) => void;
   onDiscover: () => void;
   discovering: boolean;
+  /**
+   * What to do when somebody picks "Upload from your computer".
+   *
+   * The connections screen passes a handler that takes them to a project, because that is where a
+   * file goes. Opened from inside a project, the question has already been answered and the card
+   * is not shown at all.
+   */
+  onUploadChosen?: () => void;
 }) {
   const [type, setType] = useState<ConnectionType | null>(connection?.connectionType ?? initialType ?? null);
   /** Choosing a server kind moves the port to the one it listens on, unless it was edited. */
@@ -304,51 +314,35 @@ export function ConnectionModal({
           Asked once. Opened from "add a dataset → SQL Server", the picker was asking a question the person
           had answered on the previous screen, and offering seven ways to contradict themselves.
         */}
+        {/*
+          The same gallery the add-dataset drawer shows, from the same list.
+          This screen used to render its own grid of seven radio buttons with no file option, on the
+          reasoning that a spreadsheet is not a connection. That is true and it is not something a
+          person can be expected to infer from an absence: somebody looking for "upload a
+          spreadsheet" found nothing here and concluded the product could not read one.
+        */}
         {!connection && !initialType && (
-          <fieldset>
-            <legend className="text-xs font-medium text-slate-600">What are you connecting to?</legend>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {/*
-                No file option. A spreadsheet on somebody's laptop is not reusable authenticated access to
-                a system — it is the data itself — and making people create a "connection" before they
-                could upload one was an implementation detail wearing the product's vocabulary. Files are
-                added as datasets, inside the project that wants them.
-              */}
-              {(
-                [
-                  'DATAVERSE',
-                  'SQL_SERVER',
-                  'AZURE_SQL',
-                  'POSTGRES',
-                  'MYSQL',
-                  'ONEDRIVE',
-                  'SHAREPOINT',
-                ] as ConnectionType[]
-              ).map((t) => (
-                <label
-                  key={t}
-                  data-testid={`connection-type-${t}`}
-                  className="flex cursor-pointer gap-2 rounded-md border border-slate-200 p-2 text-sm has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50"
-                >
-                  <input
-                    type="radio"
-                    name="connection-type"
-                    value={t}
-                    checked={type === t}
-                    onChange={() => {
-                      chooseType(t);
-                      setResult(null);
-                    }}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    <span className="font-medium">{CONNECTION_TYPE_LABELS[t]}</span>
-                    <span className="block text-xs text-slate-500">{TYPE_HINTS[t]}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <SourceGallery
+            intro="What are you connecting to?"
+            /*
+             * The upload card only where it leads somewhere.
+             * Opened from the connections screen there is no project yet, so the card says where
+             * files go and takes the person there. Opened from the new-project form there is a
+             * half-filled form on screen: navigating away would throw away what they typed, and a
+             * card that did nothing would be worse than no card at all.
+             */
+            connectors={onUploadChosen ? [UPLOAD_FROM_COMPUTER, ...CONNECTABLE] : CONNECTABLE}
+            onChoose={(c) => {
+              if (c.id === UPLOAD_FROM_COMPUTER.id) {
+                onUploadChosen?.();
+                return;
+              }
+              if (c.connectionType) {
+                chooseType(c.connectionType as ConnectionType);
+                setResult(null);
+              }
+            }}
+          />
         )}
 
         {type === null && <p className="text-sm text-slate-500">Choose a connection type to continue.</p>}
@@ -357,7 +351,7 @@ export function ConnectionModal({
           <>
             <Callout tone="info" title="Dataverse environments are discovered, not typed in">
               Discovery asks the Microsoft Global Discovery Service which environments your account can reach
-              and lists them here. An environment that does not appear is one your account has no access to —
+              and lists them here. An environment that does not appear is one your account has no access to,
               there is nothing to configure by hand.
             </Callout>
             <Button
@@ -406,7 +400,7 @@ export function ConnectionModal({
                 value={form.displayName}
                 onChange={(e) => update({ displayName: e.target.value })}
                 placeholder={
-                  isAzure ? 'Azure SQL — sales' : isPostgres ? 'Analytics Postgres' : 'Legacy SQL Server'
+                  isAzure ? 'Azure SQL (sales)' : isPostgres ? 'Analytics Postgres' : 'Legacy SQL Server'
                 }
                 maxLength={200}
                 className={INPUT}
@@ -471,7 +465,7 @@ export function ConnectionModal({
                 {(Object.keys(AUTH_LABELS) as SqlAuthType[]).map((a) => (
                   <option key={a} value={a} disabled={!SQL_AUTH_IMPLEMENTED.has(a)}>
                     {AUTH_LABELS[a]}
-                    {SQL_AUTH_IMPLEMENTED.has(a) ? '' : ' — not implemented yet'}
+                    {SQL_AUTH_IMPLEMENTED.has(a) ? '' : ' (not implemented yet)'}
                   </option>
                 ))}
               </select>

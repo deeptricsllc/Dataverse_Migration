@@ -90,7 +90,7 @@ export function normalizeForCompare(
        *
        * `Boolean('false')` is true, so a target returning a bit column as the text 'false' compared
        * equal to a source `true` — a difference reported as a match, which is the direction that
-       * matters. The recognised spellings are the ones engines actually emit; anything else is
+       * matters. The recognized spellings are the ones engines actually emit; anything else is
        * returned as text so two unrecognised values are compared literally rather than guessed at.
        */
       if (typeof value === 'boolean') return value;
@@ -224,7 +224,7 @@ function binaryBytes(value: FieldValue): Bytes {
     if (BASE64.test(value) && value.length % 4 === 0) {
       return { bytes: Uint8Array.from(Buffer.from(value, 'base64')) };
     }
-    return { unavailable: 'the value is text in a form this platform does not recognise as bytes' };
+    return { unavailable: 'the value is text in a form this platform does not recognize as bytes' };
   }
   return { unavailable: `a ${typeof value} is not a binary value this platform can read` };
 }

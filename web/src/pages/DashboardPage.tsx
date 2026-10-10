@@ -58,7 +58,7 @@ export function DashboardPage() {
 
       {/*
         What this product does, as three choices rather than a sentence.
-        First thing on the first screen, because somebody who cannot tell Analyse from Migrate cannot
+        First thing on the first screen, because somebody who cannot tell Analyze from Migrate cannot
         start — and a description in the header is read by nobody.
       */}
       <section className="mb-6">
@@ -223,8 +223,8 @@ export function DashboardPage() {
             >
               {d.recentAnalyses.length === 0 ? (
                 <p className="text-sm text-slate-500">
-                  No analyses yet. An analysis project reads a source and reports what is in it — read-only,
-                  with no target involved.
+                  No analyzes yet. An analysis project reads a source and reports what is in it. It is
+                  read-only, with no target involved.
                 </p>
               ) : (
                 <Table>
@@ -376,7 +376,7 @@ export function DashboardPage() {
           {d.projects.migration === 0 && d.projects.analysis > 0 && (
             <Card title="Next step">
               <p className="text-sm text-slate-600">
-                You have analysed a source. Create a{' '}
+                You have analyzed a source. Create a{' '}
                 <Link to="/projects" className="text-brand-700 underline">
                   migration project
                 </Link>{' '}

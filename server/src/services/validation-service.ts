@@ -1267,7 +1267,7 @@ export class ValidationService {
                 message:
                   `${absent} record(s) are not in the target` +
                   (base.failedInRun
-                    ? ` — ${base.failedInRun} the run reported as failed` +
+                    ? `, of which ${base.failedInRun} the run reported as failed` +
                       (base.missing ? `, ${base.missing} it did not` : '')
                     : '') +
                   `${sampleNote}`,
@@ -1314,7 +1314,7 @@ export class ValidationService {
         ? {
             check: 'FIELD_VALUES',
             outcome: 'FAIL',
-            message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)${breakdown ? ` — ${breakdown}` : ''}`,
+            message: `${valueFails} field mismatch(es) across ${cmp.different} record(s)${breakdown ? `: ${breakdown}` : ''}`,
           }
         : preExisting > 0
           ? {

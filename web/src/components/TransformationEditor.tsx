@@ -153,7 +153,7 @@ export function TransformationEditor({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Transformations — ${mapping.sourceDisplayName} → ${mapping.targetField ?? '(unmapped)'}`}
+      title={`Transformations: ${mapping.sourceDisplayName} → ${mapping.targetField ?? '(unmapped)'}`}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -265,7 +265,7 @@ export function TransformationEditor({
 
         <div>
           <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500">
-            Preview — real source values, the engine the migration uses
+            Preview: real source values, run through the engine the migration uses
           </h3>
           {preview.isPending && <Spinner label="Running the pipeline…" />}
           {preview.error && <ErrorState error={preview.error} />}
@@ -425,7 +425,7 @@ function RuleParameters({
             value={rule.inputFormat ?? ''}
             onChange={(v) => onChange({ inputFormat: v || null })}
             options={[
-              { value: '', label: 'Standard (ISO) — an ambiguous date is refused' },
+              { value: '', label: 'Standard (ISO): an ambiguous date is refused' },
               ...DATE_FORMATS.map((f) => ({ value: f, label: f })),
             ]}
           />

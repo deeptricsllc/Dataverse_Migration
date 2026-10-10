@@ -1147,7 +1147,7 @@ export const projectSources = pgTable(
      * Which objects of the connection are this project's datasets.
      *
      * Null means everything in it, which is what a project created before objects could be chosen means
-     * and must go on meaning. Named as the catalogue names them: `dbo.Customer`, or an entity logical name.
+     * and must go on meaning. Named as the catalog names them: `dbo.Customer`, or an entity logical name.
      */
     selectedObjects: text('selected_objects').array(),
     addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -1189,7 +1189,7 @@ export const analysisRuns = pgTable(
 );
 
 /**
- * One analysed table. The full column profile is stored because profiling costs a full read of the
+ * One analyzed table. The full column profile is stored because profiling costs a full read of the
  * source: an analysis nobody can come back to next week is not an analysis.
  */
 /**

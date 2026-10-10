@@ -58,7 +58,7 @@ export const VERIFICATION_LABELS: Record<
   },
   UNIT_TESTED: {
     label: 'Unit tested',
-    meaning: 'The logic is tested in isolation — queries, quoting, type mapping.',
+    meaning: 'The logic is tested in isolation: queries, quoting and type mapping.',
     evidence: 'Unit tests. No database of any kind was involved.',
   },
   IMPLEMENTED: {
@@ -68,7 +68,7 @@ export const VERIFICATION_LABELS: Record<
   },
   ENGINE_COMPATIBLE: {
     label: 'Engine compatible',
-    meaning: 'Run against a genuine build of the engine, but in-process — no server, driver or network.',
+    meaning: 'Run against a genuine build of the engine, but in-process, so no server, driver or network.',
     evidence: 'Tests against an embedded build. Proves the SQL and the catalog, not the connection path.',
   },
   ENGINE_VERIFIED: {
@@ -80,7 +80,7 @@ export const VERIFICATION_LABELS: Record<
   ENVIRONMENT_VERIFIED: {
     label: 'Environment verified',
     meaning:
-      'Run against a hosted environment matching how customers deploy it, including its authentication and network behaviour.',
+      'Run against a hosted environment matching how customers deploy it, including its authentication and network behavior.',
     evidence: 'Conformance tests against a managed or cloud-hosted instance.',
   },
 };

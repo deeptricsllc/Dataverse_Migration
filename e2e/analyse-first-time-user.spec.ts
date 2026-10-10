@@ -36,17 +36,17 @@ async function shot(page: Page, name: string) {
 }
 
 /**
- * Wait until every dataset has finished, rather than until the word "Analysed" appears.
+ * Wait until every dataset has finished, rather than until the word "Analyzed" appears.
  *
- * The first dataset to finish puts "Analysed" on the screen while the rest are still running, so
+ * The first dataset to finish puts "Analyzed" on the screen while the rest are still running, so
  * matching that text photographs a half-finished project and reads a readiness score computed from
  * part of it. That is how the overview defect below went unnoticed for a run. The header's amber
  * "N not analysed yet" is the signal that is absent only when the work is actually done.
  */
 async function waitForAllAnalysed(page: Page) {
   const main = page.getByRole('main');
-  await expect(main).toContainText('Analysed', { timeout: 600_000 });
-  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  await expect(main).toContainText('Analyzed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analyzed yet', { timeout: 600_000 });
   await expect(page.getByRole('button', { name: /Analysing/ })).toHaveCount(0, { timeout: 600_000 });
 }
 
@@ -199,7 +199,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   }
   for (const sheet of ['Customers', 'Contacts', 'Orders']) {
     // The control names what ticking it does: "Analyse Customers".
-    await preview.getByRole('checkbox', { name: new RegExp(`Analyse .*${sheet}`, 'i') }).check();
+    await preview.getByRole('checkbox', { name: new RegExp(`Analyze .*${sheet}`, 'i') }).check();
   }
   await shot(page, 'three-of-four-sheets-chosen');
   await page.getByTestId('confirm-add-dataset').click();
@@ -311,7 +311,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   await expect(page.getByRole('main')).toContainText('205', { timeout: 120_000 });
   await page.getByRole('tab', { name: /Datasets/ }).click();
   await expect(page.getByTestId('dataset-row')).toHaveCount(4, { timeout: 120_000 });
-  await expect(page.getByRole('main')).toContainText('Analysed');
+  await expect(page.getByRole('main')).toContainText('Analyzed');
   await shot(page, 'reopened-later');
 
   expect(consoleErrors, consoleErrors.join('\n')).toEqual([]);

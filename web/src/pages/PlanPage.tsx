@@ -506,7 +506,7 @@ export function MappingStep({
         {entity && <ObjectMappingCard plan={plan} entity={entity} onPlan={onPlan} />}
         {entity && (
           <Card
-            title={`${entity.displayName} — record matching`}
+            title={`${entity.displayName}: record matching`}
             subtitle="How existing target records are identified (prevents duplicates)."
             actions={
               onNext ? (
@@ -559,7 +559,7 @@ export function MappingStep({
                 <p className="text-xs text-amber-900">
                   Dataverse does not enforce uniqueness for a business key. Records matching more than one
                   target are reported as conflicts and never written. Pick columns that identify a record
-                  uniquely — a display name alone usually does not.
+                  uniquely. A display name alone usually does not.
                 </p>
                 <div className="mt-2 flex max-h-40 flex-wrap gap-x-4 gap-y-1 overflow-y-auto">
                   {(mappings.data?.mappings ?? [])
@@ -629,7 +629,7 @@ export function MappingStep({
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Suggestions — review before accepting
+                    Suggestions: review before accepting
                   </p>
                   {openSuggestions.map((s) => {
                     const m = mappings.data?.mappings.find((x) => x.sourceField === s.sourceField);
@@ -1313,7 +1313,7 @@ export function ExecuteModal({
             <ul className="mt-2 max-h-32 space-y-0.5 overflow-y-auto text-xs">
               {substitutions.unresolvedPrincipals.slice(0, 10).map((u) => (
                 <li key={`${u.logicalName}:${u.id}`}>
-                  {u.name ?? u.id} — {fmtNumber(u.records)} record(s) · {u.fields.join(', ')}
+                  {u.name ?? u.id}: {fmtNumber(u.records)} record(s) · {u.fields.join(', ')}
                 </li>
               ))}
               {substitutions.unresolvedPrincipals.length > 10 && (
@@ -1429,7 +1429,7 @@ function PolicyControls({
             [
               'PRESERVE_ATTRIBUTION',
               'Preserve attribution (adds created by / modified by)',
-              'Writes each record while impersonating the mapped user, then re-stamps modified by — approximately one extra write per record. Requires the “Act on Behalf of Another User” privilege.',
+              'Writes each record while impersonating the mapped user, then re-stamps modified by, which is roughly one extra write per record. Requires the “Act on Behalf of Another User” privilege.',
             ],
           ] as [AuditPolicy, string, string][]
         ).map(([value, label, help]) => (
@@ -1471,12 +1471,12 @@ function PolicyControls({
             [
               [
                 'STRICT',
-                'Strict — block the record',
+                'Strict: block the record',
                 'A record whose owner or user field cannot be mapped is not written at all. Nothing is silently reassigned.',
               ],
               [
                 'FALLBACK',
-                'Fallback — use a chosen identity',
+                'Fallback: use a chosen identity',
                 'Unresolved references use the identity you pick below. Every substitution is recorded per record and exported.',
               ],
             ] as [UserResolutionPolicy, string, string][]

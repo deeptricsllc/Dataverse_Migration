@@ -51,7 +51,7 @@ export class ZipStream {
       for await (const piece of deflate) chunks.push(piece as Buffer);
     })();
 
-    for await (const piece of normalise(source)) {
+    for await (const piece of normalize(source)) {
       bytes += piece.length;
       hash.update(piece);
       crc = updateCrc(crc, piece);
@@ -107,7 +107,7 @@ export class ZipStream {
   }
 }
 
-function normalise(source: AsyncIterable<Buffer | string> | Buffer | string): AsyncIterable<Buffer> {
+function normalize(source: AsyncIterable<Buffer | string> | Buffer | string): AsyncIterable<Buffer> {
   if (typeof source === 'string') return Readable.from([Buffer.from(source, 'utf8')]);
   if (Buffer.isBuffer(source)) return Readable.from([source]);
   return (async function* () {

@@ -344,7 +344,7 @@ function scaleFindings(plan: MigrationPlanDto): ReadinessFinding[] {
     overridability: 'OVERRIDABLE_WITH_EXPLICIT_ACKNOWLEDGEMENT' as const,
     object: { kind: 'TABLE' as const, name: e.logicalName },
     evidence: `${e.logicalName} holds ${(e.sourceCount ?? 0).toLocaleString()} records. The measured limit is ${MEASURED_PER_TABLE.toLocaleString()} per table.`,
-    explanation: 'Behaviour above the measured limit is extrapolated. Expect a longer run, not a failure.',
+    explanation: 'Behavior above the measured limit is extrapolated. Expect a longer run, not a failure.',
     recommendation: 'Validate at STANDARD depth. Run a smaller first pass to measure the rate.',
     source: 'SCALE_ENVELOPE' as const,
   }));

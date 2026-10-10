@@ -1,16 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  CheckCircle2,
-  Database,
-  FileCode,
-  FileSpreadsheet,
-  Plug,
-  Search,
-  Upload,
-} from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Database, FileSpreadsheet, Search, Upload } from 'lucide-react';
 import type {
   ConnectionType,
   EnvironmentDto,
@@ -25,6 +16,19 @@ import { api } from '../lib/api';
 import { ObjectPicker } from './ObjectPicker';
 import { describeCount } from '../lib/format';
 import { ConnectionModal } from './ConnectionForm';
+import { availabilityOf, CONNECTORS, SourceGallery, type Connector } from './SourceGallery';
+
+/**
+ * What the upload step accepts, and how much of it.
+ *
+ * The size ceiling is the server's 48 MB body limit less the third that base64 adds, rounded down.
+ * Checked here as well as there because the server can only refuse after the whole file has been
+ * encoded and sent, which on a slow connection is a long wait for a number nobody can act on.
+ */
+const MAX_UPLOAD_MB = 36;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const EXCEL_EXTENSIONS = '.xlsx';
+const TABULAR_EXTENSIONS = '.csv,.tsv,.txt,.xml';
 
 /**
  * Adding data to an analysis project.
@@ -47,143 +51,6 @@ type Step = 'gallery' | 'file' | 'connection' | 'microsoft';
  * Anything less is named rather than rounded up. Eight cards that each stop somewhere different, all
  * looking identical, is the version of this screen that costs somebody a week of planning.
  */
-type Availability = 'FULL' | 'CONNECTION_ONLY' | 'SIMULATED' | 'COMING_SOON';
-
-interface Connector {
-  id: string;
-  name: string;
-  category: 'Files' | 'Databases' | 'Microsoft';
-  blurb: string;
-  icon: typeof Database;
-  availability: Availability;
-  /** What the state means for this connector, in one line. Required for anything short of `FULL`. */
-  caveat?: string;
-  step: Step;
-  connectionType?: string;
-}
-
-/**
- * What this product can actually read today.
- *
- * `SIMULATED` is on the card, not in a footnote. Dataverse has never been executed against a real
- * environment — see docs/DATAVERSE_REAL_TENANT_READ_ONLY_CERTIFICATION.md — and a gallery that showed it
- * identically to CSV would be the most expensive kind of lie this product could tell, because somebody
- * would plan around it.
- */
-const CONNECTORS: Connector[] = [
-  {
-    id: 'csv',
-    name: 'CSV',
-    category: 'Files',
-    blurb: 'Comma, semicolon or tab separated. The usual shape of a legacy export.',
-    icon: FileSpreadsheet,
-    availability: 'FULL',
-    step: 'file',
-  },
-  {
-    id: 'excel',
-    name: 'Excel',
-    category: 'Files',
-    blurb: 'A workbook. Choose which sheets you want — the notes tab does not have to come with them.',
-    icon: FileSpreadsheet,
-    availability: 'FULL',
-    step: 'file',
-  },
-  {
-    id: 'xml',
-    name: 'XML',
-    category: 'Files',
-    blurb: 'A record-per-element export. Attributes and child elements become columns.',
-    icon: FileCode,
-    availability: 'FULL',
-    step: 'file',
-  },
-  {
-    id: 'sqlserver',
-    name: 'SQL Server',
-    category: 'Databases',
-    blurb: 'On-premises or hosted. Verified against real SQL Server instances.',
-    icon: Database,
-    availability: 'FULL',
-    step: 'connection',
-    connectionType: 'SQL_SERVER',
-  },
-  {
-    id: 'azuresql',
-    name: 'Azure SQL',
-    category: 'Databases',
-    blurb: 'Azure SQL Database.',
-    icon: Database,
-    availability: 'SIMULATED',
-    caveat:
-      'Never run against a real Azure SQL database. Shares a driver with SQL Server, which is not evidence.',
-    step: 'connection',
-    connectionType: 'AZURE_SQL',
-  },
-  {
-    id: 'postgres',
-    name: 'PostgreSQL',
-    category: 'Databases',
-    blurb: 'Verified against real PostgreSQL servers.',
-    icon: Database,
-    availability: 'FULL',
-    step: 'connection',
-    connectionType: 'POSTGRES',
-  },
-  {
-    id: 'mysql',
-    name: 'MySQL',
-    category: 'Databases',
-    blurb: 'Verified against real MySQL servers.',
-    icon: Database,
-    availability: 'FULL',
-    step: 'connection',
-    connectionType: 'MYSQL',
-  },
-  {
-    id: 'sharepoint',
-    name: 'SharePoint',
-    category: 'Microsoft',
-    blurb: 'A list, or a spreadsheet in a document library.',
-    icon: Plug,
-    availability: 'SIMULATED',
-    caveat:
-      'Implemented against Microsoft Graph and tested against a simulator. Never run against a real SharePoint tenant, and it needs a Microsoft sign-in — a demo workspace cannot reach it.',
-    step: 'microsoft',
-    connectionType: 'SHAREPOINT',
-  },
-  {
-    id: 'onedrive',
-    name: 'OneDrive',
-    category: 'Microsoft',
-    blurb: 'A spreadsheet in your own OneDrive.',
-    icon: Plug,
-    availability: 'SIMULATED',
-    caveat:
-      'Implemented against Microsoft Graph and tested against a simulator. Never run against a real OneDrive, and it needs a Microsoft sign-in — a demo workspace cannot reach it.',
-    step: 'microsoft',
-    connectionType: 'ONEDRIVE',
-  },
-  {
-    id: 'dataverse',
-    name: 'Microsoft Dataverse',
-    category: 'Microsoft',
-    blurb: 'Dynamics 365 and Power Platform environments.',
-    icon: Plug,
-    availability: 'SIMULATED',
-    caveat: 'Implemented and tested against a simulator. Never run against a real Dataverse environment.',
-    step: 'connection',
-    connectionType: 'DATAVERSE',
-  },
-];
-
-const AVAILABILITY_CHIP: Record<Availability, { label: string; cls: string } | null> = {
-  FULL: null,
-  CONNECTION_ONLY: { label: 'Connection only', cls: 'bg-sky-50 text-sky-800 ring-sky-200' },
-  SIMULATED: { label: 'Simulated', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
-  COMING_SOON: { label: 'Coming soon', cls: 'bg-slate-100 text-slate-500 ring-slate-200' },
-};
-
 export function AddDatasetDrawer({
   project,
   open,
@@ -226,10 +93,14 @@ export function AddDatasetDrawer({
       )}
 
       {step === 'gallery' && (
-        <Gallery
+        <SourceGallery
+          connectors={CONNECTORS}
+          intro="Where does this data live?"
           onChoose={(c) => {
             setConnector(c);
-            setStep(c.step);
+            // Every connector in this gallery has a step; the upload card that does not is only
+            // shown on the connections screen, which routes rather than advancing a drawer.
+            if (c.step) setStep(c.step);
           }}
         />
       )}
@@ -245,72 +116,6 @@ export function AddDatasetDrawer({
 }
 
 // ---------------------------------------------------------------------------
-
-function Gallery({ onChoose }: { onChoose: (c: Connector) => void }) {
-  const categories = ['Files', 'Databases', 'Microsoft'] as const;
-  return (
-    <div className="space-y-5">
-      <p className="text-sm text-slate-600">Where does this data live?</p>
-      {categories.map((category) => (
-        <section key={category}>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{category}</h3>
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            {CONNECTORS.filter((c) => c.category === category).map((connector) => {
-              const Icon = connector.icon;
-              const chip = AVAILABILITY_CHIP[connector.availability];
-              const disabled = connector.availability === 'COMING_SOON';
-              return (
-                <button
-                  key={connector.id}
-                  type="button"
-                  data-testid={`connector-${connector.id}`}
-                  disabled={disabled}
-                  onClick={() => onChoose(connector)}
-                  className={cx(
-                    'flex gap-3 rounded-lg border p-3 text-left transition-colors',
-                    disabled
-                      ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
-                      : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/30',
-                  )}
-                >
-                  <Icon className="mt-0.5 h-5 w-5 flex-none text-slate-400" aria-hidden />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-sm font-semibold text-slate-900">{connector.name}</span>
-                      {chip && (
-                        <span
-                          className={cx(
-                            'rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset',
-                            chip.cls,
-                          )}
-                        >
-                          {chip.label}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{connector.blurb}</p>
-                    {connector.caveat && (
-                      <p
-                        className={cx(
-                          'mt-1 text-xs leading-relaxed',
-                          // A limit and a warning are different things, and reading identically made the
-                          // blue "connection only" chip argue with its own amber explanation.
-                          connector.availability === 'SIMULATED' ? 'text-amber-800' : 'text-slate-500',
-                        )}
-                      >
-                        {connector.caveat}
-                      </p>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 
@@ -339,6 +144,16 @@ function FileDataset({
   const [name, setName] = useState('');
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [dragging, setDragging] = useState(false);
+  /**
+   * The files still to review, when more than one was chosen.
+   *
+   * Each is previewed, has its sheets chosen and is imported in turn, rather than all of them being
+   * flattened into one list. A workbook's sheets are a decision; four workbooks' sheets in one list
+   * is a decision nobody reads, and "select all" on it is how a notes tab becomes a dataset.
+   */
+  const [queue, setQueue] = useState<File[]>([]);
+  const [queueAt, setQueueAt] = useState(0);
+  const [rejected, setRejected] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const preview = useMutation({
@@ -377,15 +192,31 @@ function FileDataset({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['assessment', project.id] });
       await queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      // On to the next file, or out of the drawer when that was the last one.
+      const next = queueAt + 1;
+      if (next < queue.length) {
+        setQueueAt(next);
+        setFile(null);
+        preview.reset();
+        void load(queue[next]!);
+        return;
+      }
       onDone();
     },
   });
 
-  const choose = async (picked: File) => {
-    const buffer = await picked.arrayBuffer();
+  /** Reads one file into the shape the preview endpoint takes. */
+  const load = async (picked: File) => {
+    const bytes = new Uint8Array(await picked.arrayBuffer());
+    /*
+     * Chunked rather than one character at a time. `String.fromCharCode(...bytes)` overflows the
+     * call stack on a large file and appending byte by byte is quadratic in practice; neither
+     * failure is one a person could diagnose from the spinner that would be on screen.
+     */
     let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
     const next = { name: picked.name, base64: btoa(binary) };
     setFile(next);
     // The dataset's name defaults to the file's, without the extension, because that is what people call it.
@@ -394,7 +225,46 @@ function FileDataset({
     preview.mutate(next);
   };
 
-  const accept = connector.id === 'excel' ? '.xlsx,.xls' : '.csv,.tsv,.txt,.xml';
+  /**
+   * Accepts what was dropped or browsed to, refusing what cannot work before anything is uploaded.
+   *
+   * Both checks exist because the alternative is a long wait and then a failure nobody can read: an
+   * unsupported file comes back as a parser error about its contents, and an oversized one comes
+   * back as a bare 413 after the whole thing has been encoded and sent.
+   */
+  const choose = (picked: File[]) => {
+    if (picked.length === 0) return;
+    const allowed = accept.split(',');
+    const wrongType = picked.filter((f) => !allowed.some((ext) => f.name.toLowerCase().endsWith(ext)));
+    if (wrongType.length > 0) {
+      /*
+       * Legacy .xls gets its own sentence because it is the one refusal a person will read as the
+       * product being broken. The reader handles the OOXML package that .xlsx is; the 1997 binary
+       * format is a different file format wearing a similar name, and it was being advertised in
+       * the file picker without ever having been supported.
+       */
+      const legacyXls = wrongType.some((f) => f.name.toLowerCase().endsWith('.xls'));
+      setRejected(
+        legacyXls
+          ? 'The older .xls format is not supported. Open the file in Excel and save it as .xlsx, or export it as CSV, then upload that.'
+          : `${wrongType.map((f) => f.name).join(', ')} cannot be read here. This step accepts ${allowed.join(', ')}.`,
+      );
+      return;
+    }
+    const tooBig = picked.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig.length > 0) {
+      setRejected(
+        `${tooBig.map((f) => f.name).join(', ')} is larger than ${MAX_UPLOAD_MB} MB. Split the file, or load data this size from a database connection instead.`,
+      );
+      return;
+    }
+    setRejected(null);
+    setQueue(picked);
+    setQueueAt(0);
+    void load(picked[0]!);
+  };
+
+  const accept = connector.id === 'excel' ? EXCEL_EXTENSIONS : TABULAR_EXTENSIONS;
 
   return (
     <div className="space-y-4">
@@ -402,12 +272,10 @@ function FileDataset({
         ref={fileInput}
         type="file"
         accept={accept}
+        multiple
         className="sr-only"
         data-testid="dataset-file-input"
-        onChange={(e) => {
-          const picked = e.target.files?.[0];
-          if (picked) void choose(picked);
-        }}
+        onChange={(e) => choose([...(e.target.files ?? [])])}
       />
 
       {!file && (
@@ -421,8 +289,7 @@ function FileDataset({
           onDrop={(e) => {
             e.preventDefault();
             setDragging(false);
-            const dropped = e.dataTransfer.files?.[0];
-            if (dropped) void choose(dropped);
+            choose([...(e.dataTransfer.files ?? [])]);
           }}
           className={cx(
             'rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors',
@@ -434,12 +301,25 @@ function FileDataset({
             Drop a {connector.id === 'excel' ? 'workbook' : 'CSV, Excel or XML file'} here
           </p>
           <p className="mt-0.5 text-xs text-slate-500">
-            Nothing is stored until you have seen what is in it.
+            One file or several. Up to {MAX_UPLOAD_MB} MB each. Nothing is stored until you have seen what is
+            in it.
           </p>
           <Button className="mt-3" variant="secondary" size="sm" onClick={() => fileInput.current?.click()}>
-            Choose file
+            Choose files
           </Button>
         </div>
+      )}
+
+      {rejected && (
+        <div data-testid="upload-rejected">
+          <Callout tone="warning">{rejected}</Callout>
+        </div>
+      )}
+
+      {queue.length > 1 && (
+        <p className="text-xs font-medium text-slate-500" data-testid="upload-queue">
+          File {queueAt + 1} of {queue.length}: {queue[queueAt]?.name}
+        </p>
       )}
 
       {preview.isPending && <Spinner label="Reading the file…" />}
@@ -476,7 +356,7 @@ function FileDataset({
 
           {multi && (
             <p className="text-sm text-slate-600">
-              Which sheets do you want to analyse? Each one becomes its own dataset.
+              Which sheets do you want to analyze? Each one becomes its own dataset.
             </p>
           )}
 
@@ -554,7 +434,7 @@ function PreviewTable({
               type="checkbox"
               checked={checked}
               onChange={onToggle}
-              aria-label={`Analyse ${table.displayName}`}
+              aria-label={`Analyze ${table.displayName}`}
               data-testid={`sheet-${table.sheet}`}
               className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
             />
@@ -572,7 +452,7 @@ function PreviewTable({
     >
       {/*
         The identifier question, answered here rather than three screens later. Whether a row can be
-        recognised again decides whether this data can be compared, de-duplicated or migrated at all, and
+        recognized again decides whether this data can be compared, de-duplicated or migrated at all, and
         it is cheap to say now and expensive to discover during a run.
       */}
       <div
@@ -588,7 +468,7 @@ function PreviewTable({
             <span className="font-mono">{table.keyColumn}</span> looks like a possible record identifier.
           </>
         ) : (
-          'No reliable record identifier was detected — rows will be counted rather than matched.'
+          'No reliable record identifier was detected. Rows will be counted rather than matched.'
         )}
       </div>
       <DetailWrapper selectable={selectable}>
@@ -773,11 +653,11 @@ function ChooseConnection({
 
   return (
     <div className="space-y-4">
-      {connector.availability !== 'FULL' && connector.caveat && (
+      {connector.caveat && (
         <Callout
-          tone={connector.availability === 'SIMULATED' ? 'warning' : 'info'}
+          tone={availabilityOf(connector) === 'SIMULATED' ? 'warning' : 'info'}
           title={
-            connector.availability === 'SIMULATED'
+            availabilityOf(connector) === 'SIMULATED'
               ? `${connector.name} is not certified`
               : `What ${connector.name} can do today`
           }
@@ -960,7 +840,7 @@ function ObjectPreview({
 
   const fields = profile.data ? profile.data.nullStats.slice(0, 12) : [];
   const sample = profile.data?.sampleRecords.slice(0, 5) ?? [];
-  // Enough columns to recognise the table, few enough that the row does not have to be scrolled to read.
+  // Enough columns to recognize the table, few enough that the row does not have to be scrolled to read.
   const sampleColumns = profile.data ? profile.data.nullStats.slice(0, 6).map((f) => f.field) : [];
 
   return (

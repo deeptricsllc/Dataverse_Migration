@@ -251,8 +251,14 @@ export function Layout() {
             ))}
           </div>
         </nav>
+        {/*
+          One line, not three.
+          This read "Know what will happen before migration. Migrate safely. Know exactly what
+          happened afterward." -- the same idea three times in the triple cadence that makes writing
+          sound generated, on every screen in the product.
+        */}
         <div className="px-5 py-4 text-[11px] leading-relaxed text-slate-500">
-          Know what will happen before migration. Migrate safely. Know exactly what happened afterward.
+          Analyze, migrate and validate your data.
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
@@ -265,7 +271,7 @@ export function Layout() {
             data-testid="read-only-banner"
           >
             <Lock className="h-3.5 w-3.5" aria-hidden />
-            REAL TENANT — READ ONLY. Dataverse reads are allowed; every write is blocked by the server.
+            REAL TENANT, READ ONLY. Dataverse reads are allowed. Every write is blocked by the server.
           </div>
         )}
         {user.organization.isDemo && (
@@ -274,8 +280,8 @@ export function Layout() {
             role="note"
             data-testid="demo-banner"
           >
-            DEMO MODE — simulated Dataverse environments. No Microsoft tenant is connected and no real data is
-            read or written.
+            DEMO MODE. Simulated environments only. No Microsoft tenant is connected, and no real data is read
+            or written.
           </div>
         )}
         <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-2.5">

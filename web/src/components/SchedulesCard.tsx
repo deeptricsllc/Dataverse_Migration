@@ -83,7 +83,7 @@ export function SchedulesCard({ plan }: { plan: MigrationPlanDto }) {
       {schedules.error && <ErrorState error={schedules.error} />}
       {schedules.data?.length === 0 && (
         <p className="text-sm text-slate-500">
-          No schedule yet. A scheduled run goes through the same checks as a manual one — it will not run a
+          No schedule yet. A scheduled run goes through the same checks as a manual one. It will not run a
           plan with unresolved blockers, and it will not perform a transformation that discards data unless
           that was already accepted.
         </p>
@@ -188,7 +188,7 @@ function ScheduleRow({ schedule: s, planId }: { schedule: MigrationScheduleDto; 
 
       {s.pausedReason && (
         <Callout tone="danger" title="Paused automatically">
-          {s.pausedReason} Resume it once the cause is fixed — resuming clears the failure count.
+          {s.pausedReason} Resume it once the cause is fixed. Resuming clears the failure count.
         </Callout>
       )}
       {!s.pausedReason && s.lastError && s.lastStatus !== 'SKIPPED' && (
@@ -320,8 +320,8 @@ function NewScheduleModal({
         <Callout tone="warning" title="A scheduled run writes to the target with nobody watching">
           It goes through the same checks as a manual run: a plan with unresolved blockers will not run, and a
           transformation that discards data will not run unless it was already accepted. What it cannot do is
-          ask you to confirm the target, so you confirm it now — and if the plan is ever pointed somewhere
-          else, the schedule stops instead of following it.
+          ask you to confirm the target, so you confirm it now. If the plan is ever pointed somewhere else,
+          the schedule stops instead of following it.
         </Callout>
 
         {!custom ? (
@@ -391,7 +391,7 @@ function NewScheduleModal({
               onChange={(e) => setWatermarkField(e.target.value)}
             />
             <p className="mt-1 text-xs text-slate-500">
-              A column that increases when a record changes — <code>modifiedon</code> in Dataverse, a
+              A column that increases when a record changes: <code>modifiedon</code> in Dataverse, a
               row-version or last-modified column in SQL. Records with a higher value than the last run are
               re-read; the first run reads everything.
             </p>

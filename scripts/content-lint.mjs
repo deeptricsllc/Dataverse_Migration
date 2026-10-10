@@ -65,6 +65,57 @@ const BANNED = [
 ];
 
 /**
+ * The em dash, which is the tell.
+ *
+ * It is correct English and the product used it everywhere: roughly one interface string in six had
+ * one, and many had two. Read a few screens in a row and the rhythm is unmistakable — a clause, a
+ * dash, an elaboration — and it is the single thing that made the writing sound generated rather
+ * than written. The fix is almost always a full stop, a colon, or deleting the elaboration.
+ *
+ * Flagged in interface text only, and only where the string is long enough for the dash to be doing
+ * rhetorical work. A short label with a dash is usually punctuation, not a flourish.
+ */
+/**
+ * Spelling. One variety, because two is the thing people notice without being able to name it.
+ *
+ * The product is en-US. It was mostly en-GB with en-US leaking into nine places a user could read,
+ * which is how it came to say "Total records analyzed" on one screen and "Re-analyse everything"
+ * on another.
+ *
+ * Interface text only. Identifiers, database columns, API fields and enum values keep whatever
+ * spelling they were born with: renaming `analysedAt` or `ANALYSED` changes nothing a reader sees
+ * and breaks everything that stores or queries it. That is why this runs on extracted strings
+ * rather than on the file.
+ */
+const BRITISH = [
+  ['analyse', 'analyze'],
+  ['analysing', 'analyzing'],
+  ['analysed', 'analyzed'],
+  ['analyser', 'analyzer'],
+  ['organisation', 'organization'],
+  ['organise', 'organize'],
+  ['organised', 'organized'],
+  ['customise', 'customize'],
+  ['customised', 'customized'],
+  ['normalise', 'normalize'],
+  ['normalised', 'normalized'],
+  ['summarise', 'summarize'],
+  ['summarised', 'summarized'],
+  ['recognise', 'recognize'],
+  ['recognised', 'recognized'],
+  ['prioritise', 'prioritize'],
+  ['initialise', 'initialize'],
+  ['authorise', 'authorize'],
+  ['behaviour', 'behavior'],
+  ['catalogue', 'catalog'],
+  ['centre', 'center'],
+  ['licence', 'license'],
+];
+
+const EM_DASH = '\u2014';
+const DASH_MIN_LENGTH = 25;
+
+/**
  * Removes comments, then keeps only what a user could read.
  *
  * Not a parser, and does not need to be: it is looking for a fixed list of English phrases, and the worst
@@ -165,6 +216,40 @@ for (const root of ROOTS) {
           line: lineOf(stripped, piece.index),
           phrase,
           advice,
+          text: piece.text.trim().slice(0, 100),
+        });
+      }
+      /*
+       * Not interface text, whatever it is spelled like: an API path, a lone identifier, an enum
+       * value. `/api/projects/:id/analyse` is a route, `ANALYSED` is a stored status and
+       * `analysed` is a field on a DTO. Renaming any of them changes nothing a reader sees and
+       * breaks what stores or queries it, so the rule does not ask.
+       */
+      /*
+       * Also not interface text: a fragment of code the JSX scraper read as text. It matches
+       * between a `>` and a `<` without knowing an arrow function lives in between, so
+       * `{datasets.some((d) => d.analysed) && (` arrives here looking like a sentence.
+       */
+      const text = piece.text.trim();
+      const codeish = /^\/|^[a-z][a-z0-9]*$|^[A-Z][A-Z0-9_]*$/.test(text) || /=>|\)\s*&&/.test(text);
+      for (const [british, american] of codeish ? [] : BRITISH) {
+        // Word-ish boundary so "analyse" does not fire inside "analysers" twice, and so a longer
+        // form is reported as itself rather than as its stem.
+        if (!new RegExp(`\\b${british}\\b`, 'i').test(piece.text)) continue;
+        findings.push({
+          file: relative(process.cwd(), file).replace(/\\/g, '/'),
+          line: lineOf(stripped, piece.index),
+          phrase: british,
+          advice: `The product is en-US. Write "${american}".`,
+          text: piece.text.trim().slice(0, 100),
+        });
+      }
+      if (piece.text.includes(EM_DASH) && piece.text.trim().length >= DASH_MIN_LENGTH) {
+        findings.push({
+          file: relative(process.cwd(), file).replace(/\\/g, '/'),
+          line: lineOf(stripped, piece.index),
+          phrase: EM_DASH,
+          advice: 'Use a full stop, a colon, or delete the elaboration.',
           text: piece.text.trim().slice(0, 100),
         });
       }
