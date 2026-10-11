@@ -76,7 +76,7 @@ test('a file is a dataset, and Connections is for systems', async ({ page }) => 
   await page.waitForURL(/\/analysis\//);
 
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-xml').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'orders.xml',
     mimeType: 'application/xml',

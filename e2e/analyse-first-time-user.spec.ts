@@ -175,7 +175,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   // --- 4 & 5. upload the workbook and read the preview ---------------------
   await page.getByTestId('add-dataset').click();
   await shot(page, 'add-dataset-choose-a-connector');
-  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'FinanceExport.xlsx',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -267,7 +267,7 @@ test('a first-time user can analyse a messy export and understand the result', a
   // --- 11. a second source -------------------------------------------------
   await page.getByRole('tab', { name: /Datasets/ }).click();
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'suppliers.csv',
     mimeType: 'text/csv',

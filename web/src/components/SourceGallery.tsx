@@ -1,4 +1,4 @@
-import { Database, FileCode, FileSpreadsheet, Plug, Upload, type LucideIcon } from 'lucide-react';
+import { Database, Plug, Upload, type LucideIcon } from 'lucide-react';
 import type { ConnectionType } from '@shared/domain';
 import { CONNECTOR_VERIFICATION, ENGINE_PROVABLE, summaryLevel } from '@shared/connector-verification';
 import { Disclosure, cx } from './ui';
@@ -57,28 +57,20 @@ export interface Connector {
  * because somebody would plan around it.
  */
 export const CONNECTORS: Connector[] = [
+  /*
+   * One card for the three formats, not three.
+   *
+   * The drawer used to list CSV, Excel and XML separately while the connections screen showed a
+   * single "Upload from your computer". Same catalog, two shapes, and a person who learned one
+   * screen had to learn the other. The reader works out the format from the file, so the question
+   * "which of these three is it?" was one the product could answer itself.
+   */
   {
-    id: 'csv',
-    name: 'CSV',
+    id: 'upload',
+    name: 'Upload from your computer',
     category: 'Files',
-    blurb: 'Comma, semicolon or tab separated. Read from your computer, not from a server.',
-    icon: FileSpreadsheet,
-    step: 'file',
-  },
-  {
-    id: 'excel',
-    name: 'Excel',
-    category: 'Files',
-    blurb: 'An .xlsx workbook from your computer. Choose the sheets you want, so the notes tab stays behind.',
-    icon: FileSpreadsheet,
-    step: 'file',
-  },
-  {
-    id: 'xml',
-    name: 'XML',
-    category: 'Files',
-    blurb: 'A record-per-element file from your computer. Attributes and child elements become columns.',
-    icon: FileCode,
+    blurb: 'Excel (.xlsx), CSV or XML from your computer.',
+    icon: Upload,
     step: 'file',
   },
   {
@@ -178,21 +170,13 @@ export const CONNECTORS: Connector[] = [
 ];
 
 /**
- * The card the connections screen shows in place of the three file formats.
+ * The same card the dataset drawer shows, named here for the screens that prepend it.
  *
- * A spreadsheet on somebody's laptop is not reusable authenticated access to a system, so it is not
- * a connection, and the original screen expressed that by offering no file option at all. The
- * distinction is real and the silence was not a way to teach it. The card says where files go and
- * takes the user there.
+ * A spreadsheet on somebody's laptop is not reusable authenticated access to a system, so it is
+ * not a connection, and the connections screen expressed that by offering no file option at all.
+ * The distinction is real and the silence was not a way to teach it.
  */
-export const UPLOAD_FROM_COMPUTER: Connector = {
-  id: 'upload',
-  name: 'Upload from your computer',
-  category: 'Files',
-  blurb:
-    'Excel (.xlsx), CSV or XML from your computer. Added straight to a project, with no connection to set up.',
-  icon: Upload,
-};
+export const UPLOAD_FROM_COMPUTER: Connector = CONNECTORS.find((c) => c.id === 'upload')!;
 
 export const AVAILABILITY_CHIP: Record<Availability, { label: string; cls: string } | null> = {
   LOCAL_FILE: { label: 'Local file', cls: 'bg-slate-100 text-slate-600 ring-slate-200' },

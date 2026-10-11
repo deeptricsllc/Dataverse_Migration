@@ -121,7 +121,7 @@ const createProject = async (page: Page, name: string) => {
 /** Adds one CSV, through the gallery and the preview, exactly as a person would. */
 const addDataset = async (page: Page, filename: string) => {
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, filename));
   await page.getByTestId('dataset-preview').waitFor({ timeout: 60_000 });
   await page.getByTestId('confirm-add-dataset').click();
@@ -174,7 +174,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
 
   // --- the gallery is honest about what is real -----------------------------
   await page.getByTestId('add-dataset').click();
-  await expect(page.getByTestId('connector-csv')).toBeVisible();
+  await expect(page.getByTestId('connector-upload')).toBeVisible();
   await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
   /*
    * The card carries the status, not the essay.
@@ -189,7 +189,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await expect(page.getByTestId('connector-sqlserver')).toContainText('Live verified');
 
   // --- the preview shows what is in the file, and stores nothing -------------
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, 'Orders.csv'));
   const preview = page.getByTestId('dataset-preview');
   await preview.waitFor({ timeout: 60_000 });
@@ -242,7 +242,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
    * and pull down a readiness score that is supposed to describe customer data.
    */
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, 'CustomerMigration.xlsx'));
   const workbook = page.getByTestId('dataset-preview');
   await workbook.waitFor({ timeout: 60_000 });

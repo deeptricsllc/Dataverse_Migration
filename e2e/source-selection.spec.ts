@@ -109,7 +109,7 @@ test('a spreadsheet can be uploaded, previewed and analysed without any connecti
   await page.goto(`/analysis/${projectId}`);
 
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('connector-upload').click();
 
   // --- a file the reader cannot open is refused before it is sent ----------
   await page.getByTestId('dataset-file-input').setInputFiles({
@@ -169,7 +169,7 @@ async function projectWithOneDataset(page: Page, tag: string): Promise<string> {
   const id = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
   await page.goto(`/analysis/${id}`);
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'opening.csv',
     mimeType: 'text/csv',
@@ -192,7 +192,7 @@ test('CSV and XML upload through the browser, each read as its own shape', async
    * Nobody should have to create a project to add a file to the project they are looking at.
    */
   await page.getByRole('button', { name: 'Add another dataset' }).click();
-  await page.getByTestId('connector-xml').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'orders.xml',
     mimeType: 'application/xml',
@@ -240,7 +240,7 @@ test('a refused file does not end the attempt', async ({ page }) => {
   const id = page.url().split('/projects/')[1]!.split(/[?#]/)[0]!;
   await page.goto(`/analysis/${id}`);
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
 
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'holiday.jpg',

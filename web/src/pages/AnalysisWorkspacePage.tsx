@@ -201,6 +201,7 @@ export function AnalysisWorkspacePage() {
       <AddDatasetDrawer
         project={project.data!}
         open={adding}
+        startOn={params.get('add') === 'file' ? 'file' : undefined}
         onClose={() => {
           setAdding(false);
           if (params.get('add')) {

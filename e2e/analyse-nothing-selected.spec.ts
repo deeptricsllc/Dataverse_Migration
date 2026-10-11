@@ -96,7 +96,7 @@ test('a connection with nothing chosen cannot be analysed, and says what to do',
   // --- 3. choosing a file is what makes it analysable -----------------------
   await page.goto(`/analysis${new URL(page.url()).pathname.replace('/projects', '')}`);
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'customers.csv',
     mimeType: 'text/csv',

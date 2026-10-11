@@ -16,7 +16,13 @@ import { api } from '../lib/api';
 import { ObjectPicker } from './ObjectPicker';
 import { describeCount } from '../lib/format';
 import { ConnectionModal } from './ConnectionForm';
-import { availabilityOf, CONNECTORS, SourceGallery, type Connector } from './SourceGallery';
+import {
+  availabilityOf,
+  CONNECTORS,
+  SourceGallery,
+  UPLOAD_FROM_COMPUTER,
+  type Connector,
+} from './SourceGallery';
 
 /**
  * What the upload step accepts, and how much of it.
@@ -27,8 +33,7 @@ import { availabilityOf, CONNECTORS, SourceGallery, type Connector } from './Sou
  */
 const MAX_UPLOAD_MB = 36;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
-const EXCEL_EXTENSIONS = '.xlsx';
-const TABULAR_EXTENSIONS = '.csv,.tsv,.txt,.xml';
+const UPLOAD_EXTENSIONS = '.xlsx,.csv,.tsv,.txt,.xml';
 
 /**
  * Adding data to an analysis project.
@@ -56,15 +61,25 @@ export function AddDatasetDrawer({
   open,
   onClose,
   onAdded,
+  startOn,
 }: {
   project: ProjectDto;
   open: boolean;
   onClose: () => void;
   /** Called instead of `onClose` when something was actually added, so the caller can show it. */
   onAdded?: () => void;
+  /** Skip the gallery and open on this step, for a caller who already asked the question. */
+  startOn?: 'file';
 }) {
-  const [step, setStep] = useState<Step>('gallery');
-  const [connector, setConnector] = useState<Connector | null>(null);
+  /*
+   * Opened straight on the upload step when the person has already said that is what they want.
+   * Somebody who chose "Upload files" while creating the project has answered the gallery's
+   * question; showing it to them again is the repeated step this exists to remove.
+   */
+  const [step, setStep] = useState<Step>(startOn === 'file' ? 'file' : 'gallery');
+  const [connector, setConnector] = useState<Connector | null>(
+    startOn === 'file' ? UPLOAD_FROM_COMPUTER : null,
+  );
 
   const reset = () => {
     setStep('gallery');
@@ -104,7 +119,7 @@ export function AddDatasetDrawer({
           }}
         />
       )}
-      {step === 'file' && connector && <FileDataset project={project} connector={connector} onDone={added} />}
+      {step === 'file' && connector && <FileDataset project={project} onDone={added} />}
       {step === 'connection' && connector && (
         <DatabaseDataset project={project} connector={connector} onDone={added} />
       )}
@@ -130,15 +145,7 @@ export function AddDatasetDrawer({
  * Contacts and Orders — and an "Instructions" tab, and a "Lookup Notes" tab. Importing all five produced
  * two datasets nobody asked for, which then appeared in findings and pulled down a readiness score.
  */
-function FileDataset({
-  project,
-  connector,
-  onDone,
-}: {
-  project: ProjectDto;
-  connector: Connector;
-  onDone: () => void;
-}) {
+function FileDataset({ project, onDone }: { project: ProjectDto; onDone: () => void }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<{ name: string; base64: string } | null>(null);
   const [name, setName] = useState('');
@@ -264,7 +271,8 @@ function FileDataset({
     void load(picked[0]!);
   };
 
-  const accept = connector.id === 'excel' ? EXCEL_EXTENSIONS : TABULAR_EXTENSIONS;
+  // One card, so one list. The reader works the format out from the file itself.
+  const accept = UPLOAD_EXTENSIONS;
 
   return (
     <div className="space-y-4">
@@ -297,9 +305,7 @@ function FileDataset({
           )}
         >
           <Upload className="mx-auto h-6 w-6 text-slate-400" aria-hidden />
-          <p className="mt-2 text-sm font-medium text-slate-700">
-            Drop a {connector.id === 'excel' ? 'workbook' : 'CSV, Excel or XML file'} here
-          </p>
+          <p className="mt-2 text-sm font-medium text-slate-700">Drop an Excel, CSV or XML file here</p>
           <p className="mt-0.5 text-xs text-slate-500">
             One file or several. Up to {MAX_UPLOAD_MB} MB each. Nothing is stored until you have seen what is
             in it.
