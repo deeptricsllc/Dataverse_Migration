@@ -176,14 +176,16 @@ test('raw files become an assessment without ever leaving the workspace', async 
   await page.getByTestId('add-dataset').click();
   await expect(page.getByTestId('connector-csv')).toBeVisible();
   await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
-  await expect(page.getByTestId('connector-dataverse')).toContainText('Simulated');
-  await expect(page.getByTestId('connector-dataverse')).toContainText('Never run against a real Dataverse');
   /*
-   * Azure SQL is not simulated, which is a different and weaker claim than it used to carry here.
-   * It is implemented, shares SQL Server's driver, and has never been pointed at a real Azure SQL
-   * database. The card says so in those words.
+   * The card carries the status, not the essay.
+   * The full caveat used to sit here, three sentences of it, which turned a grid of nine options
+   * into a page of reading. It moved to the step after choosing, where it is asserted below, and
+   * to the "What these labels mean" disclosure on this screen.
    */
+  await expect(page.getByTestId('connector-dataverse')).toContainText('Simulated');
   await expect(page.getByTestId('connector-azuresql')).toContainText('Not live verified');
+  await page.getByRole('button', { name: 'What these labels mean' }).click();
+  await expect(page.getByText(/behaves like the real thing and is not it/i)).toBeVisible();
   await expect(page.getByTestId('connector-sqlserver')).toContainText('Live verified');
 
   // --- the preview shows what is in the file, and stores nothing -------------
