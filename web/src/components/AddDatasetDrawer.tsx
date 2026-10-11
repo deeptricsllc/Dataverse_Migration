@@ -968,7 +968,20 @@ function MicrosoftDataset({
   if (!connection) {
     return (
       <div className="space-y-4">
-        <Callout tone="warning" title={`${connector.name} is not certified`}>
+        {/*
+          The same wording the gallery uses, from the same derivation.
+          This title was hardcoded to "is not certified", which is the sentence for a simulator.
+          SharePoint and OneDrive are built and never run against a real tenant, which is a
+          different claim, and the two screens were making different ones about one connector.
+        */}
+        <Callout
+          tone={availabilityOf(connector) === 'SIMULATED' ? 'warning' : 'info'}
+          title={
+            availabilityOf(connector) === 'SIMULATED'
+              ? `${connector.name} is not certified`
+              : `What ${connector.name} can do today`
+          }
+        >
           {connector.caveat}
         </Callout>
         {matching.length > 0 && (

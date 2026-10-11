@@ -354,10 +354,12 @@ test('raw files become an assessment without ever leaving the workspace', async 
    * holding nothing looked exactly like a dataset, and the user met the consequence later as a failure.
    */
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-sharepoint').click();
+  await page.getByTestId('connector-sharepoint-library').click();
 
   // The card said what this is before anybody started, and the step says it again.
-  await expect(page.getByText('SharePoint is not certified')).toBeVisible();
+  // "Not certified" is reserved for the simulator. SharePoint is built and never run live, which
+  // the step says in those words.
+  await expect(page.getByText(/What SharePoint document library can do today/)).toBeVisible();
   await expect(page.getByText(/never run against a real SharePoint tenant/i)).toBeVisible();
   await expect(page.getByText(/Connecting does not add any data/)).toBeVisible();
 

@@ -122,11 +122,20 @@ export const CONNECTORS: Connector[] = [
     step: 'connection',
     connectionType: 'MYSQL',
   },
+  /*
+   * SharePoint is two cards because it is two things to the person choosing.
+   *
+   * A document library holds spreadsheets, which is a file source and belongs beside the other
+   * ways of getting a spreadsheet in. A list is a table in a business application and belongs
+   * beside Dataverse. Both reach the same connection and the same step, which then offers
+   * whichever the site actually has; splitting them is about where somebody looks, not about what
+   * the connector does.
+   */
   {
-    id: 'sharepoint',
-    name: 'SharePoint',
-    category: 'Business applications',
-    blurb: 'A list, or a spreadsheet in a document library.',
+    id: 'sharepoint-library',
+    name: 'SharePoint document library',
+    category: 'Files',
+    blurb: 'A spreadsheet stored in a SharePoint document library.',
     icon: Plug,
     caveat:
       'Implemented on Microsoft Graph and never run against a real SharePoint tenant. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
@@ -136,13 +145,24 @@ export const CONNECTORS: Connector[] = [
   {
     id: 'onedrive',
     name: 'OneDrive',
-    category: 'Business applications',
+    category: 'Files',
     blurb: 'A spreadsheet in your own OneDrive.',
     icon: Plug,
     caveat:
       'Implemented on Microsoft Graph and never run against a real OneDrive. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
     step: 'microsoft',
     connectionType: 'ONEDRIVE',
+  },
+  {
+    id: 'sharepoint-lists',
+    name: 'SharePoint lists',
+    category: 'Business applications',
+    blurb: 'A list, with its columns and items, as a dataset.',
+    icon: Plug,
+    caveat:
+      'Implemented on Microsoft Graph and never run against a real SharePoint tenant. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
+    step: 'microsoft',
+    connectionType: 'SHAREPOINT',
   },
   {
     id: 'dataverse',
@@ -192,9 +212,17 @@ export function availabilityOf(connector: {
   connectionType?: string;
   category: SourceCategory;
 }): Availability {
-  if (connector.category === 'Files') return 'LOCAL_FILE';
+  /*
+   * Local means local, not "filed under Files".
+   *
+   * OneDrive and a SharePoint document library are grouped with files because that is where a
+   * person looks for a spreadsheet, and they are still remote systems reached over Graph with a
+   * Microsoft sign-in. Keying this off the category badged both of them "Local file", which is a
+   * claim about where the data lives and it was false. A card with no connection type is the local
+   * one: there is no system to connect to, because the file is on your computer.
+   */
   const type = connector.connectionType as ConnectionType | undefined;
-  if (!type) return 'NOT_LIVE_VERIFIED';
+  if (!type || type === 'FILE') return 'LOCAL_FILE';
   /*
    * Judged on the capabilities a server can actually prove, not on every row.
    *
