@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, FileSpreadsheet, Plus, Search, Table2 } from 'lucide-react';
 import type {
@@ -49,7 +49,15 @@ type Section = 'overview' | 'datasets' | 'findings';
 export function AnalysisWorkspacePage() {
   const { projectId = '' } = useParams();
   const [section, setSection] = useState<Section>('overview');
-  const [adding, setAdding] = useState(false);
+  /*
+   * `?add=file` opens the drawer on arrival, for the hand-off from project creation.
+   *
+   * Somebody who chose "Upload files" while making the project has already answered the question
+   * the empty project screen would ask them. Landing them on it and making them press Add dataset
+   * is the repeated step this hand-off exists to remove.
+   */
+  const [params, setParams] = useSearchParams();
+  const [adding, setAdding] = useState(params.get('add') === 'file');
   const queryClient = useQueryClient();
 
   const project = useQuery({
@@ -193,7 +201,13 @@ export function AnalysisWorkspacePage() {
       <AddDatasetDrawer
         project={project.data!}
         open={adding}
-        onClose={() => setAdding(false)}
+        onClose={() => {
+          setAdding(false);
+          if (params.get('add')) {
+            params.delete('add');
+            setParams(params, { replace: true });
+          }
+        }}
         // What you added is the thing to look at. Landing back on Overview left people wondering whether
         // the upload had worked at all, because nothing visible had changed.
         onAdded={() => {

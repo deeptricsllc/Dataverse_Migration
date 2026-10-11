@@ -1,7 +1,7 @@
 import { Database, FileCode, FileSpreadsheet, Plug, Upload, type LucideIcon } from 'lucide-react';
 import type { ConnectionType } from '@shared/domain';
 import { CONNECTOR_VERIFICATION, ENGINE_PROVABLE, summaryLevel } from '@shared/connector-verification';
-import { cx } from './ui';
+import { Disclosure, cx } from './ui';
 
 /**
  * The one list of what this product can read, and how real each of those claims is.
@@ -132,17 +132,6 @@ export const CONNECTORS: Connector[] = [
    * the connector does.
    */
   {
-    id: 'sharepoint-library',
-    name: 'SharePoint document library',
-    category: 'Files',
-    blurb: 'A spreadsheet stored in a SharePoint document library.',
-    icon: Plug,
-    caveat:
-      'Implemented on Microsoft Graph and never run against a real SharePoint tenant. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
-    step: 'microsoft',
-    connectionType: 'SHAREPOINT',
-  },
-  {
     id: 'onedrive',
     name: 'OneDrive',
     category: 'Files',
@@ -152,6 +141,17 @@ export const CONNECTORS: Connector[] = [
       'Implemented on Microsoft Graph and never run against a real OneDrive. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
     step: 'microsoft',
     connectionType: 'ONEDRIVE',
+  },
+  {
+    id: 'sharepoint-library',
+    name: 'SharePoint document library',
+    category: 'Files',
+    blurb: 'A spreadsheet stored in a SharePoint document library.',
+    icon: Plug,
+    caveat:
+      'Implemented on Microsoft Graph and never run against a real SharePoint tenant. It needs a Microsoft sign-in, so a demo workspace cannot reach it.',
+    step: 'microsoft',
+    connectionType: 'SHAREPOINT',
   },
   {
     id: 'sharepoint-lists',
@@ -245,14 +245,42 @@ export function availabilityOf(connector: {
 
 const CATEGORY_ORDER: SourceCategory[] = ['Files', 'Databases', 'Business applications'];
 
+/** What each status means, said once at the bottom rather than on every card. */
+const STATUS_NOTES: { label: string; meaning: string }[] = [
+  { label: 'Local file', meaning: 'Read from your computer. Nothing is connected to.' },
+  {
+    label: 'Live verified',
+    meaning:
+      'The conformance suite passed against a real server of this engine, through the driver this product uses. The card names the version.',
+  },
+  {
+    label: 'Not live verified',
+    meaning:
+      'Built and tested, and never pointed at a real instance. Sign-in, firewall rules and throttling are what differ and they are what break a connection.',
+  },
+  {
+    label: 'Simulated',
+    meaning: 'Exercised only against our simulator, which behaves like the real thing and is not it.',
+  },
+];
+
 export function SourceGallery({
   connectors,
   onChoose,
   intro,
+  unavailable,
 }: {
   connectors: Connector[];
   onChoose: (connector: Connector) => void;
   intro: string;
+  /**
+   * Connectors that cannot be used in this particular role, with the reason.
+   *
+   * Shown greyed with the reason rather than quietly dropped. A file is a perfectly good migration
+   * source and can never be a migration target, and somebody looking for it in the target picker
+   * deserves to be told that rather than left to wonder whether they missed it.
+   */
+  unavailable?: (connector: Connector) => string | null;
 }) {
   return (
     <div className="space-y-5">
@@ -268,16 +296,20 @@ export function SourceGallery({
                   const Icon = connector.icon;
                   const availability = availabilityOf(connector);
                   const chip = AVAILABILITY_CHIP[availability];
+                  const blocked = unavailable?.(connector) ?? null;
                   return (
                     <button
                       key={connector.id}
                       type="button"
                       data-testid={`connector-${connector.id}`}
+                      disabled={Boolean(blocked)}
                       onClick={() => onChoose(connector)}
                       className={cx(
-                        'flex gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition-colors',
-                        'hover:border-brand-300 hover:bg-brand-50/30',
+                        'flex gap-3 rounded-lg border p-3 text-left transition-colors',
                         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600',
+                        blocked
+                          ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70'
+                          : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/30',
                       )}
                     >
                       <Icon className="mt-0.5 h-5 w-5 flex-none text-slate-400" aria-hidden />
@@ -295,19 +327,14 @@ export function SourceGallery({
                             </span>
                           )}
                         </div>
+                        {/*
+                          One line. The verification narrative used to sit here, three or four
+                          sentences of it on half the cards, which made a grid of nine options into
+                          a page of reading and buried the one about uploading a spreadsheet. It is
+                          still shown, in the step that follows choosing, and summarised below.
+                        */}
                         <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{connector.blurb}</p>
-                        {connector.caveat && (
-                          <p
-                            className={cx(
-                              'mt-1 text-xs leading-relaxed',
-                              // A limit and a warning are different things, and reading identically
-                              // made the blue chip argue with its own explanation.
-                              availability === 'SIMULATED' ? 'text-amber-800' : 'text-slate-500',
-                            )}
-                          >
-                            {connector.caveat}
-                          </p>
-                        )}
+                        {blocked && <p className="mt-1 text-xs leading-relaxed text-slate-500">{blocked}</p>}
                       </div>
                     </button>
                   );
@@ -316,6 +343,16 @@ export function SourceGallery({
           </section>
         ),
       )}
+      <Disclosure summary="What these labels mean">
+        <dl className="space-y-2 text-xs leading-relaxed text-slate-600">
+          {STATUS_NOTES.map((n) => (
+            <div key={n.label}>
+              <dt className="font-semibold text-slate-800">{n.label}</dt>
+              <dd>{n.meaning}</dd>
+            </div>
+          ))}
+        </dl>
+      </Disclosure>
     </div>
   );
 }

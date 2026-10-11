@@ -265,6 +265,15 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
    * picker that asked for it.
    */
   const [addingFor, setAddingFor] = useState<'source' | 'target' | null>(null);
+  /**
+   * Set when somebody picks "Upload files" from the connection dialog opened over this form.
+   *
+   * The dialog closes, the form keeps everything typed into it, and creating the project continues
+   * straight into the upload step rather than landing on an empty project. The alternative was to
+   * hide the option here, which is what this form used to do, and which made the connections screen
+   * and this screen offer different things for no reason a user could see.
+   */
+  const [uploadAfterCreate, setUploadAfterCreate] = useState(false);
 
   const environments = useQuery({
     queryKey: ['environments'],
@@ -295,7 +304,7 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
        * running an analysis currently live. The new analysis workspace reads results; it does not yet
        * produce them, so sending this form there would be a dead end.
        */
-      navigate(`/projects/${project.id}`);
+      navigate(uploadAfterCreate ? `/analysis/${project.id}?add=file` : `/projects/${project.id}`);
     },
   });
 
@@ -558,6 +567,25 @@ function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void
           discovering={false}
           onClose={() => setAddingFor(null)}
           onDiscover={() => {}}
+          /*
+           * Offered for a source, refused for a target, and never silently absent.
+           * A file is a perfectly good thing to read from and can never be written to, so the
+           * target picker shows the card greyed with the reason instead of dropping it.
+           */
+          onUploadChosen={
+            addingFor === 'source'
+              ? () => {
+                  setAddingFor(null);
+                  setUploadAfterCreate(true);
+                  setSourceId('');
+                }
+              : undefined
+          }
+          uploadUnavailable={
+            addingFor === 'target'
+              ? 'A file can be read from, never written to, so it cannot be a migration target.'
+              : undefined
+          }
           onSaved={(saved) => {
             if (addingFor === 'source') setSourceId(saved.id);
             else setTargetId(saved.id);

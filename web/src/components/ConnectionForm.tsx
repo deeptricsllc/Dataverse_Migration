@@ -164,6 +164,7 @@ export function ConnectionModal({
   onDiscover,
   discovering,
   onUploadChosen,
+  uploadUnavailable,
 }: {
   connection: EnvironmentDto | null;
   /**
@@ -185,6 +186,8 @@ export function ConnectionModal({
    * is not shown at all.
    */
   onUploadChosen?: () => void;
+  /** When set, the upload card is shown greyed with this reason instead of being chooseable. */
+  uploadUnavailable?: string;
 }) {
   const [type, setType] = useState<ConnectionType | null>(connection?.connectionType ?? initialType ?? null);
   /** Choosing a server kind moves the port to the one it listens on, unless it was edited. */
@@ -331,7 +334,20 @@ export function ConnectionModal({
              * half-filled form on screen: navigating away would throw away what they typed, and a
              * card that did nothing would be worse than no card at all.
              */
-            connectors={onUploadChosen ? [UPLOAD_FROM_COMPUTER, ...CONNECTABLE] : CONNECTABLE}
+            /*
+             * Files are always on the list.
+             * This used to show the upload card only where a handler existed, so the connections
+             * screen offered it and the new-project form did not -- two screens, one product, a
+             * different answer to "can I upload a spreadsheet". Where it cannot be chosen it is
+             * shown with the reason.
+             */
+            connectors={[UPLOAD_FROM_COMPUTER, ...CONNECTABLE]}
+            unavailable={(c) =>
+              c.id === UPLOAD_FROM_COMPUTER.id && !onUploadChosen
+                ? (uploadUnavailable ??
+                  'Create the project first, then add the file to it from the project screen.')
+                : null
+            }
             onChoose={(c) => {
               if (c.id === UPLOAD_FROM_COMPUTER.id) {
                 onUploadChosen?.();

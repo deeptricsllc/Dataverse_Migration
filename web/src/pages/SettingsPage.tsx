@@ -119,13 +119,18 @@ export function SettingsPage() {
               {/*
                 Which build produced what you are looking at. The first thing anyone needs when a report
                 is disputed, and the thing nobody can supply from memory.
+
+                The branch is here as well as the commit because that is what tells two deployments
+                apart at a glance, and because somebody who cannot find a feature needs to be able
+                to read, from the screen, whether they are looking at the build that has it.
               */}
               <Row
                 label="Build"
                 value={
-                  <span className="font-mono text-xs">
+                  <span className="font-mono text-xs" data-testid="build-identifier">
                     v{settings.data.build.version} · {settings.data.build.deployment}
-                    {settings.data.build.commit ? ` · ${settings.data.build.commit}` : ''}
+                    {settings.data.build.branch ? ` · ${settings.data.build.branch}` : ''}
+                    {settings.data.build.commit ? `@${settings.data.build.commit}` : ''}
                   </span>
                 }
               />
