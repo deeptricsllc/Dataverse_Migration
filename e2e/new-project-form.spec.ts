@@ -65,14 +65,32 @@ test('adding a connection happens here, without leaving the form', async ({ page
 
   // The connection picker opens over the form. It used to navigate to the connections page, which
   // threw away everything typed so far.
-  await expect(page.getByRole('radio', { name: /SQL Server/ })).toBeVisible();
+  await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
   /*
-   * And a file is not among the things you can connect to. A spreadsheet on somebody's laptop is the data
-   * itself, not reusable access to a system, and it goes in through Add dataset.
+   * Files are offered here too, and were not.
+   * Hiding the card on this one screen is what the owner found: the connections screen offered
+   * "Upload from your computer" and this dialog did not, which is one product giving two answers
+   * to "can I upload a spreadsheet". Choosing it keeps everything typed into the form.
    */
-  await expect(page.getByRole('radio', { name: /CSV \/ Excel \/ XML file/ })).toHaveCount(0);
-  await expect(page).toHaveURL(/\/projects/);
+  const upload = page.getByTestId('connector-upload');
+  await expect(upload).toBeVisible();
+  await expect(upload).toContainText('Upload from your computer');
+
+  // Closing without choosing anything still keeps the form, which is what this test was for.
   // The footer button, not the dialog's × which shares its accessible name.
   await page.getByRole('dialog', { name: 'Add connection' }).getByText('Close', { exact: true }).click();
   await expect(page.getByTestId('project-name')).toHaveValue('Keeps what I typed');
+
+  /*
+   * And choosing the upload card keeps it too. It closes the dialog, because the next step is
+   * creating the project and then the file goes into it; what it must not do is throw away the
+   * name somebody has already typed.
+   */
+  await page.getByTestId('add-connection-link').click();
+  await page.getByTestId('connector-upload').click();
+  await expect(page.getByRole('dialog', { name: 'Add connection' })).toHaveCount(0);
+  await expect(page.getByTestId('project-name'), 'the form is still here, still filled in').toHaveValue(
+    'Keeps what I typed',
+  );
+  await expect(page).toHaveURL(/\/projects/);
 });

@@ -375,7 +375,7 @@ export async function probeGraphAccess(
  * Importing needed a Graph reference — `sites/{site-id}/lists/{list-id}` — which is not something anybody
  * has. A site id is a comma-separated triple of GUIDs that appears in no URL a person ever sees, so the
  * only honest instruction the product could give was "ask a developer". These three calls are what turn
- * "connect to SharePoint" into "choose the Claims list": the names people recognise, resolved to the ids
+ * "connect to SharePoint" into "choose the Claims list": the names people recognize, resolved to the ids
  * the import already knew how to use.
  *
  * Every one is a read. Nothing here can change anything in SharePoint or OneDrive, which is why the two
@@ -411,7 +411,7 @@ export async function listSites(request: GraphRequest, query?: string): Promise<
   if (res.status === 403) {
     throw new DataverseError(
       'FORBIDDEN',
-      'The signed-in account cannot list SharePoint sites. Sites.Read.All may not be consented, or the account may have no SharePoint licence.',
+      'The signed-in account cannot list SharePoint sites. Sites.Read.All may not be consented, or the account may have no SharePoint license.',
       403,
     );
   }

@@ -111,7 +111,7 @@ export function ChoiceMappingModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Choice mapping — ${mapping.sourceDisplayName} → ${mapping.targetField}`}
+      title={`Choice mapping: ${mapping.sourceDisplayName} → ${mapping.targetField}`}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -211,7 +211,7 @@ export function ChoiceMappingModal({
             value={defaultValue === null ? '' : String(defaultValue)}
             onChange={(v) => setDefaultValue(v === '' ? null : Number(v))}
             options={[
-              { value: '', label: 'No default — report unmapped values as issues' },
+              { value: '', label: 'No default: report unmapped values as issues' },
               ...targetOptions.map((o) => ({ value: String(o.value), label: o.label })),
             ]}
           />

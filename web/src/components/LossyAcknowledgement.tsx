@@ -241,11 +241,11 @@ function impactSentence(l: LossyTransformationDto): string {
 
 /** Never let an estimate read as a fact. */
 function basisNote(l: LossyTransformationDto): string {
-  if (l.basis === null) return 'Not measured yet — run a preflight to count the affected records.';
+  if (l.basis === null) return 'Not measured yet. Run a preflight to count the affected records.';
   if (l.basis === 'SAMPLED') {
-    return `SAMPLED / ESTIMATED — counted over ${fmtNumber(l.examined ?? 0)} record(s), so this is a floor rather than a total.`;
+    return `SAMPLED or ESTIMATED: counted over ${fmtNumber(l.examined ?? 0)} record(s), so this is a floor rather than a total.`;
   }
   return l.fromPreflight
-    ? 'EXACT — the preflight examined every record.'
-    : 'EXACT — every record was examined.';
+    ? 'EXACT: the preflight examined every record.'
+    : 'EXACT: every record was examined.';
 }

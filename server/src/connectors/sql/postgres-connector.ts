@@ -521,7 +521,7 @@ export class PostgresConnector implements MigrationConnector {
    * `GROUP BY ... HAVING COUNT(*) > 1`, run where the rows are. Reading the table into this
    * process to count it stops working at exactly the size where somebody needs the answer.
    *
-   * Identifiers go through the quoting helper, which refuses anything it does not fully recognise.
+   * Identifiers go through the quoting helper, which refuses anything it does not fully recognize.
    * No value is interpolated: the second read that collects example records binds them.
    *
    * NULL is not a duplicate — a thousand unknown values are not one value a thousand times, and

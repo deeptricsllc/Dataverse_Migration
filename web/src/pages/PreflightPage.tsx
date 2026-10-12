@@ -76,7 +76,7 @@ export function PreflightPage() {
   return (
     <>
       <PageHeader
-        title="Preflight — dry run"
+        title="Preflight: dry run"
         description={
           run ? (
             <>
@@ -131,7 +131,7 @@ export function PreflightPage() {
       {done && run && (
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Stat label="Source records" value={fmtNumber(run.totals.sourceRecords)} hint="analyzed" />
+            <Stat label="Source records" value={fmtNumber(run.totals.sourceRecords)} hint="analysed" />
             <Stat
               label="Create"
               tone="green"
@@ -223,7 +223,7 @@ export function PreflightPage() {
                       {e.recordsTruncated && (
                         <Pill
                           tone="amber"
-                          title={`The counts are complete. The record list below holds ${e.recordsStored.toLocaleString()} of them — enough to see the pattern, not every row.`}
+                          title={`The counts are complete. The record list below holds ${e.recordsStored.toLocaleString()} of them, enough to see the pattern but not every row.`}
                         >
                           list capped
                         </Pill>

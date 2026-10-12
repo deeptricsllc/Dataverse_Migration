@@ -4,7 +4,7 @@ import { fmtNumber } from '../lib/format';
 import { Callout, Checkbox, cx, EmptyState, Pill } from './ui';
 
 /**
- * The analysed tables, drawn.
+ * The analyzed tables, drawn.
  *
  * Laid out left to right by dependency depth, which is the same order a migration loads them in:
  * anything to the left of a table must exist before it. That makes the diagram answer two questions
@@ -317,7 +317,7 @@ export function ErdDiagram({ erd }: { erd: ErdDto }) {
             </p>
           )}
           <p className="mt-2 text-xs">
-            Those tables were not analysed, so the diagram cannot draw them. Include them in an analysis to
+            Those tables were not analyzed, so the diagram cannot draw them. Include them in an analysis to
             see the whole picture.
           </p>
         </Callout>

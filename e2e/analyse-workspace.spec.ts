@@ -121,7 +121,7 @@ const createProject = async (page: Page, name: string) => {
 /** Adds one CSV, through the gallery and the preview, exactly as a person would. */
 const addDataset = async (page: Page, filename: string) => {
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, filename));
   await page.getByTestId('dataset-preview').waitFor({ timeout: 60_000 });
   await page.getByTestId('confirm-add-dataset').click();
@@ -174,14 +174,22 @@ test('raw files become an assessment without ever leaving the workspace', async 
 
   // --- the gallery is honest about what is real -----------------------------
   await page.getByTestId('add-dataset').click();
-  await expect(page.getByTestId('connector-csv')).toBeVisible();
+  await expect(page.getByTestId('connector-upload')).toBeVisible();
   await expect(page.getByTestId('connector-sqlserver')).toBeVisible();
+  /*
+   * The card carries the status, not the essay.
+   * The full caveat used to sit here, three sentences of it, which turned a grid of nine options
+   * into a page of reading. It moved to the step after choosing, where it is asserted below, and
+   * to the "What these labels mean" disclosure on this screen.
+   */
   await expect(page.getByTestId('connector-dataverse')).toContainText('Simulated');
-  await expect(page.getByTestId('connector-dataverse')).toContainText('Never run against a real Dataverse');
-  await expect(page.getByTestId('connector-azuresql')).toContainText('Simulated');
+  await expect(page.getByTestId('connector-azuresql')).toContainText('Not live verified');
+  await page.getByRole('button', { name: 'What these labels mean' }).click();
+  await expect(page.getByText(/behaves like the real thing and is not it/i)).toBeVisible();
+  await expect(page.getByTestId('connector-sqlserver')).toContainText('Live verified');
 
   // --- the preview shows what is in the file, and stores nothing -------------
-  await page.getByTestId('connector-csv').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, 'Orders.csv'));
   const preview = page.getByTestId('dataset-preview');
   await preview.waitFor({ timeout: 60_000 });
@@ -201,10 +209,10 @@ test('raw files become an assessment without ever leaving the workspace', async 
   for (const name of ['Orders', 'Customers', 'Contacts']) {
     await expect(page.getByTestId('dataset-name').filter({ hasText: name })).toHaveCount(1);
   }
-  await expect(page.getByTestId('dataset-state').first()).toHaveText('Not analysed');
+  await expect(page.getByTestId('dataset-state').first()).toHaveText('Not analyzed');
 
   await page.getByRole('tab', { name: 'Overview' }).click();
-  await expect(page.getByText('Nothing has been analysed yet')).toBeVisible();
+  await expect(page.getByText('Nothing has been analyzed yet')).toBeVisible();
 
   await runAnalysis(page);
   await expect(page.getByTestId('readiness-score')).toBeVisible({ timeout: 30_000 });
@@ -234,7 +242,7 @@ test('raw files become an assessment without ever leaving the workspace', async 
    * and pull down a readiness score that is supposed to describe customer data.
    */
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles(join(FIXTURES, 'CustomerMigration.xlsx'));
   const workbook = page.getByTestId('dataset-preview');
   await workbook.waitFor({ timeout: 60_000 });
@@ -348,11 +356,13 @@ test('raw files become an assessment without ever leaving the workspace', async 
    * holding nothing looked exactly like a dataset, and the user met the consequence later as a failure.
    */
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-sharepoint').click();
+  await page.getByTestId('connector-sharepoint-library').click();
 
   // The card said what this is before anybody started, and the step says it again.
-  await expect(page.getByText('SharePoint is not certified')).toBeVisible();
-  await expect(page.getByText(/Never run against a real SharePoint tenant/)).toBeVisible();
+  // "Not certified" is reserved for the simulator. SharePoint is built and never run live, which
+  // the step says in those words.
+  await expect(page.getByText(/What SharePoint document library can do today/)).toBeVisible();
+  await expect(page.getByText(/never run against a real SharePoint tenant/i)).toBeVisible();
   await expect(page.getByText(/Connecting does not add any data/)).toBeVisible();
 
   await page.getByTestId('new-connection').click();
@@ -410,7 +420,7 @@ test('a dataset added after an analysis is picked up by the next one', async ({ 
 
   await page.getByRole('tab', { name: 'Overview' }).click();
   // The button says what is left to do rather than offering to redo everything.
-  await expect(page.getByTestId('analyse')).toHaveText(/Analyse 1 of 2/);
+  await expect(page.getByTestId('analyse')).toHaveText(/Analyze 1 of 2/);
   await runAnalysis(page);
 
   const after = await assessment(page);

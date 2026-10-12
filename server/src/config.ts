@@ -56,7 +56,7 @@ const schema = z.object({
    *
    * Each one seeds its own copy of the simulated data and runs two real migrations to build its
    * worked examples, so a sign-in is a few seconds of genuine work rather than a row insert. That
-   * is the right behaviour — the demo is honest because it actually runs — and it is also a way to
+   * is the right behavior — the demo is honest because it actually runs — and it is also a way to
    * spend somebody else's compute. Past this ceiling a new visitor is asked to come back shortly
    * rather than being handed a workspace the deployment cannot afford.
    *

@@ -68,7 +68,7 @@ function ipv4Verdict(octets: number[]): HostPolicyVerdict | null {
 }
 
 /** Strips the forms a host can arrive in: brackets, a zone id, a trailing dot, a scheme. */
-function normalise(host: string): string {
+function normalize(host: string): string {
   let value = host.trim().toLowerCase();
   if (value.includes('://')) value = value.slice(value.indexOf('://') + 3);
   value = value.replace(/\/.*$/, '');
@@ -97,7 +97,7 @@ export function checkOutboundHost(
   host: string,
   options: { allowInternal?: boolean } = {},
 ): HostPolicyVerdict {
-  const value = normalise(host);
+  const value = normalize(host);
   if (value === '') return { allowed: false, reason: 'a server name or address is required' };
   if (options.allowInternal) return { allowed: true };
 

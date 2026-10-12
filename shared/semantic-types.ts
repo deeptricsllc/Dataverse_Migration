@@ -268,7 +268,7 @@ export function detectSemanticType(input: SemanticInput): SemanticReading | null
       confidence: 'MEDIUM',
       label: SEMANTIC_LABELS.PHONE,
       evidence: `${phoneLike} of ${values.length} sampled values are punctuated like telephone numbers. A telephone number has no universal format, so this is a reading rather than a certainty.`,
-      suggestedTransformation: 'Normalise to one format before migrating, if the target expects one',
+      suggestedTransformation: 'Normalize to one format before migrating, if the target expects one',
     };
   }
   if (ratio(matches(LEADING_ZERO_DIGITS), values.length) >= ENOUGH) {

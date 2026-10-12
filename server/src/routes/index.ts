@@ -783,8 +783,8 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
       means:
         'Run totals are final accountability: every source record, counted once. Attempt figures are ' +
         'execution history: which attempt is answerable for the state each record is now in. They sum to ' +
-        'the run totals because each record belongs to exactly one attempt — the one that last touched ' +
-        'it — so an outcome column shows nothing for work a later attempt has since redone. What each ' +
+        'the run totals because each record belongs to exactly one attempt, the one that last touched ' +
+        'it, so an outcome column shows nothing for work a later attempt has since redone. What each ' +
         'attempt recorded at the time is kept separately, in the problems it found, which no later ' +
         'attempt overwrites.',
     };

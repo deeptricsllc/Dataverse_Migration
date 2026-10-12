@@ -171,7 +171,7 @@ export function FindingCard({
           {/* Said plainly rather than as a number: "0.9724" next to a fact is not a confidence, it is a prop. */}
           {finding.confidence === 'MEDIUM' && (
             <span className="text-[11px] text-slate-500">
-              Worth checking — this reading is likely rather than certain
+              Worth checking: this reading is likely rather than certain
             </span>
           )}
           {finding.basis !== 'EXACT' && (

@@ -204,4 +204,4 @@ export function totalsEqual(left: string | null, right: string | null, how: Tota
 
 /** The sentence every aggregate result carries, so a PASS is never read as a proof. */
 export const AGGREGATE_CAVEAT =
-  'Aggregate reconciliation is supplementary evidence. Totals agreeing does not prove the records agree — two tables can share every total and differ in every row — and it is offered for tables too large to compare one record at a time.';
+  'Aggregate reconciliation is supplementary evidence. Totals agreeing does not prove the records agree: two tables can share every total and differ in every row. It is offered for tables too large to compare one record at a time.';

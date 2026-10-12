@@ -130,7 +130,7 @@ describe('a binary target column is compared byte for byte, within a limit', () 
   it('declines text it cannot read as bytes, instead of comparing it as text', () => {
     const result = compareValues(binaryColumn(), 'not bytes at all!', '3q2+7w==');
     expect(result.verdict).toBe('NOT_COMPARABLE');
-    expect(result.reason).toMatch(/does not recognise as bytes/);
+    expect(result.reason).toMatch(/does not recognize as bytes/);
   });
 
   it('recognises the binary types each engine and Dataverse actually use', () => {

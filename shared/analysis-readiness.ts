@@ -229,8 +229,8 @@ export interface ExecutiveSummaryInput {
   /**
    * Datasets in the project that this assessment does not cover, in the same unit as `datasets`.
    *
-   * Nonzero while a dataset is still being analysed, and after one fails. The paragraph has to say so:
-   * the header counts every dataset in the project and this sentence counted only the analysed ones, so
+   * Nonzero while a dataset is still being analyzed, and after one fails. The paragraph has to say so:
+   * the header counts every dataset in the project and this sentence counted only the analyzed ones, so
    * a project with a fourth dataset mid-analysis read "4 datasets" at the top and "contains 3 datasets
    * ... 81 out of 100" directly underneath. Both numbers were right and the sentence was still false,
    * because a score presented without its coverage is read as covering everything.
@@ -261,12 +261,12 @@ export function executiveSummary(input: ExecutiveSummaryInput): string {
       ? `${projectName} contains ${count(datasets, 'dataset')} across ${held}.`
       : `${projectName} contains ${count(datasets + notAnalysed, 'dataset')}, of which ${
           datasets === 1 ? 'one has' : `${datasets} have`
-        } been analysed so far: ${held}. The ${
+        } been analyzed so far: ${held}. The ${
           notAnalysed === 1 ? 'one that has' : `${notAnalysed} that have`
-        } not been analysed ${notAnalysed === 1 ? 'is' : 'are'} not counted in anything below.`;
+        } not been analyzed ${notAnalysed === 1 ? 'is' : 'are'} not counted in anything below.`;
 
   if (readiness.score === null) {
-    return `${projectName} contains ${count(datasets + notAnalysed, 'dataset')}. Nothing has been analysed yet, so there is no assessment to report.`;
+    return `${projectName} contains ${count(datasets + notAnalysed, 'dataset')}. Nothing has been analyzed yet, so there is no assessment to report.`;
   }
 
   const criticals = findings.filter((f) => f.severity === 'CRITICAL');

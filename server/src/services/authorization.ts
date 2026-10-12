@@ -12,7 +12,7 @@ import type { RequestContext } from './context';
  *
  * The policy here is deliberately narrow, because a migration team is not an org chart: members are
  * the people who do the work, and locking them out of the work would just mean everyone becomes an
- * administrator. So membership is enough to plan, analyse, preflight and migrate. What needs an
+ * administrator. So membership is enough to plan, analyze, preflight and migrate. What needs an
  * administrator is the small set of actions whose consequences outlive the task:
  *
  * - **Writing to production.** A non-production target is where the work happens and mistakes are
@@ -29,7 +29,7 @@ import type { RequestContext } from './context';
 export function requireAdmin(ctx: RequestContext, action: string): void {
   if (ctx.role === 'ADMIN') return;
   throw forbidden(
-    `${action} needs an administrator. You are signed in as a member, which can plan, analyse and migrate but cannot ${action.toLowerCase()}.`,
+    `${action} needs an administrator. You are signed in as a member, which can plan, analyze and migrate but cannot ${action.toLowerCase()}.`,
   );
 }
 

@@ -419,7 +419,7 @@ export function demoSqlData(): Record<string, Row[]> {
       WarrantyMonths: 12 + (i % 3) * 12,
       LaunchDate: `202${i % 5}-0${(i % 9) + 1}-01`,
       Discontinued: i % 6 === 5,
-      Description: `Component ${n} for the legacy catalogue.`,
+      Description: `Component ${n} for the legacy catalog.`,
     };
   });
 
