@@ -177,15 +177,27 @@ people's jobs also run inside, which is the opposite of least privilege.
 
 ## 7. Cost
 
-|                                               |                                                                 |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| Azure SQL Basic, 2 GB                         | roughly US$5 per month, billed hourly, so a day or two is cents |
-| Serverless General Purpose                    | auto-pauses when idle; cheaper if left alone between runs       |
-| Optional second server for the firewall check | a second Basic database, same order of cost                     |
-| Outbound data                                 | the fixture is 150 rows; negligible                             |
-| Railway                                       | **unchanged. No Pro upgrade, no static IPs.**                   |
+Read from Azure's own Retail Prices API on 2026-10-12, meter `B DTU`, product
+`SQL Database Single Basic`. Billing is **per day**, so a certification that lasts an afternoon
+costs cents rather than a month's listed figure.
 
-Delete the resource group when finished (§9) and the cost stops.
+| Region         | Per day   | 30 days |
+| -------------- | --------- | ------- |
+| East US        | US$0.1610 | US$4.83 |
+| West Europe    | US$0.1610 | US$4.83 |
+| UK South       | US$0.2010 | US$6.03 |
+| Australia East | US$0.1771 | US$5.31 |
+
+Basic includes 2 GB of storage; the fixture is 150 rows, so storage adds nothing. Outbound data is
+negligible. A second Basic database for the optional firewall-rejection check doubles the figure.
+
+**Railway is unchanged: no Pro upgrade, no static IPs, no additional cost.**
+
+Verify the figure for your own region before provisioning, because these change:
+
+```bash
+curl -s "https://prices.azure.com/api/retail/prices?\$filter=serviceName%20eq%20'SQL%20Database'%20and%20armRegionName%20eq%20'<region>'%20and%20productName%20eq%20'SQL%20Database%20Single%20Basic'"   | python -c "import sys,json;[print(i['meterName'],i['retailPrice'],i['currencyCode'],i['unitOfMeasure']) for i in json.load(sys.stdin)['Items']]"
+```
 
 ## 8. Run the certification
 

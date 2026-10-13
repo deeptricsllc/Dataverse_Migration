@@ -111,27 +111,119 @@ describe.skipIf(!raw)('Azure SQL read-only certification against a real database
     await c.dispose?.();
   }, 120_000);
 
-  it('runs with a least-privilege login, checked rather than assumed', async () => {
+  it('runs with a least-privilege login, checked against effective permissions', async () => {
     /*
-     * Proven by reading the login's role membership, not by attempting a write.
-     * Attempting one would be DML, which this suite exists not to issue; and a write that failed
-     * would prove the server refused it, not that the suite never tried.
+     * Effective permissions, not role membership.
+     *
+     * `sys.database_role_members` answers one narrow question -- which roles is this principal a
+     * direct member of -- and a login can hold write rights without appearing in it at all: through
+     * an explicit GRANT, through a role nested inside another role, through owning a schema or a
+     * table, or through something granted to `public`. A certification that checked only the role
+     * table could call a login read-only while it was none of those things.
+     *
+     * `sys.fn_my_permissions` answers the question that matters: what can this principal actually
+     * do, after roles, nesting, ownership and explicit grants have all been resolved. The checks
+     * below read it at database scope and at object scope, and separately confirm the login owns
+     * nothing, because an owner's rights do not show up as a grant anywhere.
+     *
+     * All of it is SELECT against system views. The suite still issues no DDL and no DML.
      */
-    const c = connector();
-    const roles = await readScalarList(
-      c,
-      `SELECT r.name FROM sys.database_role_members m
-         JOIN sys.database_principals r ON r.principal_id = m.role_principal_id
-         JOIN sys.database_principals u ON u.principal_id = m.member_principal_id
-        WHERE u.name = USER_NAME()`,
-    );
-    expect(roles, 'the login can read').toContain('db_datareader');
-    for (const forbidden of ['db_datawriter', 'db_ddladmin', 'db_owner', 'db_securityadmin']) {
-      expect(roles, `the login is not a member of ${forbidden}`).not.toContain(forbidden);
+    const sql = (await import('mssql')).default;
+    const pool = await new sql.ConnectionPool({
+      server: url.hostname,
+      port: Number(url.port) || 1433,
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      user: decodeURIComponent(url.username),
+      password,
+      options: { encrypt: true, trustServerCertificate: false },
+    }).connect();
+
+    try {
+      const list = async (q: string): Promise<string[]> =>
+        (await pool.request().query(q)).recordset.map((r) => String(Object.values(r)[0]));
+
+      // --- effective permissions, database scope ----------------------------
+      const dbPerms = (await list(`SELECT permission_name FROM sys.fn_my_permissions(NULL, 'DATABASE')`)).map(
+        (x) => x.toUpperCase(),
+      );
+      const forbiddenAtDatabase = [
+        'INSERT',
+        'UPDATE',
+        'DELETE',
+        'ALTER',
+        'CONTROL',
+        'CREATE TABLE',
+        'CREATE SCHEMA',
+        'CREATE PROCEDURE',
+        'ALTER ANY SCHEMA',
+        'ALTER ANY USER',
+        'TAKE OWNERSHIP',
+        'IMPERSONATE',
+        'BACKUP DATABASE',
+      ];
+      for (const perm of forbiddenAtDatabase) {
+        expect(dbPerms, `the login has no ${perm} at database scope`).not.toContain(perm);
+      }
+      expect(dbPerms, 'it can connect').toContain('CONNECT');
+
+      // --- effective permissions on the table it will read ------------------
+      const tablePerms = (
+        await list(`SELECT permission_name FROM sys.fn_my_permissions('${F.peopleTable}', 'OBJECT')`)
+      ).map((x) => x.toUpperCase());
+      expect(tablePerms, 'it can read the fixture').toContain('SELECT');
+      for (const perm of ['INSERT', 'UPDATE', 'DELETE', 'ALTER', 'CONTROL', 'TAKE OWNERSHIP']) {
+        expect(tablePerms, `the login has no ${perm} on ${F.peopleTable}`).not.toContain(perm);
+      }
+
+      // --- role membership, resolved through nesting ------------------------
+      const roles = (
+        await pool.request().query(`SELECT
+            IS_ROLEMEMBER('db_owner')         AS db_owner,
+            IS_ROLEMEMBER('db_datawriter')    AS db_datawriter,
+            IS_ROLEMEMBER('db_ddladmin')      AS db_ddladmin,
+            IS_ROLEMEMBER('db_securityadmin') AS db_securityadmin,
+            IS_ROLEMEMBER('db_accessadmin')   AS db_accessadmin,
+            IS_ROLEMEMBER('db_datareader')    AS db_datareader`)
+      ).recordset[0] as Record<string, number | null>;
+      /*
+       * IS_ROLEMEMBER resolves nesting, which the role-members join does not: a login placed in a
+       * custom role that is itself a member of db_datawriter is a writer, and only this notices.
+       */
+      for (const role of ['db_owner', 'db_datawriter', 'db_ddladmin', 'db_securityadmin', 'db_accessadmin']) {
+        expect(roles[role], `the login is not a member of ${role}, directly or through nesting`).not.toBe(1);
+      }
+      expect(roles.db_datareader, 'and it is a reader').toBe(1);
+
+      // --- ownership --------------------------------------------------------
+      const ownedSchemas = await list(
+        `SELECT name FROM sys.schemas WHERE principal_id = DATABASE_PRINCIPAL_ID()`,
+      );
+      const ownedObjects = await list(
+        `SELECT name FROM sys.objects WHERE principal_id = DATABASE_PRINCIPAL_ID()`,
+      );
+      // An owner may do anything to what it owns, and that right appears in no grant table.
+      expect(ownedSchemas, 'the login owns no schema').toEqual([]);
+      expect(ownedObjects, 'the login owns no object').toEqual([]);
+
+      // --- explicit grants and denies recorded for it or its roles ----------
+      const explicit = (
+        await pool.request().query(`SELECT dp.state_desc + ' ' + dp.permission_name
+             + ISNULL(' ON ' + OBJECT_SCHEMA_NAME(dp.major_id) + '.' + OBJECT_NAME(dp.major_id), '') AS entry
+           FROM sys.database_permissions dp
+          WHERE dp.grantee_principal_id = DATABASE_PRINCIPAL_ID()
+             OR dp.grantee_principal_id IN (
+                  SELECT role_principal_id FROM sys.database_role_members
+                   WHERE member_principal_id = DATABASE_PRINCIPAL_ID())`)
+      ).recordset.map((r) => String(r.entry));
+
+      notes.push(`Effective database permissions: ${dbPerms.join(', ') || 'none'}`);
+      notes.push(`Effective permissions on ${F.peopleTable}: ${tablePerms.join(', ')}`);
+      notes.push(`Explicit grants and denies: ${explicit.join('; ') || 'none'}`);
+      notes.push('Owns no schema and no object.');
+    } finally {
+      await pool.close().catch(() => undefined);
     }
-    notes.push(`Login roles: ${roles.join(', ') || 'none beyond public'}`);
-    await c.dispose?.();
-  }, 120_000);
+  }, 180_000);
 
   // -------------------------------------------------------------------------
   // 2. Discovery, within the permissions granted
@@ -395,14 +487,3 @@ describe.skipIf(!raw)('Azure SQL read-only certification against a real database
     expect(proved.upsert, 'upsert is not claimed by a read-only suite').toBeUndefined();
   });
 });
-
-/** Runs one scalar-list query through the connector's own pool, read-only. */
-async function readScalarList(
-  connector: ReturnType<TestApp['services']['connections']['sqlConnectorFor']>,
-  sql: string,
-): Promise<string[]> {
-  const withQuery = connector as unknown as { rawQuery?: (q: string) => Promise<{ value: string }[]> };
-  if (typeof withQuery.rawQuery !== 'function') return [];
-  const rows = await withQuery.rawQuery(sql);
-  return rows.map((r) => String(Object.values(r)[0]));
-}
