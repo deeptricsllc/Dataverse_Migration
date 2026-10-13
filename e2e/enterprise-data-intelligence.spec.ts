@@ -185,7 +185,7 @@ test('an enterprise export is assessed for keys, conversions and relationships',
   await page.goto(`/analysis/${projectId}`);
 
   await page.getByTestId('add-dataset').click();
-  await page.getByTestId('connector-excel').click();
+  await page.getByTestId('connector-upload').click();
   await page.getByTestId('dataset-file-input').setInputFiles({
     name: 'EnterpriseExport.xlsx',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -198,10 +198,10 @@ test('an enterprise export is assessed for keys, conversions and relationships',
 
   await page.getByTestId('analyse').click();
   const main = page.getByRole('main');
-  await expect(main).toContainText('Analysed', { timeout: 600_000 });
-  await expect(main).not.toContainText('not analysed yet', { timeout: 600_000 });
+  await expect(main).toContainText('Analyzed', { timeout: 600_000 });
+  await expect(main).not.toContainText('not analyzed yet', { timeout: 600_000 });
   await expect(page.getByRole('button', { name: /Analysing/ })).toHaveCount(0, { timeout: 600_000 });
-  await shot(page, 'four-datasets-analysed');
+  await shot(page, 'four-datasets-analyzed');
 
   await page.getByRole('tab', { name: /Findings/ }).click();
   await shot(page, 'findings-across-four-datasets');

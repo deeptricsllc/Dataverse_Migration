@@ -35,7 +35,7 @@ interface Workflow {
 const WORKFLOWS: Workflow[] = [
   {
     kind: 'ANALYSIS',
-    name: 'Analyse',
+    name: 'Analyze',
     question: 'What is in my data, and what should I know about it?',
     blurb:
       'Profile one dataset or several together. Find the problems that would break a migration before you plan one.',
@@ -208,7 +208,7 @@ function NewProjectModal({ workflow, onClose }: { workflow: Workflow | null; onC
         ) : (
           <Callout tone="info" title="You choose the two sides next">
             {workflow.kind === 'MIGRATION'
-              ? 'A migration moves data from one system to another, so it needs both — and they cannot be the same one.'
+              ? 'A migration moves data from one system to another, so it needs both, and they cannot be the same one.'
               : 'A comparison needs the two datasets you want to compare.'}
           </Callout>
         )}

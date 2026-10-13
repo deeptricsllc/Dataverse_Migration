@@ -4,7 +4,7 @@
  * An evidence package is read by somebody who was not there, possibly years later, possibly with a
  * newer version of this platform. That only works if the format says what it is, so every package
  * carries `evidenceSchemaVersion` — a number that changes when the structure changes, independently
- * of the application version. A reader that does not recognise it should say so rather than guess.
+ * of the application version. A reader that does not recognize it should say so rather than guess.
  *
  * What the version is *not*: a promise of backward compatibility. Nothing here reads old packages
  * yet. It is a boundary, so that when something does, there is a number to branch on instead of a

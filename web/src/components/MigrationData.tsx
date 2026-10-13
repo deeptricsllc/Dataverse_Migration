@@ -227,7 +227,7 @@ function TargetCapability({
 /**
  * Choosing the source system and what to take from it.
  *
- * The same picker the dataset experience uses, over the same endpoints and the same catalogue. §8 is
+ * The same picker the dataset experience uses, over the same endpoints and the same catalog. §8 is
  * explicit that migration must not grow a second connector browser, and the fastest way to get one is to
  * build "almost the same" twice.
  */

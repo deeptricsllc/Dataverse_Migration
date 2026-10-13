@@ -224,9 +224,9 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         caveat,
       ],
       whyItMatters:
-        'Matching a source record to a target record is what stops a migration creating duplicates, and what lets a second run recognise work it has already done. Without a stable identifier there is nothing to match on.',
+        'Matching a source record to a target record is what stops a migration creating duplicates, and what lets a second run recognize work it has already done. Without a stable identifier there is nothing to match on.',
       recommendation:
-        'Choose a business key — one column, or a combination — that is unique and always present, or have the source system supply one before migrating.',
+        'Choose a business key that is unique and always present. One column, or a combination. Failing that, have the source system supply one before migrating.',
       migrationImpact:
         'Every record would be treated as new on every run, so re-running the migration would duplicate the data rather than update it. Resuming after a failure would do the same.',
       confidence,
@@ -260,7 +260,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       ],
       whyItMatters:
         'A migration needs something to match on. A column that is already unique and complete is the cheapest possible answer, because nothing has to be built or cleaned first.',
-      recommendation: `Confirm with the source system's owner that ${candidate.field} is stable — that it is not reassigned or regenerated — and then use it as the match key.`,
+      recommendation: `Confirm with the source system's owner that ${candidate.field} is stable, meaning it is never reassigned or regenerated, then use it as the match key.`,
       migrationImpact:
         'With this as the match key, re-running the migration updates existing records instead of creating new ones.',
       confidence,
@@ -286,7 +286,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         caveat,
       ],
       whyItMatters:
-        'A record with no identifier cannot be matched, so it cannot be updated and cannot be recognised on a second run.',
+        'A record with no identifier cannot be matched, so it cannot be updated and cannot be recognized on a second run.',
       recommendation:
         'Fill in the missing identifiers at source, or exclude these records from the migration deliberately rather than discovering them part-way through it.',
       migrationImpact:
@@ -327,7 +327,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
     const exact = field.basis === 'EXACT' && !d.truncated;
     const examples = d.examples.map((e) => {
       const where = e.recordIds.length > 0 ? ` (records ${e.recordIds.join(', ')})` : '';
-      return `${e.value ?? '—'} is held by ${plural(e.count, 'record')}${where}.`;
+      return `${e.value ?? '(blank)'} is held by ${plural(e.count, 'record')}${where}.`;
     });
     found.push({
       id: id('DUPLICATE_BUSINESS_KEY', field.field),
@@ -359,7 +359,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
       ],
       whyItMatters: blocksIdentity
         ? 'This is the column a migration would match on, and it does not tell two records apart. Matching on it merges records that are not the same; not matching on it means every run creates new records instead of updating.'
-        : 'Another column can identify these records, so the migration can still run — but a key that was meant to be unique and is not usually means the export ran twice, or two systems were merged without reconciling.',
+        : 'Another column can identify these records, so the migration can still run. A key that was meant to be unique and is not usually means the export ran twice, or two systems were merged without reconciling.',
       recommendation:
         `Decide what the repeats are before migrating: if they are the same record exported twice, merge them at source; ` +
         `if they are genuinely different records, ${field.field} is not the key and something must be added to it to tell them apart.`,
@@ -441,7 +441,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         recommendation:
           `Convert ${field.field} to a decimal column before migrating: strip the symbol and separators, ` +
           `agree which separator is the decimal point, and keep ${c.maxDecimals && c.maxDecimals > 2 ? c.maxDecimals : 2} decimal places. ` +
-          `Confirm the currency — a column of amounts with no currency column beside it is only unambiguous while everything is in one currency.`,
+          `Confirm the currency. A column of amounts with no currency column beside it is only unambiguous while everything is in one currency.`,
         migrationImpact:
           'Loaded into a numeric target as-is, the written amounts fail to convert and those records are rejected or land empty. Loaded into a text target, they migrate and stop being money.',
         confidence: 'HIGH',
@@ -535,7 +535,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           caveat,
         ],
         whyItMatters:
-          'A conversion written for one spelling treats the others as unrecognised, and an unrecognised boolean usually becomes false rather than an error — so the records migrate, look fine, and mean the opposite.',
+          'A conversion written for one spelling treats the others as unrecognized, and an unrecognized boolean usually becomes false rather than an error. The records migrate, look fine, and mean the opposite.',
         recommendation: `Map every spelling in ${field.field} to true or false explicitly, and decide what a blank means, before migrating.`,
         migrationImpact:
           'Unmapped spellings default to false in most loaders, silently inverting the meaning of those records.',
@@ -568,7 +568,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           caveat,
         ],
         whyItMatters:
-          'Rounding is silent and irreversible. Where the extra places are deliberate — a unit price, an exchange rate, a tax fraction — rounding them changes totals that are later reconciled against the source and no longer agree.',
+          'Rounding is silent and irreversible. Where the extra places are deliberate, as in a unit price, an exchange rate or a tax fraction, rounding them changes totals that are later reconciled against the source and no longer agree.',
         recommendation: `Give the target column at least ${c.maxDecimals} decimal places, or confirm in writing that rounding ${field.field} to two is intended.`,
         migrationImpact:
           'Values are rounded on write, and the difference is only visible when a total is compared back to the source.',
@@ -596,7 +596,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         caveat,
       ],
       whyItMatters:
-        'When two source records resolve to the same target record, one of them silently overwrites the other — and the migration reports both as successful.',
+        'When two source records resolve to the same target record, one silently overwrites the other, and the migration reports both as successful.',
       recommendation:
         'Decide which record wins before migrating: merge them at source, or add a column to the key so the two become distinguishable.',
       migrationImpact:
@@ -625,7 +625,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           caveat,
         ],
         whyItMatters:
-          'If this column was intended as the identifier, the duplicates are the records that will go wrong — and there are few enough of them to fix by hand.',
+          'If this column was intended as the identifier, the duplicates are the records that will go wrong, and there are few enough of them to fix by hand.',
         recommendation: `Review the ${plural(duplicates, 'record')} that share a value. If they are genuine duplicates, merge them; if the column was never meant to be unique, use something else as the key.`,
         migrationImpact: 'Using this as a match key would make these records conflict with each other.',
         confidence,
@@ -657,7 +657,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
         whyItMatters:
           'Migrating a column that holds nothing moves no data. More usefully, it is a signal: either the field is obsolete, or the data everyone assumed was here lives somewhere else.',
         recommendation:
-          'Exclude this column from the migration unless the target requires it — and if it does, find out where the values actually are.',
+          'Exclude this column from the migration unless the target requires it. If it does, find out where the values actually are before relying on it.',
         migrationImpact:
           'None directly. Mapping it wastes effort and adds a column to the target that will stay empty.',
         confidence,
@@ -693,7 +693,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           ? 'A target column that requires a value will reject every record that does not have one, and it will do so part-way through the run.'
           : 'A column this sparse is often either optional in practice or filled in by a process that was missed. Either way it changes what the migrated data means.',
         recommendation: required
-          ? 'Supply a value, agree a default, or relax the requirement in the target — before the run rather than during it.'
+          ? 'Supply a value, agree a default, or relax the requirement in the target. Before the run rather than during it.'
           : 'Confirm the column is genuinely optional. If it should be populated, find out which process was supposed to fill it.',
         migrationImpact: required
           ? `${plural(empty, 'record')} would be blocked at preflight.`
@@ -809,7 +809,7 @@ export function findingsForTable(input: FindingsInput): Finding[] {
           caveat,
         ],
         whyItMatters:
-          'A spread this wide usually means two different things are being stored in one column — a code and a free-text note, say — which map to different places in the target.',
+          'A spread this wide usually means two different things share one column, such as a code and a free-text note, which map to different places in the target.',
         recommendation:
           'Look at the longest and shortest values. If they are different kinds of thing, split the column or map them separately.',
         migrationImpact:
@@ -1028,7 +1028,7 @@ function fromSemantic(
         'Storage type and detected meaning differ, so nothing has been converted.',
       ],
       whyItMatters:
-        'Migrated as a number, the target gets 45292 instead of a date — and it will accept it without complaint if the target column is numeric. The error is only visible to someone who knows what the value should have been.',
+        'Migrated as a number, the target gets 45292 instead of a date, and accepts it without complaint if the target column is numeric. The error is only visible to someone who knows what the value should have been.',
       recommendation: reading.suggestedTransformation ?? 'Confirm the meaning and convert before loading.',
       migrationImpact:
         'Either the write fails because the target wants a date, or it succeeds and stores a meaningless number. The second is worse.',
@@ -1078,7 +1078,7 @@ function fromSemantic(
       evidence: [reading.evidence],
       whyItMatters:
         'Inconsistent formatting is harmless to store and costly to match on. If a phone number is ever part of how records are matched or deduplicated, the format decides the answer.',
-      recommendation: reading.suggestedTransformation ?? 'Normalise to one format before migrating.',
+      recommendation: reading.suggestedTransformation ?? 'Normalize to one format before migrating.',
       migrationImpact:
         'Matching and deduplication on this column will be less accurate than the data allows.',
     };
@@ -1114,7 +1114,7 @@ function fromSemantic(
       affectedPercent: null,
       evidence: [reading.evidence],
       whyItMatters:
-        'Stored as a number, 007 becomes 7 — and nothing reports a difference, because by then the value is the number seven. Comparisons against the source will match and the data will still be wrong.',
+        'Stored as a number, 007 becomes 7, and nothing reports a difference, because by then the value is the number seven. Comparisons against the source will match and the data will still be wrong.',
       recommendation: reading.suggestedTransformation ?? 'Keep this column as text.',
       migrationImpact: 'A numeric target column would silently drop the leading zeros.',
       // Already correct as text. This is a note so nobody 'fixes' it into a number.
@@ -1187,7 +1187,7 @@ export const FINDING_DISPOSITION_DESCRIPTIONS: Record<FindingDispositionStatus, 
   OPEN: 'Nobody has decided about this yet.',
   WILL_FIX: 'This will be corrected in the source before migrating.',
   ACCEPTED_RISK: 'Understood and accepted as it is. The migration will proceed with this unresolved.',
-  NOT_APPLICABLE: 'Real, but it does not matter for this migration — an obsolete field, say.',
+  NOT_APPLICABLE: 'Real, but it does not matter for this migration. An obsolete field, for example.',
   RESOLVED: 'Already corrected. The next analysis should no longer find it.',
 };
 

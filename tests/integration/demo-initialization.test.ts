@@ -144,7 +144,7 @@ describe('a demo workspace that cannot set itself up', () => {
     await scenarios().ensure(ctx);
 
     const names = (await activeProjects()).map((p) => p.name).sort();
-    expect(names).toEqual(['Customer Migration — Data Quality Issues', 'Customer Migration — Successful']);
+    expect(names).toEqual(['Customer Migration: Data Quality Issues', 'Customer Migration: Successful']);
     expect((await runs()).length, 'a migration was actually run for each').toBeGreaterThanOrEqual(2);
 
     const after = await status();
@@ -246,8 +246,8 @@ describe('a demo workspace that cannot set itself up', () => {
 
     const names = (await activeProjects()).map((p) => p.name).sort();
     expect(names, 'one of each, not five').toEqual([
-      'Customer Migration — Data Quality Issues',
-      'Customer Migration — Successful',
+      'Customer Migration: Data Quality Issues',
+      'Customer Migration: Successful',
     ]);
     // Two stories, two runs. Five concurrent callers must not produce ten.
     expect((await runs()).length).toBe(2);

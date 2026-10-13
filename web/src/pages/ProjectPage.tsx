@@ -117,7 +117,7 @@ function AnalysisProject({ project }: { project: ProjectDto }) {
     <div className="space-y-5">
       <Card
         title="Analyses"
-        subtitle="Each analysis is a point-in-time read of the source. Run as many as you need — nothing is overwritten."
+        subtitle="Each analysis is a point-in-time read of the source. Run as many as you need. Nothing is overwritten."
         data-testid="analyses"
         actions={
           <Button
@@ -137,7 +137,7 @@ function AnalysisProject({ project }: { project: ProjectDto }) {
         {analyses.data?.length === 0 && (
           <EmptyState
             icon={<Microscope className="h-6 w-6" />}
-            title="Nothing analysed yet"
+            title="Nothing analyzed yet"
             description="An analysis reads the source and reports its tables, columns, volumes, data quality and relationships."
             action={
               <Button
@@ -304,8 +304,8 @@ function NewAnalysisModal({
             onClick={() => start.mutate()}
           >
             {selected.size === 0
-              ? 'Analyse every table'
-              : `Analyse ${selected.size} table${selected.size === 1 ? '' : 's'}`}
+              ? 'Analyze every table'
+              : `Analyze ${selected.size} table${selected.size === 1 ? '' : 's'}`}
           </Button>
         </>
       }
@@ -335,12 +335,12 @@ function NewAnalysisModal({
             <span className="text-sm font-medium text-slate-700">
               Tables{' '}
               <span className="font-normal text-slate-500">
-                {selected.size === 0 ? '— all of them' : `— ${selected.size} selected`}
+                {selected.size === 0 ? 'all of them' : `${selected.size} selected`}
               </span>
             </span>
             <SearchInput value={search} onChange={setSearch} placeholder="Filter tables…" />
           </div>
-          {tables.isLoading && <Spinner label="Reading the source catalogue…" />}
+          {tables.isLoading && <Spinner label="Reading the source catalog…" />}
           {tables.error && <ErrorState error={tables.error} />}
           {tables.data && (
             <div className="max-h-72 overflow-y-auto rounded-md border border-slate-200">
@@ -363,7 +363,7 @@ function NewAnalysisModal({
             </div>
           )}
           <p className="mt-1.5 text-xs text-slate-500">
-            Selecting nothing analyses every table the source exposes, up to 200.
+            Selecting nothing analyzes every table the source exposes, up to 200.
           </p>
         </div>
         {start.error && <ErrorState error={start.error} />}
@@ -415,8 +415,8 @@ function ArchiveCard({ project }: { project: ProjectDto }) {
         }
       >
         <p className="text-sm text-slate-600">
-          The project leaves the default list. Everything inside it — analyses, plans, runs — stays readable,
-          because decisions were made on it.
+          The project leaves the default list. Everything inside it stays readable: analyzes, plans and runs,
+          because decisions were made on them.
         </p>
         {archive.error && <ErrorState error={archive.error} />}
       </Modal>

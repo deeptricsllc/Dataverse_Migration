@@ -281,7 +281,7 @@ export function relationshipFindings(inputs: RelationshipInput[]): Finding[] {
           ? `${edge}, declared by the source`
           : rel.confidence === 'INFERRED'
             ? `${edge}, inferred from the data`
-            : `${edge} — possible, needs a person to confirm`,
+            : `${edge}: possible, needs a person to confirm`,
       summary:
         rel.confidence === 'REVIEW'
           ? `${rel.childColumn} may reference ${rel.parentTable}.${rel.parentColumn}: ${pct}% of its distinct values exist there. The evidence is not strong enough to rely on.`

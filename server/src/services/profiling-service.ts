@@ -89,7 +89,7 @@ export const NOTATION_CAP = 20;
  */
 export const RELATIONSHIP_SAMPLE_CAP = 1_000;
 export const COLLISION_EXAMPLE_RECORDS = 5;
-/** Offending values kept per issue, so a person can recognise the problem. */
+/** Offending values kept per issue, so a person can recognize the problem. */
 export const MAX_ISSUE_SAMPLES = 5;
 /** Columns profiled in one pass, so a pathologically wide table cannot stall a request. */
 export const MAX_PROFILED_COLUMNS = 300;
@@ -366,7 +366,7 @@ export function evaluateRules(
             rule.severity,
             hit.count,
             `${hit.count} ${plural(hit.count, scope, `${scope}s`)} ${verb(hit.count, 'holds', 'hold')} a value that is not a recognisable phone number.`,
-            'Normalise the numbers in the source before migrating.',
+            'Normalize the numbers in the source before migrating.',
             samples,
           );
         }

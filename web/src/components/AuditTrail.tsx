@@ -291,7 +291,7 @@ export function AuditTrailCard({
           </Table>
           <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
             Showing {page.items.length.toLocaleString()} of {page.total.toLocaleString()} matching event(s)
-            {page.total > page.items.length ? ' — narrow the filters to see the rest' : ''}.
+            {page.total > page.items.length ? ' Narrow the filters to see the rest' : ''}.
           </p>
         </div>
       )}

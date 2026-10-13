@@ -13,8 +13,8 @@ coverage/
 evidence/dataverse-driver-selftest.json
 validation-performance.txt
 capture.log
-# Screenshot and export captures from any walkthrough run. Named per run, so the pattern rather
-# than a list: three separate commits have swept one of these directories in by accident.
+# Screenshot and export captures from any walkthrough run. Named per run, so a pattern rather than
+# a list: four separate commits have swept one of these directories in by accident.
 .capture*/
 qa-review.log
 provenance.log

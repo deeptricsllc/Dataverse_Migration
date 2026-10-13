@@ -141,10 +141,10 @@ function PreflightVignette() {
         <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <ScanSearch className="h-4 w-4 text-brand-400" aria-hidden />
-            Preflight — dry run
+            Preflight: dry run
           </div>
           <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[11px] font-bold tracking-wide text-emerald-300">
-            NOTHING WRITTEN
+            PREVIEW ONLY
           </span>
         </div>
         {/* Five columns of five-digit numbers have a minimum width, and a grid item will not go
@@ -176,7 +176,7 @@ function PreflightVignette() {
         </div>
         <p className="mt-4 flex items-center gap-2 text-[11px] text-slate-400">
           <Check className="h-3.5 w-3.5 flex-none text-emerald-400" aria-hidden />
-          These numbers are exact — every record was read.
+          These numbers are exact. Every record was read.
         </p>
       </div>
       <figcaption className="mt-3 text-center text-xs text-slate-500">
@@ -205,7 +205,7 @@ const SOURCES = [
 const LIFECYCLE = [
   {
     icon: ScanSearch,
-    name: 'Analyse',
+    name: 'Analyze',
     text: 'Profile every column, and find what the source contradicts about itself.',
   },
   { icon: Table2, name: 'Map', text: 'In the app, or export a workbook and map it in Excel.' },
@@ -228,7 +228,7 @@ const LIFECYCLE = [
 const GAPS = [
   {
     title: 'Rollback is an inventory, not an execution',
-    text: 'We show everything a run created, in reverse dependency order, and we do not delete it. We do not capture before-images yet, so an updated record could not be restored — and auto-deleting production data on an incomplete picture would be worse than refusing.',
+    text: 'Everything a run created is listed in reverse dependency order, and nothing is deleted. Before-images are not captured yet, so an updated record could not be restored. Deleting production data from an incomplete picture would be worse than refusing.',
   },
   {
     title: 'No DELETE synchronisation',
@@ -346,17 +346,32 @@ export function LandingPage() {
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
-              Analysis and migration, in one platform
+              Analysis, migration and validation
             </span>
             <h1 className="mt-6 text-4xl font-bold leading-[1.1] tracking-tight text-white sm:text-5xl">
-              Know exactly what a migration will do.{' '}
-              <span className="text-brand-300">Before it does it.</span>
+              Plan migrations with confidence.
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-slate-300">
-              Profile any source down to the column. Map it in the app or in Excel. Then run a dry run that
-              reads every record and classifies it — create, update, unchanged, conflict, blocked — while
-              writing nothing at all. Afterwards, prove independently what happened.
+              Understand your source data, configure mappings, and preview migration outcomes before making
+              changes.
             </p>
+            {/*
+              The three things the product does, as three statements rather than one paragraph.
+              The paragraph that was here ran to four clauses and two dashes and had to be read twice
+              to find out what the product was.
+            */}
+            <ul className="mt-6 grid max-w-xl gap-2 text-sm text-slate-300 sm:grid-cols-3">
+              {[
+                ['Analyze data', 'Profile a source down to the column.'],
+                ['Migrate with control', 'Preview every record before anything is written.'],
+                ['Validate results', 'Check the target against the source afterwards.'],
+              ].map(([title, detail]) => (
+                <li key={title} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
+                  <span className="block font-semibold text-white">{title}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">{detail}</span>
+                </li>
+              ))}
+            </ul>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               {demoButton('primary')}
               <Link
@@ -384,16 +399,27 @@ export function LandingPage() {
 
         <div className="relative border-t border-white/10 bg-slate-950/50">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-6 gap-y-2 px-6 py-5 text-xs font-medium text-slate-400">
-            <span className="text-slate-500">Reads and writes:</span>
-            <span>Microsoft Dataverse</span>
-            <span>SQL Server</span>
-            <span>Azure SQL</span>
-            <span>PostgreSQL</span>
-            <span>MySQL</span>
-            <span className="text-slate-500">Reads:</span>
-            <span>CSV, Excel &amp; XML</span>
-            <span>OneDrive</span>
-            <span>SharePoint</span>
+            {/*
+              Split by what has actually been run against a real system.
+              This line used to read "Reads and writes: Microsoft Dataverse, SQL Server, Azure SQL…"
+              with the simulated connectors listed beside the verified ones and nothing telling them
+              apart. The product marks them Simulated on the connection card; the front page was
+              claiming the opposite of what the product itself says.
+            */}
+            <span className="text-slate-500">Files on your computer:</span>
+            <span>CSV</span>
+            <span>Excel (.xlsx)</span>
+            <span>XML</span>
+            <span className="text-slate-500">Verified against real servers:</span>
+            <span className="text-emerald-300/90">SQL Server 2022</span>
+            <span className="text-emerald-300/90">PostgreSQL 16</span>
+            <span className="text-emerald-300/90">MySQL 8.4</span>
+            <span className="text-slate-500">Built, not yet run live:</span>
+            <span className="text-sky-300/80">Azure SQL</span>
+            <span className="text-sky-300/80">OneDrive</span>
+            <span className="text-sky-300/80">SharePoint</span>
+            <span className="text-slate-500">Simulated:</span>
+            <span className="text-amber-300/80">Microsoft Dataverse</span>
           </div>
         </div>
       </div>
@@ -404,7 +430,7 @@ export function LandingPage() {
       <Section
         eyebrow="Why this exists"
         title="Migrations rarely fail loudly."
-        lead="They succeed, and months later somebody finds out what the success cost. Each of these is a decision a person would have made differently if anyone had told them."
+        lead="They succeed, and months later somebody finds out what the success cost. Each of these is a decision somebody would have made differently if they had been told."
         className="bg-slate-50"
       >
         <div className="grid gap-6 md:grid-cols-3">
@@ -429,7 +455,7 @@ export function LandingPage() {
             <h3 className="mt-4 font-semibold text-slate-900">The run reported COMPLETED</h3>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
               One table had failed outright. No individual record failed, so nothing contradicted the word
-              COMPLETED — and the next person read it and moved on.
+              COMPLETED, and the next person read it and moved on.
             </p>
           </div>
         </div>
@@ -451,14 +477,14 @@ export function LandingPage() {
             </div>
             <h3 className="mt-3 text-xl font-semibold text-slate-900">Find out what is actually in there</h3>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              Connect any supported source and profile it: population and null rates per column, blanks,
-              distinct values, lengths and ranges, inferred types with the reason for each, the load order
-              implied by real foreign keys, and findings wherever the source contradicts its own schema.
+              Profile a source column by column: population, nulls, blanks, distinct values, lengths, ranges
+              and inferred types. Analysis reports the load order its foreign keys imply, and flags where the
+              data contradicts its own schema.
             </p>
             <ul className="mt-5 space-y-2 text-sm text-slate-700">
               {[
                 'Run many analyses in one project and compare them over time',
-                'Export a mapping workbook to Excel — source facts filled in, target columns left to you',
+                'Export a mapping workbook to Excel with the source facts already filled in',
                 'An analysis project has no target and cannot write anywhere. Enforced, not a convention',
               ].map((t) => (
                 <li key={t} className="flex gap-2.5">
@@ -474,13 +500,13 @@ export function LandingPage() {
             </div>
             <h3 className="mt-3 text-xl font-semibold text-slate-900">Move it, and prove it moved</h3>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              Import the mapping back from Excel with the destination filled in, or map in the app column by
-              column with a compatibility verdict on each. Then preflight, migrate, validate and reconcile —
-              and schedule it, because the source does not hold still.
+              Import the mapping back from Excel, or map in the app column by column with a compatibility
+              verdict on each. Then preflight, migrate, validate and reconcile. Schedule it to keep up as the
+              source changes.
             </p>
             <ul className="mt-5 space-y-2 text-sm text-slate-700">
               {[
-                'Matching is deterministic: identity map, primary id, alternate key, business key — never a guess',
+                'Matching is deterministic: identity map, then primary id, alternate key, business key. Never a guess',
                 'Idempotent and resumable: run it twice and nothing duplicates',
                 'Data loss takes a named acknowledgement, recorded with who accepted it and when',
               ].map((t) => (
@@ -501,7 +527,7 @@ export function LandingPage() {
         id="how"
         eyebrow="How it works"
         title="Eight steps, and you can stop at any of them."
-        lead="Nothing is written until you have seen what writing would do. Each step produces something you can hand to somebody else — a profile, a workbook, a plan, a remediation package, a validation report."
+        lead="Nothing is written until you have seen what writing would do. Each step produces something you can hand to somebody else: a profile, a workbook, a plan, a remediation package, a validation report."
         className="bg-slate-50"
       >
         <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -527,7 +553,7 @@ export function LandingPage() {
         id="trust"
         eyebrow="The actual claim"
         title="Why the numbers can be trusted."
-        lead="This is the part worth scrutinising, because it is what separates this from a tool that copies rows."
+        lead="How each number is arrived at, so you can check the reasoning rather than trust the total."
       >
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           <Feature icon={ListChecks} title="Every statistic says exact or sampled">
@@ -541,7 +567,7 @@ export function LandingPage() {
             validation compares. A second implementation would let those four disagree.
           </Feature>
           <Feature icon={AlertTriangle} title="Data loss is counted, not estimated">
-            A truncation across 145,283 records where 38 exceed the limit reports 38 — the records that
+            A truncation across 145,283 records where 38 exceed the limit reports 38: the records that
             actually lose information, not the records the rule runs on. Each one is listed with its original
             value and what it becomes.
           </Feature>
@@ -554,8 +580,8 @@ export function LandingPage() {
             run that lost a table is never stamped COMPLETED and its audit trail never claims success.
           </Feature>
           <Feature icon={Repeat2} title="Validation is independent">
-            It does not re-read the migration's own work. It compares the target against the source — row
-            counts, record existence, field values, references — and each check either passes or names what
+            It does not re-read the migration's own work. It compares the target against the source on row
+            counts, record existence, field values and references. Each check either passes or names what
             differs.
           </Feature>
         </div>
@@ -637,8 +663,8 @@ export function LandingPage() {
             each connector. A scheduled run cannot get around it.
           </Feature>
           <Feature icon={ListChecks} title="An audit trail for consequential actions">
-            Who ran what, against which environments, with which options, and who accepted a data-loss warning
-            — with the organization, user and request id on every entry.
+            Who ran what, against which environments, with which options, and who accepted a data-loss
+            warning. Every entry carries the organization, user and request id.
           </Feature>
         </div>
       </Section>
@@ -677,22 +703,22 @@ export function LandingPage() {
       <Section id="faq" eyebrow="Questions" title="The ones we are always asked.">
         <div className="max-w-4xl">
           <Faq question="Do I need to connect a real tenant to evaluate it?">
-            No. The demo runs the entire product against simulated Dataverse environments and a simulated
-            legacy SQL Server, seeded with deliberately messy data — a duplicate business key, a broken
-            foreign key, an unresolvable owner, a choice value the target does not have. Every problem you see
-            is a real problem, found by the product.
+            No. The demo runs the whole product against simulated Dataverse environments and a simulated
+            legacy SQL Server, seeded with deliberately messy data: a duplicate business key, a broken foreign
+            key, an unresolvable owner, a choice value the target does not have. Every problem you see was
+            found by the product.
           </Faq>
           <Faq question="How large a migration can it handle?">
             The migration itself streams and is never capped or silently truncated. It is resumable: pause,
             cancel and retry survive a worker restart, and a re-run skips everything already migrated. The
-            assurance layer — preflight, validation, exports — is bounded, and says so wherever a bound
+            assurance layer (preflight, validation and exports) is bounded, and says so wherever a bound
             applies.
           </Faq>
           <Faq question="How do accounts work?">
             {signUpEnabled
               ? 'There is no separate password to create. Signing in with a Microsoft work account creates your workspace the first time somebody from your tenant arrives, and that first person becomes its administrator. Everyone after them joins the same workspace as a member.'
               : 'Sign-in uses Microsoft Entra ID with your organizational account. This deployment is restricted to approved tenants, so ask us for access and we will enable yours.'}{' '}
-            Members plan, analyse, preflight and migrate to non-production. An administrator is needed for
+            Members plan, analyze, preflight and migrate to non-production. An administrator is needed for
             what outlives the task: writing to production, writing unattended, and deleting shared
             configuration.
           </Faq>
@@ -702,15 +728,15 @@ export function LandingPage() {
             encrypted at rest, decrypted only to open a connection, and no route in the API returns one.
           </Faq>
           <Faq question="Can it keep two systems in step after the first load?">
-            Yes, on a schedule you control — cron in a real time zone, so 02:00 stays 02:00 across a clock
+            Yes, on a schedule you control: cron in a real time zone, so 02:00 stays 02:00 across a clock
             change, reading only what changed since the last successful run. A schedule passes exactly the
             same gates as a person: it will not run a plan with unresolved blockers, it will not perform a
             transformation that discards data unless that was already accepted, and it pauses itself rather
             than repeating a failure all night.
           </Faq>
           <Faq question="Can we self-host it?">
-            Yes. It is a single container plus PostgreSQL, with a durable job queue in the database — no Redis
-            and no broker to run. It deploys to Railway today and nothing ties it there.
+            Yes. It is a single container plus PostgreSQL, with a durable job queue in the database, so there
+            is no Redis and no broker to run. It deploys to Railway today and nothing ties it there.
           </Faq>
         </div>
       </Section>
@@ -728,9 +754,9 @@ export function LandingPage() {
               Start with the demo. Talk to us when it has earned it.
             </h2>
             <p className="mt-4 text-lg leading-relaxed text-slate-300">
-              A useful pilot is one table with a real problem in it — a duplicate key, an unresolvable owner,
-              a column longer than its destination. This is built to find those, and finding one in your data
-              is worth more than a clean run.
+              A useful pilot is one table with a real problem in it: a duplicate key, an unresolvable owner, a
+              column longer than its destination. Finding one of those in your own data is worth more than a
+              clean run.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">{demoButton('primary')}</div>
             <dl className="mt-10 space-y-4 text-sm">

@@ -44,8 +44,8 @@ test('a workspace being prepared says so, and then stops saying it', async ({ pa
     await expect(preparing).toContainText('Demo data is being prepared');
   }
 
-  await expect(page.getByText('Customer Migration — Successful')).toBeVisible({ timeout: 180_000 });
-  await expect(page.getByText('Customer Migration — Data Quality Issues')).toBeVisible();
+  await expect(page.getByText('Customer Migration: Successful')).toBeVisible({ timeout: 180_000 });
+  await expect(page.getByText('Customer Migration: Data Quality Issues')).toBeVisible();
 
   // And once it is there, neither callout remains.
   await expect(page.getByTestId('demo-building')).toHaveCount(0);

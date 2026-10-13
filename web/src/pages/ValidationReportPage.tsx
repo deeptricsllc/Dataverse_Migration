@@ -338,7 +338,7 @@ function CoveragePanel({ coverage, depth }: { coverage: ValidationCoverage | nul
     coverage.mode === 'FULL'
       ? 'Full validation'
       : coverage.mode === 'SAMPLED'
-        ? `Sampled validation — ${coveragePercent(coverage)}% of eligible records`
+        ? `Sampled validation: ${coveragePercent(coverage)}% of eligible records`
         : 'Not fully verified';
   const depthMeta = depth ? VALIDATION_DEPTHS[depth as keyof typeof VALIDATION_DEPTHS] : null;
   return (

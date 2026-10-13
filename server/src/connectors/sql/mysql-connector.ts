@@ -109,7 +109,7 @@ export function mysqlQuoteIdent(name: string): string {
  * MySQL has no schema inside a database, so a name that arrives qualified is taken as
  * `database.table` only when the qualifier is not the connected database — otherwise the qualifier is
  * dropped. Emitting `mydb.customer` while connected to `mydb` works, but emitting it when the
- * catalogue reported the schema as the database name and the connection has since changed would not.
+ * catalog reported the schema as the database name and the connection has since changed would not.
  */
 export function mysqlQuoteTable(logicalName: string, database: string): string {
   const dot = logicalName.indexOf('.');
@@ -541,7 +541,7 @@ export class MysqlConnector implements MigrationConnector {
    * `GROUP BY ... HAVING COUNT(*) > 1`, run where the rows are. Reading the table into this
    * process to count it stops working at exactly the size where somebody needs the answer.
    *
-   * Identifiers go through the quoting helper, which refuses anything it does not fully recognise.
+   * Identifiers go through the quoting helper, which refuses anything it does not fully recognize.
    * No value is interpolated: the second read that collects example records binds them.
    *
    * NULL is not a duplicate — a thousand unknown values are not one value a thousand times, and

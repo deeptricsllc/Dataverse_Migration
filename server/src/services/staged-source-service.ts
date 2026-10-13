@@ -367,7 +367,7 @@ export class StagedSourceService {
           reason: c.reason,
           semantic: c.semantic,
         })),
-        // Enough rows to recognise the data, few enough that nothing large reaches a browser.
+        // Enough rows to recognize the data, few enough that nothing large reaches a browser.
         // Rendered the way the importer renders a cell, so the preview shows the value that will land.
         sampleRows: prepared.rows
           .slice(0, 10)
@@ -690,7 +690,7 @@ const kindOf = (connectionType: string): StagedSourceKind =>
  * The order matters. Everything that was not a ZIP used to fall through to the delimited reader,
  * which reads anything: an XML export came back as a one-column table of XML fragments, and then
  * profiled, mapped and migrated exactly like a real table. Answering confidently and wrongly is
- * worse than refusing, so each format is recognised before it is read, and one this importer
+ * worse than refusing, so each format is recognized before it is read, and one this importer
  * cannot read is named rather than mangled.
  */
 export function readSheets(content: Buffer, filename: string): XlsxReadSheet[] {

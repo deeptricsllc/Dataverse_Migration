@@ -323,7 +323,7 @@ function TableRow({ row, onFilter }: { row: DataComparisonTableResultDto; onFilt
                 <div className="mt-1 text-slate-500">
                   {row.comparedFields.length
                     ? row.comparedFields.map((f) => f.left).join(', ')
-                    : 'Keys only — existence, not content'}
+                    : 'Keys only: existence, not content'}
                 </div>
               </div>
               <div>

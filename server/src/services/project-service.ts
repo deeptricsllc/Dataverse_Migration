@@ -350,7 +350,7 @@ export class ProjectService {
      * A connection is not a dataset.
      *
      * Authenticating to SharePoint is not choosing a list, and creating a file source is not uploading a
-     * file. Before this check, a connection with nothing in it could be added here and analysed — the
+     * file. Before this check, a connection with nothing in it could be added here and analyzed — the
      * request was accepted and failed later, so the user met it as a defect rather than as a choice they
      * had not made yet.
      */
@@ -367,10 +367,10 @@ export class ProjectService {
     /**
      * A chosen object has to exist, and this is the moment to find out.
      *
-     * Checked against the catalogue rather than taken on trust, because the alternative is a dataset that
+     * Checked against the catalog rather than taken on trust, because the alternative is a dataset that
      * looks fine in the list and fails hours later inside an analysis — the exact deferral this model
      * exists to stop. A staged connection carries its own content, so `resolveDataset` above has already
-     * answered for it and there is no catalogue to ask.
+     * answered for it and there is no catalog to ask.
      */
     const selected = objects?.length ? [...new Set(objects)] : null;
     if (selected && !isStagedConnection(env.connectionType)) {
@@ -419,14 +419,14 @@ export class ProjectService {
     if (!removing) throw notFound('Source');
 
     // Analyses already recorded against this source describe a dataset the project would no longer list.
-    const [analysed] = await this.db
+    const [analyzed] = await this.db
       .select({ id: analysisRuns.id })
       .from(analysisRuns)
       .where(and(eq(analysisRuns.projectId, projectId), eq(analysisRuns.environmentId, environmentId)))
       .limit(1);
-    if (analysed) {
+    if (analyzed) {
       throw conflict(
-        'This source has been analysed in this project. Archive the project or keep the source, so the results stay attached to the dataset they describe.',
+        'This source has been analyzed in this project. Archive the project or keep the source, so the results stay attached to the dataset they describe.',
       );
     }
 

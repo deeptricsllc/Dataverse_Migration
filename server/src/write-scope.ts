@@ -21,7 +21,7 @@ import { classifyEnvironment } from '../../shared/domain';
  * `CERTIFICATION_WRITE_ENVIRONMENTS` names, explicitly, the environments that may be written to while the
  * deployment is otherwise read-only. Every rule below fails closed:
  *
- * - **Unset is today's behaviour, exactly.** No list means every real write is refused, with the message
+ * - **Unset is today's behavior, exactly.** No list means every real write is refused, with the message
  *   it has always had. Nothing about an existing deployment changes by upgrading.
  * - **Being on the list is necessary, not sufficient.** A listed environment is still refused unless
  *   `classifyEnvironment` returns `NON_PRODUCTION`. Production cannot be opened by listing it, and
@@ -75,7 +75,7 @@ export const normalizeEnvironmentKey = (value: string | null | undefined): strin
 
 /**
  * A simulated environment holds no tenant data, so the switch that protects a real tenant does not
- * disable it. This mirrors the long-standing behaviour in the connector factory rather than inventing it.
+ * disable it. This mirrors the long-standing behavior in the connector factory rather than inventing it.
  */
 const isSimulated = (provider: string | null) => provider === 'demo' || provider === 'demosql';
 
