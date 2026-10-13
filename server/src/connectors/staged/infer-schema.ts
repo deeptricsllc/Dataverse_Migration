@@ -76,6 +76,8 @@ export interface InferredColumn {
   unique: boolean;
   /** Why this type was chosen, in one line, for the import report. */
   reason: string;
+  /** Distinct raw spellings, for a column whose type normalises them. See AttributeMeta. */
+  spellings?: string[];
   /**
    * What the values appear to mean, when that is not the same as how they are stored.
    *
@@ -241,7 +243,15 @@ function inferStorageType(
   // Booleans are therefore only inferred from words, never from digits alone.
   const wordyBoolean = allBoolean && [...distinct].some((v) => !/^[01]$/.test(v));
   if (wordyBoolean) {
-    return { name, type: 'Boolean', maxLength: null, reason: 'every value is true/false', ...stats };
+    return {
+      name,
+      type: 'Boolean',
+      maxLength: null,
+      reason: 'every value is true/false',
+      // Kept before they are normalised, because this is the last place they exist.
+      spellings: [...new Set([...distinct].map((v) => v.toLowerCase()))].sort().slice(0, 20),
+      ...stats,
+    };
   }
   if (allGuid) {
     return { name, type: 'Uniqueidentifier', maxLength: null, reason: 'every value is a GUID', ...stats };
@@ -379,6 +389,7 @@ export function toTableMetadata(inferred: InferredTable): TableMetadata {
       // Carried through so a screen can say "Storage type: Number · Detected meaning: Date" instead of
       // reporting `Integer` and leaving the user to work out why their dates look like five-digit numbers.
       semantic: column.semantic,
+      sourceSpellings: column.spellings ?? null,
     });
   }
 

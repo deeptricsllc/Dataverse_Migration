@@ -10,6 +10,7 @@ import {
   type FindingDispositionStatus,
 } from '../../../shared/findings';
 import { assessReadiness, executiveSummary } from '../../../shared/analysis-readiness';
+import { relationshipFindings, type RelationshipInput } from '../../../shared/relationships';
 import type { AppDb } from '../db/client';
 import {
   analysisRuns,
@@ -175,11 +176,23 @@ export class AssessmentService {
 
     const findings: Finding[] = [];
     let records = 0;
+    const forRelationships: RelationshipInput[] = [];
     for (const table of tables) {
       const dataset = nameByRun.get(table.analysisRunId) ?? 'Unknown dataset';
       records += table.recordCount;
       findings.push(...findingsForTable({ dataset, profile: table.profile }));
+      forRelationships.push({ dataset, profile: table.profile, declaredTables: table.dependsOn });
     }
+
+    /*
+     * Relationships across everything in the project, not within one dataset.
+     *
+     * A file export carries no foreign keys, so the edges between an orders sheet and a customers
+     * sheet exist only in the data. They are found here rather than in `findingsForTable` because
+     * one table cannot see another, and because the interesting case is two sheets that arrived
+     * from two different connections.
+     */
+    findings.push(...relationshipFindings(forRelationships));
 
     /**
      * What could be assessed, which is not the same as what was found.
@@ -190,7 +203,15 @@ export class AssessmentService {
      */
     const assessed = {
       profiled: tables.length > 0,
-      relationships: tables.some((t) => t.dependsOn.length > 0),
+      /*
+       * Relationships can be assessed once there is more than one table to compare, because that is
+       * when looking is possible. Previously this was true only when the source declared a
+       * dependency, which meant a file import -- where nothing is ever declared -- reported the
+       * dimension as "not assessed" even though the relationships were there to be found.
+       *
+       * A single table still reports not assessed: there is nothing for it to reference.
+       */
+      relationships: tables.length > 1 || tables.some((t) => t.dependsOn.length > 0),
     };
 
     /**

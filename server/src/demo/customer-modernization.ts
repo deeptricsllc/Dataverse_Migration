@@ -304,7 +304,13 @@ export const EXPECTED_FINDINGS = [
   { rule: 'PHONE_FORMAT', table: 'Customers', why: 'three phone conventions in one column' },
   { rule: 'DATE_AS_NUMBER', table: 'Orders', why: 'order_date and ship_date are Excel serials' },
   { rule: 'IDENTIFIER_AS_TEXT', table: 'Customers', why: 'account_ref has leading zeros' },
-  { rule: 'CURRENCY_AS_TEXT', table: 'Customers', why: 'credit_limit carries a currency symbol' },
+  /*
+   * MONEY_AS_TEXT, not CURRENCY_AS_TEXT. The older rule fired from the semantic reading and said
+   * only that the column carried a symbol; this one counts the records, names the currency and the
+   * decimal convention, and proposes a scale. Both fired for a while, which deducted twice for one
+   * defect, so the richer one supersedes the older wherever per-record counts exist.
+   */
+  { rule: 'MONEY_AS_TEXT', table: 'Customers', why: 'credit_limit carries a currency symbol' },
   { rule: 'PERCENTAGE_AS_TEXT', table: 'Orders', why: 'discount_pct carries a percent sign' },
   { rule: 'CATEGORICAL_VALUES', table: 'Customers', why: 'region is four values across 400 rows' },
   { rule: 'LENGTH_SPREAD', table: 'Products', why: 'description holds both codes and paragraphs' },

@@ -107,6 +107,141 @@ const field = (p: TableProfileDto, name: string): FieldProfileDto => {
 
 // ---------------------------------------------------------------------------
 
+describe('value shapes, counted in records', () => {
+  it('counts money written as text in a column that is mostly plain numbers', async () => {
+    /*
+     * The credit_limit column from the certified fixture: every fifth row carries a written amount
+     * and the rest are bare. The semantic reader calls this column nothing, because four fifths of
+     * the sample has to agree before it will; the per-record count is what makes it reportable.
+     */
+    const values = Array.from({ length: 60 }, (_, i) =>
+      i % 5 === 0 ? `$1,${200 + i}.50` : `${1000 + i * 7}`,
+    );
+    const meta = table('account', [attr('credit_limit', 'String')]);
+    const { result } = await profile(meta, rows('credit_limit', values));
+    const c = field(result, 'credit_limit').conversion!;
+
+    expect(c.populated).toBe(60);
+    expect(c.currency, 'every fifth of sixty').toBe(12);
+    expect(c.numbers).toBe(48);
+    expect(c.text).toBe(0);
+    expect(c.currencyMarkers, 'one currency throughout').toEqual(['$']);
+    expect(c.decimalSeparators, 'one decimal convention').toEqual(['dot']);
+    expect(c.maxDecimals).toBe(2);
+    expect(c.overTwoDecimals).toBe(0);
+  });
+
+  it('notices when one column writes money two different ways', async () => {
+    const meta = table('account', [attr('amount', 'String')]);
+    const { result } = await profile(meta, rows('amount', ['$1,200.50', '1.234,56', '$9.99']));
+    const c = field(result, 'amount').conversion!;
+    expect(c.currency).toBe(3);
+    // $1,200.50 and $9.99 are one convention -- the second simply has nothing to group. The
+    // ambiguity worth reporting is 1.234,56, which puts the comma where the others put the dot.
+    expect(c.decimalSeparators.sort()).toEqual(['comma', 'dot']);
+  });
+
+  it('counts boolean spellings and decimal places', async () => {
+    const meta = table('account', [attr('active', 'String')]);
+    const { result } = await profile(meta, rows('active', ['Yes', 'no', 'TRUE', 'y', 'Yes']));
+    const c = field(result, 'active').conversion!;
+    expect(c.booleans).toBe(5);
+    expect(c.booleanSpellings).toEqual(['no', 'true', 'y', 'yes']);
+
+    const meta2 = table('account', [attr('rate', 'String')]);
+    const { result: r2 } = await profile(meta2, rows('rate', ['0.12345', '1.5', '2', '0.987654']));
+    const c2 = field(r2, 'rate').conversion!;
+    expect(c2.maxDecimals).toBe(6);
+    expect(c2.overTwoDecimals, 'two of the four').toBe(2);
+  });
+
+  it('reports the spellings a boolean column had before inference normalised them', async () => {
+    /*
+     * By the time the profiler sees a Boolean column the values are already true and false, so the
+     * four ways the source spelled them are carried from where they still existed. Without this the
+     * product would read Yes/no/TRUE/y, understand all four, and report nothing -- while the target
+     * takes one convention and a loader written for one spelling reads the rest as false.
+     */
+    const meta = table('account', [
+      attr('active', 'Boolean', { sourceSpellings: ['yes', 'no', 'true', 'y'] }),
+    ]);
+    const { result } = await profile(meta, rows('active', [true, false, true, false]));
+    const c = field(result, 'active').conversion!;
+    expect(c.booleanSpellings).toEqual(['no', 'true', 'y', 'yes']);
+    expect(c.booleans, 'every populated record is one of them').toBe(4);
+  });
+
+  it('shows no example values for a secured column', async () => {
+    const meta = table('account', [attr('secret', 'String', { isSecured: true })]);
+    const { result } = await profile(meta, rows('secret', ['$1,200.50', '$2.00']));
+    const c = field(result, 'secret').conversion!;
+    expect(c.currency, 'the counts are still true').toBe(2);
+    expect(c.samples).toEqual([]);
+  });
+});
+
+describe('collision arithmetic, proven against the rows that produced it', () => {
+  /*
+   * The numbers a reader is asked to act on. Three of them are easy to confuse and all three are
+   * reported, so each is asserted against a fixture whose contents can be counted by hand.
+   */
+  it('separates duplicate groups from rows in collision from excess rows', async () => {
+    // Sixty customer numbers where the last twelve repeat the first twelve: the double-export shape.
+    const values = Array.from({ length: 60 }, (_, i) =>
+      i < 48 ? `CUST-${1000 + i}` : `CUST-${1000 + (i - 48)}`,
+    );
+    const meta = table('account', [attr('customer_number', 'String')]);
+    const { result } = await profile(meta, rows('customer_number', values));
+    const d = field(result, 'customer_number').duplication!;
+
+    expect(d.examined).toBe(60);
+    expect(d.distinctValues, '48 numbers appear at all').toBe(48);
+    expect(d.duplicateGroups, '12 of them are held twice').toBe(12);
+    expect(d.rowsInCollision, 'those 12 groups account for 24 records').toBe(24);
+    expect(d.largestGroup).toBe(2);
+    expect(d.nullOrBlank).toBe(0);
+    expect(d.truncated).toBe(false);
+    // The pre-existing count means something different again: rows beyond one per value.
+    expect(field(result, 'customer_number').duplicateCount).toBe(12);
+  });
+
+  it('names the records that collide, so the reader can go and look', async () => {
+    const meta = table('account', [attr('code', 'String')]);
+    const { result } = await profile(meta, rows('code', ['A', 'B', 'A', 'C', 'A']));
+    const d = field(result, 'code').duplication!;
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.rowsInCollision).toBe(3);
+    expect(d.largestGroup).toBe(3);
+    expect(d.examples[0].value).toBe('A');
+    expect(d.examples[0].count).toBe(3);
+    expect(d.examples[0].recordIds, 'rows 0, 2 and 4 hold it').toEqual(['r0', 'r2', 'r4']);
+  });
+
+  it('does not count an absent value as a repeated one', async () => {
+    /*
+     * Three records with nothing in the column is a completeness problem with a different remedy.
+     * Folding them into the duplicate count would report one missing code as evidence that codes
+     * repeat.
+     */
+    const meta = table('account', [attr('code', 'String')]);
+    const { result } = await profile(meta, rows('code', ['A', 'A', '', '  ', null]));
+    const d = field(result, 'code').duplication!;
+    expect(d.distinctValues, 'only A is a value').toBe(1);
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.rowsInCollision).toBe(2);
+    expect(d.nullOrBlank, 'two blanks and a null').toBe(3);
+  });
+
+  it('names no records for a secured column, because the values are indistinguishable once masked', async () => {
+    const meta = table('account', [attr('ssn', 'String', { isSecured: true })]);
+    const { result } = await profile(meta, rows('ssn', ['X', 'X', 'Y']));
+    const d = field(result, 'ssn').duplication!;
+    expect(d.duplicateGroups).toBe(1);
+    expect(d.examples[0].value).toBe(MASKED_VALUE);
+    expect(d.examples[0].recordIds).toEqual([]);
+  });
+});
+
 describe('profiling basis', () => {
   const meta = table('account', [attr('code', 'String')]);
 

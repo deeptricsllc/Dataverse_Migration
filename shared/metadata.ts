@@ -114,6 +114,16 @@ export interface AttributeMeta {
    * on it without the user choosing to.
    */
   semantic?: SemanticReading | null;
+  /**
+   * The distinct raw spellings this column held in the source, where inference normalised them away.
+   *
+   * Set for a column read as Boolean. Inference accepts "Yes", "no", "TRUE" and "y" as one type and
+   * hands the engine four identical booleans, which is the right thing for reading the data and
+   * loses the thing worth reporting: the target takes one convention, and a loader written for one
+   * spelling treats the others as false rather than as an error. By the time the profiler sees the
+   * column the spellings are gone, so they are carried here from where they still existed.
+   */
+  sourceSpellings?: string[] | null;
 }
 
 /** What a SQL column is, beyond the normalized type. */
