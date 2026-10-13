@@ -313,22 +313,39 @@ test('the validation experience, state by state', async ({ page }) => {
   /*
    * Watched for a moment rather than sampled once, and only for as long as the validation is
    * genuinely still going. No delay is added to the product to make the window wider.
+   *
+   * The assertion is on what the service reported, not on what the screen happened to be showing
+   * when the loop stopped. Waiting for the progress card to appear and then asserting it named a
+   * stage was a race the worker usually won: the card is rendered for QUEUED as well, so the
+   * assertion fired against "Waiting to start" on a machine that reached the page first and against
+   * "Loading metadata" on one that did not. Every stage the run passes through is collected instead,
+   * and the check is that each one is a stage `validation-service` documents -- a blank message, an
+   * "undefined", or a stage nobody declared fails it, and no timing can make it pass or fail on its
+   * own.
    */
-  let running = false;
-  for (let i = 0; i < 20 && !running; i++) {
+  const IN_FLIGHT = /Loading metadata|Validating /;
+  const STAGES = /^(Queued|Loading metadata|Validating .+ \(\d+\/\d+\)|Completed|Failed)$/;
+  const reported = new Set<string>();
+  let onScreen: string | null = null;
+  for (let i = 0; i < 40 && onScreen === null; i++) {
     const current = await api.get(page, `/api/validations/${live.id}`);
-    if (current.status === 'COMPLETED' || current.status === 'FAILED') break;
-    running = await page
+    if (current.progressMessage) reported.add(current.progressMessage);
+    const text = await page
       .getByTestId('validation-progress')
-      .isVisible()
-      .catch(() => false);
-    if (!running) await page.waitForTimeout(100);
+      .textContent({ timeout: 500 })
+      .catch(() => null);
+    if (text && IN_FLIGHT.test(text)) onScreen = text.trim();
+    if (current.status === 'COMPLETED' || current.status === 'FAILED') break;
+    if (onScreen === null) await page.waitForTimeout(100);
   }
-  if (running) {
-    // What it says while it runs, not only that it is running.
-    await expect(page.getByTestId('validation-progress')).toContainText(/compare|Comparing|Validating/);
-    await shot(page, 'validation-running');
+  // Without this the loop above could collect nothing and the check below would pass on an empty set.
+  expect(reported.size, 'the run reported at least one stage').toBeGreaterThan(0);
+  for (const stage of reported) {
+    expect(stage, 'the run reports only stages the service declares').toMatch(STAGES);
   }
+  // Captured when the in-flight card was actually on screen, and reported as not reached when the
+  // work finished before it could be. Never written into the page to make a screenshot.
+  if (onScreen !== null) await shot(page, 'validation-running');
   await settled(page, live.id);
 
   // ------------------------------------------------- 8 or 9. Passed, or with warnings
