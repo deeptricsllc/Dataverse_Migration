@@ -85,11 +85,11 @@ test('the connections screen offers files, grouped with everything else it can r
   ).toContainText('Live verified');
   await shot(page, 'add-connection-source-gallery');
 
-  // And it leads somewhere, rather than explaining where to go.
+  // And it leads somewhere here, rather than opening a form about something else.
   await upload.click();
-  await page.waitForURL(/\/projects\?new=1/);
-  await expect(page.getByTestId('project-name')).toBeVisible();
-  await shot(page, 'upload-card-opens-new-project');
+  await expect(dialog.getByTestId('staged-name')).toBeVisible();
+  await expect(page).toHaveURL(/\/environments/);
+  await shot(page, 'upload-card-makes-a-file-source');
 });
 
 test('a spreadsheet can be uploaded, previewed and analysed without any connection', async ({ page }) => {
@@ -287,7 +287,7 @@ test('the source gallery is usable by keyboard and on a phone', async ({ page })
   await upload.focus();
   await expect(upload).toBeFocused();
   await page.keyboard.press('Enter');
-  await page.waitForURL(/\/projects\?new=1/);
+  await expect(dialog.getByTestId('staged-name')).toBeVisible();
 
   // No horizontal scrolling at phone width.
   const overhang = Number(

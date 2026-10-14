@@ -89,13 +89,18 @@ test('a person clicking Connections then Add connection is offered a local file'
   await shot(page, 'add-connection-upload-visible');
 
   /*
-   * And it goes somewhere. A local file is still not a connection, so choosing it opens the place
-   * files actually live rather than creating a credential-less connection record.
+   * And it stays here.
+   *
+   * This used to assert that choosing a local file navigated to the new-project screen, on the
+   * reasoning that files live in projects. The owner reported it as a defect and was right: the
+   * dialog asked what they were connecting to, they answered, and the product threw the answer away
+   * and opened a form about something else. A file source is a thing the connections screen can
+   * make, so choosing the card leads to making one.
    */
   await upload.click();
-  await page.waitForURL(/\/projects\?new=1/);
-  await expect(page.getByTestId('project-name')).toBeVisible();
-  await shot(page, 'upload-leads-to-a-project');
+  await expect(dialog.getByTestId('staged-name')).toBeVisible();
+  await expect(page).toHaveURL(/\/environments/);
+  await shot(page, 'upload-stays-on-connections');
 
   expect(failed, failed.join('\n')).toEqual([]);
   expect(errors, errors.join('\n')).toEqual([]);

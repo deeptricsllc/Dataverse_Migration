@@ -13,7 +13,15 @@ import {
   type SqlConnectionType,
 } from '@shared/domain';
 import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, CircleDashed, PlugZap, RefreshCw, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  CircleDashed,
+  PlugZap,
+  RefreshCw,
+  XCircle,
+} from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { patch, post } from '../lib/api';
 import { Button, Callout, ErrorState, Modal } from './ui';
@@ -232,6 +240,17 @@ export function ConnectionModal({
     onSuccess: onSaved,
   });
 
+  /**
+   * Which of the two steps this is.
+   *
+   * One question per screen. The gallery and the settings form used to render together, so choosing
+   * SQL Server left the nine cards in place and put the host, port, database, authentication,
+   * username and password below them -- off the bottom of the dialog, where the person who had just
+   * answered the question had to scroll past their own answer to find what was asked next. Picking a
+   * source replaces the picker now, and a way back sits where the picker was.
+   */
+  const picking = !connection && !initialType && type === null;
+  const chosen = type === null ? null : CONNECTORS.find((c) => c.connectionType === type);
   const isStaged = type !== null && isStagedConnection(type);
   const isSql = type !== null && type !== 'DATAVERSE' && !isStaged;
   const isAzure = type === 'AZURE_SQL';
@@ -265,7 +284,10 @@ export function ConnectionModal({
           ? `Edit ${connection.displayName}`
           : initialType
             ? `Connect to ${CONNECTION_TYPE_LABELS[initialType]}`
-            : 'Add connection'
+            : picking
+              ? 'Add connection'
+              : // Naming the chosen source is how a person knows the form below belongs to it.
+                `Connect to ${chosen?.name ?? CONNECTION_TYPE_LABELS[type as ConnectionType]}`
       }
       footer={
         isStaged ? (
@@ -313,6 +335,20 @@ export function ConnectionModal({
       }
     >
       <div className="space-y-4">
+        {!picking && !connection && !initialType && (
+          <button
+            type="button"
+            onClick={() => {
+              setType(null);
+              setResult(null);
+            }}
+            data-testid="back-to-sources"
+            className="-ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-sm text-slate-500 hover:text-slate-800 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Choose a different source
+          </button>
+        )}
         {/*
           Asked once. Opened from "add a dataset → SQL Server", the picker was asking a question the person
           had answered on the previous screen, and offering seven ways to contradict themselves.
@@ -324,7 +360,7 @@ export function ConnectionModal({
           person can be expected to infer from an absence: somebody looking for "upload a
           spreadsheet" found nothing here and concluded the product could not read one.
         */}
-        {!connection && !initialType && (
+        {picking && (
           <SourceGallery
             intro="What are you connecting to?"
             /*
@@ -342,15 +378,36 @@ export function ConnectionModal({
              * shown with the reason.
              */
             connectors={[UPLOAD_FROM_COMPUTER, ...CONNECTABLE]}
+            /*
+             * Greyed only where there is a stated reason, never merely because no handler was passed.
+             *
+             * This used to grey the card whenever `onUploadChosen` was absent, which coupled "can
+             * this screen do something useful with a file" to "did the caller pass a function". The
+             * moment the connections screen stopped needing that handler -- because it makes a file
+             * source itself now -- the card went grey there, which is the exact defect that was
+             * reported twice before. A screen that cannot offer files says so in words.
+             */
             unavailable={(c) =>
-              c.id === UPLOAD_FROM_COMPUTER.id && !onUploadChosen
-                ? (uploadUnavailable ??
-                  'Create the project first, then add the file to it from the project screen.')
-                : null
+              c.id === UPLOAD_FROM_COMPUTER.id && uploadUnavailable ? uploadUnavailable : null
             }
             onChoose={(c) => {
               if (c.id === UPLOAD_FROM_COMPUTER.id) {
-                onUploadChosen?.();
+                /*
+                 * A file source, made here.
+                 *
+                 * This used to close the dialog and navigate to the new-project screen, on the
+                 * reasoning that a file belongs in a project. Somebody who clicked "Upload from
+                 * your computer" on the Connections screen landed on a form about projects, having
+                 * asked for neither -- the product answered a question they had not asked and
+                 * abandoned the one they had. A file source is a thing this screen can make, so it
+                 * makes one.
+                 */
+                if (onUploadChosen) {
+                  onUploadChosen();
+                  return;
+                }
+                chooseType('FILE');
+                setResult(null);
                 return;
               }
               if (c.connectionType) {
@@ -361,14 +418,25 @@ export function ConnectionModal({
           />
         )}
 
-        {type === null && <p className="text-sm text-slate-500">Choose a connection type to continue.</p>}
-
         {type === 'DATAVERSE' && (
           <>
-            <Callout tone="info" title="Dataverse environments are discovered, not typed in">
-              Discovery asks the Microsoft Global Discovery Service which environments your account can reach
-              and lists them here. An environment that does not appear is one your account has no access to,
-              there is nothing to configure by hand.
+            {/*
+              Why there is no form here, rather than only that there is not.
+              
+              The previous wording said environments are discovered and not typed in, which answers
+              "what do I do" and not "why can I not enter my own server and app registration". The
+              reason is the authentication this product implements: a delegated token for the
+              Microsoft account you signed in with. There is no service-principal sign-in, so there
+              is no client id and secret for this screen to collect.
+            */}
+            <Callout tone="info" title="Dataverse uses the Microsoft account you signed in with">
+              Discovery asks Microsoft which environments that account can reach, and lists them. There is no
+              server address to type because the account, not an address, is what grants the access.
+            </Callout>
+            <Callout tone="warning" title="App registration sign-in is not implemented">
+              Connecting as an app registration, with a tenant id, client id and client secret, is a different
+              authentication path and this product does not have it. Nothing on this screen would collect
+              those details and use them, so nothing asks for them.
             </Callout>
             <Button
               icon={<RefreshCw className="h-4 w-4" />}

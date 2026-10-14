@@ -480,6 +480,33 @@ export class ProjectService {
     return this.get(ctx, projectId);
   }
 
+  /**
+   * Deletes a project and the work that belongs to it.
+   *
+   * Archiving is the safe thing and it is not the only thing people need: a project made by
+   * mistake, or one whose name is wrong, stays on the list forever and the only way to stop seeing
+   * it is a filter. This removes it.
+   *
+   * What goes with it is what it owned -- its sources, its analysis runs, its finding dispositions
+   * and its comparisons, all of which cascade in the schema. What does not go with it is migration
+   * history: `migrationPlans.projectId` is `set null`, so a plan and the runs beneath it survive
+   * the project they were planned in, for the same reason a deleted connection leaves its runs
+   * behind. A migration that happened is a fact about the world, not a possession of the project.
+   */
+  async remove(ctx: RequestContext, projectId: string): Promise<{ deleted: true }> {
+    const project = await this.row(ctx, projectId);
+    await this.db.delete(projects).where(eq(projects.id, projectId));
+    await this.audit.record({
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      action: 'PROJECT_DELETED',
+      outcome: 'SUCCESS',
+      requestId: ctx.requestId,
+      details: { projectId, name: project.name },
+    });
+    return { deleted: true };
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
