@@ -68,9 +68,10 @@ test('A. Connections, reached through the navigation', async ({ page }) => {
   await assertFilesComeFirst(dialog);
   await shot(page, 'A-connections-add-connection');
 
+  // Choosing a source replaces the picker with that source's form, on this screen.
   await dialog.getByTestId('connector-upload').click();
-  await page.waitForURL(/\/projects\?new=1/);
-  await expect(page.getByTestId('project-name')).toBeVisible();
+  await expect(dialog.getByTestId('staged-name')).toBeVisible();
+  await expect(page).toHaveURL(/\/environments/);
   expect(failed, failed.join('\n')).toEqual([]);
 });
 

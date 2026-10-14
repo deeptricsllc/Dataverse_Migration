@@ -305,7 +305,20 @@ export class ConnectionService {
     // Deleting a connection destroys a stored credential and the configuration other people's plans
     // depend on, so it outlives the task and needs an administrator.
     requireAdmin(ctx, 'Deleting a connection');
-    const env = await this.loadSql(ctx, connectionId);
+    /*
+     * Any kind, because deleting is not editing.
+     *
+     * This loaded the connection through `loadSql`, which refuses a Dataverse environment on the
+     * grounds that its settings come from discovery rather than from a form. That is the right rule
+     * for editing and the wrong one for removal: it made a discovered environment permanent, with
+     * no way to take it off the list. What protects history is the in-use check below, not the kind
+     * of connection this is.
+     */
+    const [env] = await this.db
+      .select()
+      .from(environments)
+      .where(and(eq(environments.id, connectionId), eq(environments.organizationId, ctx.organizationId)));
+    if (!env) throw notFound('Connection');
     const [usedByRun] = await this.db
       .select({ id: migrationRuns.id })
       .from(migrationRuns)

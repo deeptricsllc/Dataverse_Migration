@@ -92,6 +92,8 @@ export async function registerProjectRoutes(app: FastifyInstance, s: Services) {
 
   app.get('/api/projects/:id', async (req) => s.projects.get(req.ctx, idParams.parse(req.params).id));
 
+  app.delete('/api/projects/:id', async (req) => s.projects.remove(req.ctx, idParams.parse(req.params).id));
+
   app.patch('/api/projects/:id', async (req) => {
     const { id } = idParams.parse(req.params);
     const body = z

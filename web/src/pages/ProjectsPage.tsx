@@ -8,12 +8,12 @@ import {
   type ProjectKind,
 } from '@shared/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, FolderPlus, Microscope, Scale, Truck } from 'lucide-react';
+import { ArrowRight, FolderPlus, Microscope, Scale, Trash2, Truck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import { WorkflowChooser } from '../components/WorkflowChooser';
-import { get, post } from '../lib/api';
+import { api, get, post } from '../lib/api';
 import { fmtNumber, fmtRelative } from '../lib/format';
 import {
   Button,
@@ -68,6 +68,8 @@ export function ProjectsPage() {
     }
   };
   const [showArchived, setShowArchived] = useState(false);
+  const [deleting, setDeleting] = useState<ProjectDto | null>(null);
+  const qc = useQueryClient();
   const projects = useQuery({
     queryKey: ['projects', showArchived],
     queryFn: () => get<ProjectDto[]>(`/api/projects${showArchived ? '?includeArchived=true' : ''}`),
@@ -127,6 +129,7 @@ export function ProjectsPage() {
           icon={<Microscope className="h-4 w-4 text-violet-600" />}
           projects={analysis}
           countLabel="analyses"
+          onDelete={setDeleting}
         />
       )}
       {migration.length > 0 && (
@@ -136,6 +139,7 @@ export function ProjectsPage() {
           icon={<Truck className="h-4 w-4 text-blue-600" />}
           projects={migration}
           countLabel="plans"
+          onDelete={setDeleting}
         />
       )}
       {comparison.length > 0 && (
@@ -145,10 +149,22 @@ export function ProjectsPage() {
           icon={<Scale className="h-4 w-4 text-amber-600" />}
           projects={comparison}
           countLabel="comparisons"
+          onDelete={setDeleting}
         />
       )}
 
       <NewProjectModal open={creating} onClose={closeForm} />
+      {deleting && (
+        <DeleteProjectModal
+          project={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            void qc.invalidateQueries({ queryKey: ['projects'] });
+            void qc.invalidateQueries({ queryKey: ['workspace'] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -159,12 +175,14 @@ function ProjectTable({
   icon,
   projects,
   countLabel,
+  onDelete,
 }: {
   title: string;
   subtitle: string;
   icon: React.ReactNode;
   projects: ProjectDto[];
   countLabel: string;
+  onDelete: (project: ProjectDto) => void;
 }) {
   return (
     <Card title={title} subtitle={subtitle} actions={icon} data-testid={`projects-${countLabel}`}>
@@ -207,15 +225,80 @@ function ProjectTable({
               </Td>
               <Td className="text-xs text-slate-500">{fmtRelative(p.updatedAt)}</Td>
               <Td>
-                <Link to={projectHref(p)} aria-label={`Open ${p.name}`}>
-                  <ArrowRight className="h-4 w-4 text-slate-400" />
-                </Link>
+                <div className="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(p)}
+                    aria-label={`Delete ${p.name}`}
+                    data-testid="delete-project"
+                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-1 focus:ring-red-500"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                  <Link to={projectHref(p)} aria-label={`Open ${p.name}`}>
+                    <ArrowRight className="h-4 w-4 text-slate-400" />
+                  </Link>
+                </div>
               </Td>
             </tr>
           ))}
         </tbody>
       </Table>
     </Card>
+  );
+}
+
+/**
+ * Deleting a project, with the consequence stated before it happens.
+ *
+ * Archiving was the only way to get a project off the list, which is right for one somebody acted
+ * on and wrong for one made by mistake -- and a product where nothing can be removed teaches people
+ * to be careful rather than to use it.
+ */
+function DeleteProjectModal({
+  project,
+  onClose,
+  onDeleted,
+}: {
+  project: ProjectDto;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const remove = useMutation({
+    mutationFn: () => api<{ deleted: true }>('DELETE', `/api/projects/${project.id}`),
+    onSuccess: onDeleted,
+  });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Delete ${project.name}?`}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            icon={<Trash2 className="h-4 w-4" />}
+            loading={remove.isPending}
+            onClick={() => remove.mutate()}
+            data-testid="confirm-delete-project"
+          >
+            Delete project
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-slate-600">
+          This removes the project, the sources chosen for it, and the analysis it has run. Any migration that
+          was carried out keeps its own record, which is not deleted with the project.
+        </p>
+        <p className="text-sm text-slate-600">
+          To stop seeing a project without losing its analysis, archive it instead.
+        </p>
+        {remove.error && <ErrorState error={remove.error} />}
+      </div>
+    </Modal>
   );
 }
 

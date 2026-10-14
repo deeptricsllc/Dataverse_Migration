@@ -26,7 +26,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionModal } from '../components/ConnectionForm';
 import {
   Button,
@@ -148,6 +148,31 @@ function ConnectionDetails({ env }: { env: EnvironmentDto }) {
           {env.sql.encrypt ? 'Encrypted' : 'Not encrypted'}
           {env.sql.trustServerCertificate && ' · certificate trusted'}
         </dd>
+      </dl>
+    );
+  }
+  /*
+   * A staged source is not a Dataverse environment, and saying so on its card was confusing.
+   *
+   * Everything that was not a SQL connection fell through to the block below, which asks the four
+   * questions you ask about a Dataverse environment: its type, its region, whether Dataverse is
+   * available in it, and its organization id. Rendered against a SharePoint list that produced a
+   * row reading "Dataverse -- Not available", on a card that has nothing to do with Dataverse, next
+   * to three more rows of em dashes. Each kind now answers the questions that apply to it.
+   */
+  if (isStagedConnection(env.connectionType)) {
+    return (
+      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+        <dt className="text-slate-500">Holds</dt>
+        <dd className="text-slate-700">
+          {env.connectionType === 'FILE'
+            ? 'Files you upload'
+            : env.connectionType === 'ONEDRIVE'
+              ? 'A file from OneDrive or SharePoint'
+              : 'A SharePoint list'}
+        </dd>
+        <dt className="text-slate-500">Added</dt>
+        <dd className="text-slate-700">{env.lastDiscoveredAt ? fmtRelative(env.lastDiscoveredAt) : '—'}</dd>
       </dl>
     );
   }
@@ -301,6 +326,9 @@ function connectionState(env: EnvironmentDto): ConnectionState {
  */
 function BrowseConnectionModal({ connection, onClose }: { connection: EnvironmentDto; onClose: () => void }) {
   const staged = isStagedConnection(connection.connectionType);
+  /** A source that cannot be read has a reason, and the reason is more useful than the emptiness. */
+  const blocked = connection.connectionStatus === 'FAILED' && Boolean(connection.connectionMessage);
+  const navigate = useNavigate();
   const tables = useQuery({
     queryKey: staged ? ['staged-tables', connection.id] : ['environment-tables', connection.id],
     queryFn: () =>
@@ -334,12 +362,40 @@ function BrowseConnectionModal({ connection, onClose }: { connection: Environmen
         {tables.isLoading && <Spinner label="Reading what is in it…" />}
         {tables.error && <ErrorState error={tables.error} />}
         {tables.data && tables.data.length === 0 && (
+          /*
+           * An empty source says why it is empty, and what fills it.
+           *
+           * It used to say "Nothing in it yet -- it holds access, not data" to everybody, which is
+           * true of a source nobody has put anything in and is not the reason this deployment
+           * returns nothing for OneDrive and SharePoint: those are switched off here, which the
+           * card already says and this dialog did not. Somebody who opened a OneDrive source was
+           * told the shape of the product rather than the state of their own.
+           */
           <EmptyState
-            title="Nothing in it yet"
+            /*
+             * A way out, not only an explanation.
+             *
+             * Telling somebody their file source is empty and that files go in a project leaves
+             * them to find the project screen themselves. The button goes there, and it goes
+             * because they pressed it -- which is the difference between this and the jump that
+             * used to happen the moment they chose "Upload from your computer".
+             */
+            action={
+              !blocked && staged ? (
+                <Button variant="primary" onClick={() => navigate('/projects?new=1')}>
+                  Add it to a project
+                </Button>
+              ) : undefined
+            }
+            title={blocked ? 'Nothing to show from here' : 'Nothing in it yet'}
             description={
-              staged
-                ? 'Nothing has been selected from this connection. It holds access, not data.'
-                : 'No tables were returned.'
+              blocked
+                ? connection.connectionMessage
+                : connection.connectionType === 'FILE'
+                  ? 'No file has been uploaded into this source. Add it to a project, then upload a file there.'
+                  : staged
+                    ? 'Nothing has been chosen from it yet. Add it to a project, and choose the file or list there.'
+                    : 'No tables were returned.'
             }
           />
         )}
@@ -377,7 +433,6 @@ export function EnvironmentsPage() {
    * it survives a reload and can be linked to.
    */
   const [params, setParams] = useSearchParams();
-  const navigate = useNavigate();
   const [formOpen, setFormOpen] = useState(params.get('new') === '1');
   /** Closing also drops `?new=1`, so a reload does not reopen the form. */
   const closeForm = () => {
@@ -554,6 +609,16 @@ export function EnvironmentsPage() {
           const testable = !staged || env.connectionType !== 'FILE';
           // A staged source has no settings to edit — it has data to import, which is its own card.
           const editable = env.connectionType !== 'DATAVERSE' && !staged;
+          /*
+           * Anything can be removed, including the things that cannot be edited.
+           *
+           * Delete used to sit inside the same condition as Edit, so a OneDrive source, a SharePoint
+           * list and a Dataverse environment -- the three kinds with no settings to change -- were
+           * also the three a person could not get rid of. Having nothing to edit is not a reason to
+           * be permanent. The server still refuses to delete a connection a migration referenced,
+           * which is the check that actually protects history.
+           */
+          const deletable = true;
           const TypeIcon = TYPE_ICONS[env.connectionType];
           const state = connectionState(env);
           return (
@@ -613,27 +678,27 @@ export function EnvironmentsPage() {
                     </Button>
                   )}
                   {editable && (
-                    <>
-                      <Button
-                        size="sm"
-                        icon={<Pencil className="h-3.5 w-3.5" />}
-                        onClick={() => {
-                          setEditing(env);
-                          setFormOpen(true);
-                        }}
-                        data-testid="edit-connection"
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        icon={<Trash2 className="h-3.5 w-3.5" />}
-                        onClick={() => setDeleting(env)}
-                        data-testid="delete-connection"
-                      >
-                        Delete
-                      </Button>
-                    </>
+                    <Button
+                      size="sm"
+                      icon={<Pencil className="h-3.5 w-3.5" />}
+                      onClick={() => {
+                        setEditing(env);
+                        setFormOpen(true);
+                      }}
+                      data-testid="edit-connection"
+                    >
+                      Edit
+                    </Button>
+                  )}
+                  {deletable && (
+                    <Button
+                      size="sm"
+                      icon={<Trash2 className="h-3.5 w-3.5" />}
+                      onClick={() => setDeleting(env)}
+                      data-testid="delete-connection"
+                    >
+                      Delete
+                    </Button>
                   )}
                 </div>
               </div>
@@ -662,15 +727,6 @@ export function EnvironmentsPage() {
           connection={editing}
           discovering={discover.isPending}
           onClose={closeForm}
-          /*
-           * Files are added inside a project, so the card that says so takes them there with the
-           * new-project dialog already open. Telling somebody where to go and then making them
-           * find it is two steps where one would do.
-           */
-          onUploadChosen={() => {
-            closeForm();
-            navigate('/projects?new=1');
-          }}
           onDiscover={() => discover.mutate()}
           onSaved={(saved) => {
             closeForm();
