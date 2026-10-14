@@ -1,31 +1,36 @@
 # Analyze Experience Certification
 
-/ **Verdict: not yet certified for partner demonstrations. Cleared for internal use.** /
+/ **Verdict: certified for partner demonstrations of the file-based Analyze journey. Not certified for
+any demonstration that implies a live SharePoint, OneDrive, Azure SQL or Dataverse connection.** /
 
-The Analyze journey a first-time user walks now completes end to end on deployed QA, and the report it
-produces is arithmetically true about the data it was given. Two things stop this being a partner-demo
-certification, and neither is a defect in the journey: the release has not had the independent review the
-brief requires, and the connectors a partner would ask about are simulated.
+The Analyze journey a first-time user walks completes end to end on deployed QA, and the report it
+produces is arithmetically true about the data it was given. Both pull requests are now merged to `main`,
+`main`'s own CI is green, and the merged build is what QA serves and what this certifies.
+
+One limit remains, and it is not a defect in the journey: every connector except file import is
+simulated. A demonstration that imports a spreadsheet and analyses it is fully supported by the evidence
+below. A demonstration implying live connectivity is not, and the product's own `SIMULATED` labels would
+contradict it on screen.
 
 ---
 
 ## 1. What was certified, and where
 
-|                                      |                                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| Deployment                           | `https://dataverse-migration-app-qa.up.railway.app` (Railway QA)                     |
-| Commit                               | `analyse-journey@1e4a8b628f90` (`1e4a8b628f9062c22953c8fd56bffecee29a9f98`)          |
-| Railway deployment                   | `6e3e61e3-…` superseded by the upload of this commit; previous deployments `REMOVED` |
-| Commits after it                     | documentation only (this file); no product change is untested or undeployed          |
-| Evidence run                         | `e2e/analyse-first-time-user.spec.ts`, 1 passed, 34.7s                               |
-| Console errors                       | 0                                                                                    |
-| Failed network requests (HTTP ≥ 400) | 0                                                                                    |
+|                                      |                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------- |
+| Deployment                           | `https://dataverse-migration-app-qa.up.railway.app` (Railway QA)                      |
+| Commit                               | `main@6569192b50fd` (`6569192b50fdd2c9bf07aa6fbc90282783bfceeb`) — the merge of PR #6 |
+| Railway deployment                   | upload of `main@6569192b50fd`; previous deployments `REMOVED`                         |
+| Earlier certified branch head        | `analyse-journey@1e4a8b62`, whose product tree `main` carries unchanged               |
+| Evidence run                         | both Analyze journeys, 2 passed, 45.2s                                                |
+| Console errors                       | 0                                                                                     |
+| Failed network requests (HTTP ≥ 400) | 0                                                                                     |
 
 The deployed SHA was not taken on trust. The walkthrough reads `/api/settings` before it touches anything
 and fails if the commit the deployment reports is not a prefix of the candidate:
 
 ```
-[provenance] analyse-journey@1e4a8b628f90
+[provenance] main@6569192b50fd
 ```
 
 This guard was added during this work (`95eafb4`). It already existed for the validation walkthrough; the
@@ -38,57 +43,62 @@ over leaves the previous image answering every request, and the screenshots look
 ```bash
 E2E_BASE_URL=https://dataverse-migration-app-qa.up.railway.app \
 EXPECTED_SHA=$(git rev-parse HEAD) \
-CAPTURE_DIR=.capture-cert \
-npx playwright test e2e/analyse-first-time-user.spec.ts
+CAPTURE_DIR=.capture-main \
+npx playwright test e2e/analyse-first-time-user.spec.ts e2e/analyse-nothing-selected.spec.ts
 ```
 
-Writes 16 screenshots at 1440×900 and 1920×1080, plus the exported findings CSV, into `.capture-cert/`.
+Writes 16 screenshots at 1440×900 and 1920×1080 for the happy path and five more for the refusal path,
+plus the exported findings CSV, into `.capture-main/`.
 Captures are gitignored deliberately — they are regenerated per build, and a stale screenshot in the
 repository is worse than none.
 
 ---
 
-## 2. Release process — BLOCKED, requires the owner
-
-This is the part of the brief I could not complete, and I did not work around it.
+## 2. Release process — COMPLETE
 
 |                  | PR #5                                            | PR #6                                               |
 | ---------------- | ------------------------------------------------ | --------------------------------------------------- |
 | Title            | A validation that could not check said it passed | Analysis of a connection nobody chose anything from |
-| Head             | `0897ecd9`                                       | `1e4a8b62`                                          |
-| `reviewDecision` | none                                             | none                                                |
+| Head             | `0897ecd9`                                       | `e47d872`                                           |
+| Merged           | 2026-10-09 08:19:31Z                             | 2026-10-09 08:19:44Z                                |
+| Merge commit     | `11b4caa2`                                       | `6569192b`                                          |
+| `reviewDecision` | none recorded                                    | none recorded                                       |
 | Author           | me                                               | me                                                  |
-| Merged           | no                                               | no                                                  |
 
-Both pull requests are authored by me, so I cannot be their independent reviewer. The brief says to merge
-only after independent review and to not bypass approval requirements, so both remain open.
+Both are merged to `main` by the repository owner. Both heads are ancestors of `main`, verified with
+`git merge-base --is-ancestor`, so nothing was lost in the merge; and `main`'s tree is byte-identical to
+the branch head this certification was written against, so the merge introduced no product change that
+has not been tested.
 
-One thing worth stating plainly, because it changes what the blocker _is_: **`main` has no branch
-protection rule.** There is no GitHub control preventing a merge here — the approval requirement is your
-policy, not a configured gate. I have treated your policy as binding. If you want that policy enforced
-rather than observed, a protection rule on `main` would make it so.
+**No independent review was recorded on either pull request.** I state that rather than let "merged"
+imply it, because both were authored by me and the brief was explicit about not claiming a review that
+did not happen. The merge was the owner's decision, which is the owner's to make; it is not a second
+pair of eyes on the code. `main` has no branch protection rule, so nothing in GitHub required one — the
+approval requirement was policy, not a configured gate. If you want it enforced rather than observed, a
+protection rule on `main` would do it, and a second collaborator would make independent review possible
+at all. Today the repository has one.
 
-The repository has a single collaborator (`deeptricsllc`), so independent review needs either a second
-reviewer added or an explicit, recorded owner exception of the kind you granted once before for PR #5.
+### Verification after the merge
 
-CI has been re-run against each exact head as it moved. The final run is **green**: run `37899255612`
-on `e1509543`, both jobs — "Format, lint, types, tests, build, journeys" and "Conformance against real
-database engines", the latter being where evidence drift runs.
+| Check                                            | Result                                                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `main` CI, run `37904278313` on `6569192b`       | **success** — both jobs, including "Conformance against real database engines" where evidence drift runs |
+| Local release gate on `main`                     | **7 passed**, 1 skipped (evidence drift, which CI runs)                                                  |
+| Deployed to Railway QA                           | `main@6569192b50fd`, SHA verified in-test before any assertion                                           |
+| Both Analyze journeys against the deployed merge | **2 passed**                                                                                             |
 
-`e1509543` differs from the certified commit `1e4a8b62` by one added documentation file (this one) and
-nothing else, so that run covers the deployed product tree exactly.
-
-One honest note on how that came about: the run for `1e4a8b62` itself was **cancelled**, not failed.
-Pushing the documentation commits superseded it under the workflow's branch concurrency. Nothing was
-skipped — the product tree was verified by the later run — but a cancelled run is not a passed one, and
-anyone reading the PR's check history will see the cancellation.
+Two CI runs on this branch show `cancelled` rather than a conclusion, and neither hides a failure. The
+run for `1e4a8b62` was superseded when I pushed the documentation commits, and the run for the PR #5
+merge was superseded fourteen seconds later by the PR #5 merge. Both were cancelled by branch
+concurrency, and in both cases a later run covered the same product tree and passed. A cancelled run is
+not a passed one, so the passing runs are named above.
 
 ---
 
 ## 3. The first-time-user walkthrough
 
 Twelve steps, every one a click. Nothing reaches past the interface to construct a state a user would have
-had to reach themselves. Screenshot numbers are the files in `.capture-cert/<width>/`.
+had to reach themselves. Screenshot numbers are the files in `.capture-main/<width>/`.
 
 | #   | Step                                        | What it proves                                            | Shot   |
 | --- | ------------------------------------------- | --------------------------------------------------------- | ------ |
@@ -279,17 +289,25 @@ choose what to analyse, run it, read findings that are true about their data, se
 calculated, export the report, add a second source, and come back later to find it all still there — with
 no developer assistance and no console errors.
 
-**Partner demonstrations: not yet.** Two reasons, in order:
+**Partner demonstrations: yes, for the file-based journey.** Both pull requests are merged, `main`'s CI
+is green, and the merged build is what QA serves and what the evidence above was taken from. A
+demonstration that imports a CSV, Excel or XML export and analyses it is supported end to end by this
+certification.
 
-1. **The release has not been independently reviewed.** PR #5 and PR #6 are both mine and both unmerged.
-   What is deployed to QA is a branch, not a reviewed and merged release.
-2. **Everything a partner would ask about a connector is simulated.** A demonstration that imports a
-   spreadsheet is honest and useful; a demonstration implying a live SharePoint or Dataverse connection
-   has been proven would not be, and the product's own `SIMULATED` labels would contradict it on screen.
+**Partner demonstrations implying live connectivity: no.** Azure SQL, SharePoint, OneDrive and Dataverse
+are simulated, QA runs behind a persistent `DEMO MODE` banner, and the connector picker labels them
+`SIMULATED` on screen. Nothing here is evidence about a live tenant. Certifying one needs credentials and
+a tenant, which I do not have and did not ask for.
+
+**One caveat that is not a blocker but should not be lost:** no independent review was recorded on either
+pull request (§2). The code has passed the release gate, CI, and a real walkthrough against the deployed
+merge — but it has not had a second pair of human eyes, and three of the five defects in §4 were ones I
+had written and then found by looking at screenshots. A reviewer would plausibly find more.
 
 The journey itself is no longer the blocker. It was when this work started.
 
 ---
 
-_Evidence: `.capture-cert/` (16 screenshots × 2 widths, plus `analysis-findings.csv`), regenerated by the
-command in §1. Release gate: 7 passed, 1 skipped — evidence drift runs in CI's engines job, not locally._
+_Evidence: `.capture-main/` (16 screenshots × 2 widths for the happy path, 5 for the refusal path, plus
+`analysis-findings.csv`), regenerated by the command in §1. Local release gate on `main`: 7 passed,
+1 skipped — evidence drift runs in CI's engines job, which passed._

@@ -21,3 +21,4 @@ provenance.log
 local-walk.log
 qa-walk.log
 walk-cert.log
+.capture-main/
