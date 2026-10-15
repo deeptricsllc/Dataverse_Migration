@@ -683,7 +683,16 @@ function RecordsPanel({ run }: { run: MigrationRunDto }) {
           <ErrorState error={q.error} />
         </div>
       )}
-      {q.data && q.data.total === 0 && <EmptyState title="No records" />}
+      {q.data && q.data.total === 0 && (
+        <EmptyState
+          title="No records"
+          description={
+            entity || outcome
+              ? 'No record in this run matches the current filters.'
+              : 'This run wrote no records.'
+          }
+        />
+      )}
       {q.data && q.data.total > 0 && (
         <>
           <Table>

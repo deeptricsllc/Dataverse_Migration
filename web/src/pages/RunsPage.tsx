@@ -60,7 +60,11 @@ export function RunsPage() {
             </div>
           )}
           {runs.data?.length === 0 && (
-            <EmptyState icon={<History className="h-8 w-8" />} title="No migration runs yet" />
+            <EmptyState
+              icon={<History className="h-8 w-8" />}
+              title="No migration runs yet"
+              description="A run appears here once a migration plan is executed. Runs are kept whatever their outcome, including the ones that failed."
+            />
           )}
           {runs.data && runs.data.length > 0 && (
             <Table>
@@ -116,7 +120,16 @@ export function RunsPage() {
               <ErrorState error={validations.error} />
             </div>
           )}
-          {validations.data?.length === 0 && <EmptyState title="No validation runs yet" />}
+          {/*
+            A title on its own told somebody looking at an empty screen nothing: not what a
+            validation is, not how one gets here, not whether they had done something wrong.
+          */}
+          {validations.data?.length === 0 && (
+            <EmptyState
+              title="No validation runs yet"
+              description="A validation compares what was migrated against the source, record by record. Start one from a finished migration run."
+            />
+          )}
           {validations.data && validations.data.length > 0 && (
             <ValidationTable items={validations.data} onOpen={(id) => navigate(`/validation/${id}`)} />
           )}
