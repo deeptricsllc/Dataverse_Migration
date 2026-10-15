@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import { release } from '../connectors/release';
 import { AuthService } from '../auth/auth-service';
 import { graphScopes, MicrosoftIdentityService } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
@@ -134,7 +135,11 @@ export function createServices(config: AppConfig, db: AppDb, logger: Logger) {
     // What the connection actually holds, so a chosen table is checked against reality rather than trusted.
     const env = await environments.getAccessible(ctx, environmentId);
     const conn = await connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
-    return metadata.getCatalog(env.id, conn, false);
+    try {
+      return await metadata.getCatalog(env.id, conn, false);
+    } finally {
+      await release(conn);
+    }
   });
   const analysis = new AnalysisService(
     db,

@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/domain';
 import type { AppDb } from '../db/client';
 import { principalDirectory, principalMaps } from '../db/schema';
+import { release } from '../connectors/release';
 import type { ConnectionFactory } from '../dataverse/factory';
 import { badRequest, notFound } from '../lib/errors';
 import type { AuditService } from './audit-service';
@@ -115,16 +116,21 @@ export class PrincipalService {
     }
     const conn = await this.connections.connectorFor(env, userId, { requestId: opts.requestId });
     const out = { systemuser: [], team: [], businessunit: [] } as Record<PrincipalTable, PrincipalDto[]>;
-    for (const table of PRINCIPAL_TABLES) {
-      try {
-        out[table] = await conn.listPrincipals(table);
-      } catch (err) {
-        this.logger.warn(
-          { environmentId: env.id, table, err: (err as Error).message },
-          'Principal directory unavailable',
-        );
-        if (table === 'systemuser') throw err;
+    try {
+      for (const table of PRINCIPAL_TABLES) {
+        try {
+          out[table] = await conn.listPrincipals(table);
+        } catch (err) {
+          this.logger.warn(
+            { environmentId: env.id, table, err: (err as Error).message },
+            'Principal directory unavailable',
+          );
+          if (table === 'systemuser') throw err;
+        }
       }
+    } finally {
+      // Nothing below this reads from the connection; the rest is this database.
+      await release(conn);
     }
     await this.db.delete(principalDirectory).where(eq(principalDirectory.environmentId, env.id));
     const rows = PRINCIPAL_TABLES.flatMap((table) =>
@@ -476,6 +482,8 @@ export class PrincipalService {
       return { checkedAt: new Date().toISOString(), canImpersonate: result.allowed, message: result.message };
     } catch (err) {
       throw integrationError(err, 'Impersonation check');
+    } finally {
+      await release(conn);
     }
   }
 }

@@ -1,4 +1,5 @@
 import { and, asc, count, eq, inArray } from 'drizzle-orm';
+import { release } from '../connectors/release';
 import type { DashboardDto, MigrationScheduleDto, ProfileDto } from '../../../shared/domain';
 import type { DvRecord } from '../../../shared/metadata';
 import type { AppDb } from '../db/client';
@@ -132,6 +133,8 @@ export class InsightsService {
       };
     } catch (err) {
       throw integrationError(err, 'Profiling');
+    } finally {
+      await release(conn);
     }
   }
 

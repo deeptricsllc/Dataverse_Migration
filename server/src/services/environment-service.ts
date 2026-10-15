@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { release } from '../connectors/release';
 import type { Logger } from 'pino';
 import type { EnvironmentDto, WorkspaceDto } from '../../../shared/domain';
 import { capabilitiesFor } from '../connectors/capabilities';
@@ -301,6 +302,11 @@ export class EnvironmentService {
         { requestId: ctx.requestId, environmentId, code: (e as { code?: string }).code },
         'Connection test failed',
       );
+    } finally {
+      // A connection test is the shortest-lived use there is, and the one most likely to be
+      // repeated: leaving its pool open would make "test connection" the cheapest way to exhaust a
+      // database's connection ceiling.
+      await release(conn);
     }
     const [updated] = await this.db
       .update(environments)

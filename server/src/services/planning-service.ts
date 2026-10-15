@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
+import { release } from '../connectors/release';
 import {
   DEFAULT_PLAN_OPTIONS,
   auditNeedsImpersonation,
@@ -169,6 +170,8 @@ export class PlanningService {
       });
     } catch (err) {
       throw integrationError(err, 'Loading tables');
+    } finally {
+      await release(sConn, tConn);
     }
   }
 
@@ -396,11 +399,15 @@ export class PlanningService {
     if (patch.targetLogicalName) {
       const target = await this.environmentsSvc.getAccessible(ctx, plan.targetEnvironmentId);
       const tConn = await this.connections.connectorFor(target, ctx.userId, { requestId: ctx.requestId });
-      const catalog = await this.metadata.getCatalog(target.id, tConn);
-      const match = catalog.find((t) => t.logicalName === patch.targetLogicalName);
-      if (!match) throw badRequest(`${patch.targetLogicalName} does not exist in the target connection`);
-      if (match.isView) throw badRequest('A view cannot be a migration target');
-      targetDisplayName = match.displayName;
+      try {
+        const catalog = await this.metadata.getCatalog(target.id, tConn);
+        const match = catalog.find((t) => t.logicalName === patch.targetLogicalName);
+        if (!match) throw badRequest(`${patch.targetLogicalName} does not exist in the target connection`);
+        if (match.isView) throw badRequest('A view cannot be a migration target');
+        targetDisplayName = match.displayName;
+      } finally {
+        await release(tConn);
+      }
     }
 
     await this.db
@@ -472,24 +479,28 @@ export class PlanningService {
     const target = await this.environmentsSvc.getAccessible(ctx, plan.targetEnvironmentId);
     const sConn = await this.connections.connectorFor(source, ctx.userId, { requestId: ctx.requestId });
     const tConn = await this.connections.connectorFor(target, ctx.userId, { requestId: ctx.requestId });
-    const [sourceCatalog, targetCatalog] = await Promise.all([
-      this.metadata.getCatalog(source.id, sConn),
-      this.metadata.getCatalog(target.id, tConn),
-    ]);
-    const summary = sourceCatalog.find((t) => t.logicalName === entity.logicalName);
-    const proposal = summary
-      ? proposeObjectMapping(summary, targetCatalog)
-      : { candidates: [] as ObjectCandidate[] };
-    return {
-      current: entity.targetLogicalName,
-      status: entity.objectMappingStatus,
-      candidates: proposal.candidates,
-      // Every target table, so a person can choose one the suggestion engine did not rank.
-      allTargets: targetCatalog
-        .filter((t) => !t.isView && !t.isIntersect)
-        .map((t) => ({ logicalName: t.logicalName, displayName: t.displayName }))
-        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
-    };
+    try {
+      const [sourceCatalog, targetCatalog] = await Promise.all([
+        this.metadata.getCatalog(source.id, sConn),
+        this.metadata.getCatalog(target.id, tConn),
+      ]);
+      const summary = sourceCatalog.find((t) => t.logicalName === entity.logicalName);
+      const proposal = summary
+        ? proposeObjectMapping(summary, targetCatalog)
+        : { candidates: [] as ObjectCandidate[] };
+      return {
+        current: entity.targetLogicalName,
+        status: entity.objectMappingStatus,
+        candidates: proposal.candidates,
+        // Every target table, so a person can choose one the suggestion engine did not rank.
+        allTargets: targetCatalog
+          .filter((t) => !t.isView && !t.isIntersect)
+          .map((t) => ({ logicalName: t.logicalName, displayName: t.displayName }))
+          .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+      };
+    } finally {
+      await release(sConn, tConn);
+    }
   }
 
   /**
@@ -505,29 +516,35 @@ export class PlanningService {
     if (!entity) throw notFound('Plan table');
     const source = await this.environmentsSvc.getAccessible(ctx, plan.sourceEnvironmentId);
     const sConn = await this.connections.connectorFor(source, ctx.userId, { requestId: ctx.requestId });
-    const table = await this.metadata.getTable(source.id, sConn, entity.logicalName);
-    if (!table) throw notFound('Source table');
-    const counts = new Map<string, number>();
-    let scanned = 0;
-    for await (const page of sConn.queryRecords(table, [field], { pageSize: 500 })) {
-      for (const record of page) {
-        scanned++;
-        const raw = record.values[field];
-        if (raw === null || raw === undefined) continue;
-        const key = typeof raw === 'object' && 'id' in raw ? raw.id : String(raw);
-        counts.set(key, (counts.get(key) ?? 0) + 1);
+    try {
+      const table = await this.metadata.getTable(source.id, sConn, entity.logicalName);
+      if (!table) throw notFound('Source table');
+      const counts = new Map<string, number>();
+      let scanned = 0;
+      for await (const page of sConn.queryRecords(table, [field], { pageSize: 500 })) {
+        for (const record of page) {
+          scanned++;
+          const raw = record.values[field];
+          if (raw === null || raw === undefined) continue;
+          const key = typeof raw === 'object' && 'id' in raw ? raw.id : String(raw);
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        if (scanned >= SOURCE_VALUE_SAMPLE || counts.size >= 500) break;
       }
-      if (scanned >= SOURCE_VALUE_SAMPLE || counts.size >= 500) break;
+      return {
+        field,
+        scanned,
+        sampled: scanned >= SOURCE_VALUE_SAMPLE,
+        values: [...counts.entries()]
+          .map(([value, occurrences]) => ({ value, occurrences }))
+          .sort((a, b) => b.occurrences - a.occurrences || a.value.localeCompare(b.value))
+          .slice(0, 200),
+      };
+    } finally {
+      // The loop above breaks early by design, which leaves the page iterator open: closing the
+      // connector is also what stops the query behind it.
+      await release(sConn);
     }
-    return {
-      field,
-      scanned,
-      sampled: scanned >= SOURCE_VALUE_SAMPLE,
-      values: [...counts.entries()]
-        .map(([value, occurrences]) => ({ value, occurrences }))
-        .sort((a, b) => b.occurrences - a.occurrences || a.value.localeCompare(b.value))
-        .slice(0, 200),
-    };
   }
 
   /** Stores the value-level mapping for a choice column. Unmapped values stay unmapped. */
@@ -909,6 +926,8 @@ export class PlanningService {
         .where(eq(migrationPlans.id, plan.id));
     } catch (err) {
       throw integrationError(err, 'Building the migration plan');
+    } finally {
+      await release(sConn, tConn);
     }
   }
 
@@ -1005,6 +1024,8 @@ export class PlanningService {
       return { plan, entity, s, t };
     } catch (err) {
       throw integrationError(err, 'Loading table metadata');
+    } finally {
+      await release(sConn, tConn);
     }
   }
 

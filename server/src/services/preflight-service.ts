@@ -1,4 +1,6 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
+import type { MigrationConnector } from '../connectors/types';
+import { release } from '../connectors/release';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import {
@@ -137,12 +139,21 @@ export class PreflightService {
       .where(eq(preflightEntityResults.preflightRunId, preflightRunId));
     log.info('Preflight started');
 
+    /*
+     * Declared out here so the `finally` can close them.
+     *
+     * A connector owns a connection pool, and this one runs the length of a whole preflight; the
+     * pool it leaves behind is reclaimed on an idle timer rather than when the work ends. Closing it
+     * here is what makes the connection count follow the work instead of trailing it.
+     */
+    let sConn: MigrationConnector | undefined;
+    let tConn: MigrationConnector | undefined;
     try {
       if (!pf.createdByUserId) throw new Error('Preflight has no initiating user');
       const source = await this.environmentsSvc.getInOrganization(pf.organizationId, pf.sourceEnvironmentId);
       const target = await this.environmentsSvc.getInOrganization(pf.organizationId, pf.targetEnvironmentId);
-      const sConn = await this.connections.connectorFor(source, pf.createdByUserId, { preflightRunId });
-      const tConn = await this.connections.connectorFor(target, pf.createdByUserId, { preflightRunId });
+      sConn = await this.connections.connectorFor(source, pf.createdByUserId, { preflightRunId });
+      tConn = await this.connections.connectorFor(target, pf.createdByUserId, { preflightRunId });
       const options: PlanOptions = { ...DEFAULT_PLAN_OPTIONS, ...pf.options };
 
       // The plan snapshot the migration would use, built exactly as execution builds it.
@@ -232,6 +243,8 @@ export class PreflightService {
         .update(preflightRuns)
         .set({ status: 'FAILED', errorMessage: message.slice(0, 2000), completedAt: new Date() })
         .where(eq(preflightRuns.id, preflightRunId));
+    } finally {
+      await release(sConn, tConn);
     }
   }
 

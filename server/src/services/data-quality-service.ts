@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { release } from '../connectors/release';
 import type { Logger } from 'pino';
 import type {
   DataQualityIssueDto,
@@ -60,14 +61,18 @@ export class DataQualityService {
     if (!entity.targetLogicalName) return [];
     const targetEnv = await this.environmentsSvc.getAccessible(ctx, plan.targetEnvironmentId);
     const tConn = await this.connections.connectorFor(targetEnv, ctx.userId, { requestId: ctx.requestId });
-    const target = await this.metadata.getTable(targetEnv.id, tConn, entity.targetLogicalName);
-    if (!target) return [];
-    return deriveTargetRules(
-      target,
-      mappings
-        .filter((m) => m.targetField && (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL'))
-        .map((m) => ({ sourceField: m.sourceField, targetField: m.targetField! })),
-    );
+    try {
+      const target = await this.metadata.getTable(targetEnv.id, tConn, entity.targetLogicalName);
+      if (!target) return [];
+      return deriveTargetRules(
+        target,
+        mappings
+          .filter((m) => m.targetField && (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL'))
+          .map((m) => ({ sourceField: m.sourceField, targetField: m.targetField! })),
+      );
+    } finally {
+      await release(tConn);
+    }
   }
 
   /** Profiles one plan table with its target-derived rules applied. */

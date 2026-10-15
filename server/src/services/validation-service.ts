@@ -1,4 +1,6 @@
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, ne, sql, type SQL } from 'drizzle-orm';
+import type { MigrationConnector } from '../connectors/types';
+import { release } from '../connectors/release';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type {
@@ -529,12 +531,15 @@ export class ValidationService {
       .delete(validationDifferences)
       .where(eq(validationDifferences.validationRunId, validationRunId));
     log.info({ tables: vr.tables }, 'Validation started');
+    /* Declared out here so the `finally` can close them: a validation holds both for its whole run. */
+    let sConn: MigrationConnector | undefined;
+    let tConn: MigrationConnector | undefined;
     try {
       if (!vr.createdByUserId) throw new Error('Validation has no initiating user');
       const source = await this.environmentsSvc.getInOrganization(vr.organizationId, vr.sourceEnvironmentId);
       const target = await this.environmentsSvc.getInOrganization(vr.organizationId, vr.targetEnvironmentId);
-      const sConn = await this.connections.connectorFor(source, vr.createdByUserId, { validationRunId });
-      const tConn = await this.connections.connectorFor(target, vr.createdByUserId, { validationRunId });
+      sConn = await this.connections.connectorFor(source, vr.createdByUserId, { validationRunId });
+      tConn = await this.connections.connectorFor(target, vr.createdByUserId, { validationRunId });
       const [runRow] = vr.migrationRunId
         ? await this.db
             .select({ s: migrationRuns.planSnapshot, o: migrationRuns.options })
@@ -683,6 +688,8 @@ export class ValidationService {
         runId: validationRunId,
         details: { error: message },
       });
+    } finally {
+      await release(sConn, tConn);
     }
   }
 
