@@ -70,7 +70,33 @@ connection, and a connection test that proves it reaches a real environment. Sco
 
 ---
 
-## 4. Fifty-nine redundant type assertions
+## 4. The `npm audit` advisory on the SQL driver, assessed and left alone
+
+**What it says:** three moderate advisories, one chain. `sprintf-js` is vulnerable to denial of
+service through unbounded precision specifiers; `tedious` depends on it; `mssql` depends on
+`tedious`. `npm audit fix --force` resolves it by moving to `mssql@12.7.7`, which it labels a
+breaking change. This repository declares `mssql@^11.0.2` and resolves `tedious@18.6.2`.
+
+**Why it is being left:** the advisory needs a precision specifier inside the _format string_, and
+every `sprintf` call in `tedious` passes a string literal from its own source — `login7-payload.js`
+and `metadata-parser.js` build debug dumps with hardcoded formats and variable arguments. Nothing
+reaching this product's code can place a specifier in a format. The call sites are also debug
+`toString()` paths that tedious only invokes with its own debug logging switched on, which this
+product never enables: there is no `debug:` option anywhere in `server/src/connectors/sql`.
+
+So the exposure is not "low", it is absent in this usage, and the remedy offered is a major version
+bump of the driver that both SQL Server and Azure SQL read through, in the middle of an Azure SQL
+certification. That trade is the wrong way round. Upgrade it deliberately, on its own, with the
+engine conformance suites run against real servers afterwards — which CI already does.
+
+**Noticed while checking this:** the same tedious debug dump formats `Password:'%s'` in plaintext.
+It is unreachable for the reason above, and the logger redacts `password`, `token`, `clientSecret`
+and the rest by path regardless. Worth remembering before anyone switches on driver debugging to
+diagnose a connection problem.
+
+---
+
+## 5. Fifty-nine redundant type assertions
 
 **Where:** across `server/src`, reported by `@typescript-eslint/no-unnecessary-type-assertion`.
 
