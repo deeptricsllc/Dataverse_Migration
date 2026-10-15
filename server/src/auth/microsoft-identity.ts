@@ -41,8 +41,6 @@ export const scopeCandidates = (resourceUrl: string): string[] => {
 /** Scope requested interactively at sign-in. `.default` cannot be combined with OIDC scopes. */
 export const discoveryScope = (discoveryUrl: string) =>
   `${discoveryUrl.replace(/\/+$/, '')}/user_impersonation`;
-/** Delegated scope for a specific Dataverse environment (first candidate; see scopeCandidates). */
-export const dataverseScope = (environmentUrl: string) => scopeCandidates(environmentUrl)[0];
 
 /** A delegated Microsoft Graph token, for reading files and lists. */
 export const graphScopes = () => GRAPH_READ_SCOPES;

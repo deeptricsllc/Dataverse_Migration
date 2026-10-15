@@ -181,10 +181,5 @@ function once(emitter: { once: (event: string, fn: (arg?: unknown) => void) => u
   return new Promise<void>((resolve) => emitter.once(event, () => resolve()));
 }
 
-/** Kept so callers can hash a whole buffer the same way the stream does. */
-export function sha256Of(buf: Buffer): string {
-  return createHash('sha256').update(buf).digest('hex');
-}
-
 export type { Hash };
 export { crc32 };

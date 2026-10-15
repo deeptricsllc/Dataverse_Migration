@@ -25,13 +25,13 @@ import { verifyEvidencePackage } from '../services/evidence-verifier';
 import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
 import { registerProjectRoutes } from './projects';
-import { transformationRulesSchema } from './schemas';
+import {
+  fieldNameSchema as fieldName,
+  tableNameSchema as tableName,
+  transformationRulesSchema,
+} from './schemas';
 
 const uuid = z.string().uuid();
-/** Dataverse logical name (`account`) or schema-qualified SQL table (`dbo.Customer`). */
-const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
-/** A SQL column or Dataverse attribute name. */
-const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 const idParams = z.object({ id: uuid });
 
 /**

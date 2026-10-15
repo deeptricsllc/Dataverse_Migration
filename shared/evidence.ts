@@ -48,19 +48,6 @@ export const REQUIRED_EVIDENCE_FILES = [
   'connector-evidence.csv',
 ] as const;
 
-/**
- * Files a package contains when the run has them, and legitimately omits otherwise.
- *
- * A run that was never validated has no validation files, and saying so is more honest than an empty
- * one. Lineage is present whenever the run wrote an identity map, which is every executed run.
- */
-export const OPTIONAL_EVIDENCE_FILES = [
-  'validation.csv',
-  'validation-coverage.json',
-  'aggregates.csv',
-  'readiness.json',
-] as const;
-
 /** Lineage is split across files, so it is matched by pattern rather than by name. */
 export const LINEAGE_FILE_PATTERN = /^lineage\/part-\d{6}\.csv$/;
 
@@ -261,20 +248,4 @@ export interface EvidenceVerification {
   lineageRowsCounted: number | null;
   proves: string;
   doesNotProve: string;
-}
-
-/** The single sentence a caller should show beside a verdict, so it is never read as more than it is. */
-export function describeVerdict(result: EvidenceVerification): string {
-  switch (result.verdict) {
-    case 'VALID':
-      return `Internally consistent: ${result.filesChecked} file(s) match the digests recorded in the manifest.`;
-    case 'MODIFIED':
-      return `${result.problems.length} inconsistency(ies) between this package and its manifest. It has been changed since it was made, or it was not written by this platform.`;
-    case 'INCOMPLETE':
-      return 'This package is missing files an evidence package must contain, so there is nothing to conclude from what is present.';
-    case 'UNSUPPORTED':
-      return `This package declares an evidence schema this build does not read (supported: ${SUPPORTED_EVIDENCE_SCHEMA_VERSIONS.join(', ')}).`;
-    case 'UNREADABLE':
-      return 'This is not a readable evidence package.';
-  }
 }

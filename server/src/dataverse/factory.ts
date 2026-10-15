@@ -372,20 +372,6 @@ export async function seedDemoData(
   }
 }
 
-export async function demoRecordCount(db: AppDb, organizationId: string, envKey: string, table: string) {
-  const [row] = await db
-    .select({ n: count() })
-    .from(demoRecords)
-    .where(
-      and(
-        eq(demoRecords.organizationId, organizationId),
-        eq(demoRecords.environmentKey, envKey),
-        eq(demoRecords.logicalName, table),
-      ),
-    );
-  return Number(row?.n ?? 0);
-}
-
 /**
  * Seeds the simulated legacy SQL Server. Rows are stored in the same table as the simulated
  * Dataverse data, keyed by the SQL table's `schema.Table` name, and re-seeded when the fixtures

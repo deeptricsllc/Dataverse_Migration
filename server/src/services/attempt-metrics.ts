@@ -1,4 +1,4 @@
-import { and, asc, countDistinct, eq, isNotNull, sql } from 'drizzle-orm';
+import { asc, countDistinct, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '../db/client';
 import { migrationErrors, migrationRecordMaps } from '../db/schema';
 import type { RunAttemptSummary } from '../../../shared/domain';
@@ -127,22 +127,4 @@ export async function attemptMetrics(db: AppDb, runId: string): Promise<RunAttem
     if (b.attempt === null) return -1;
     return a.attempt - b.attempt;
   });
-}
-
-/** Whether any record predates the attempt being recorded, which a report has to say rather than hide. */
-export async function hasUnattributedRecords(db: AppDb, runId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ n: sql<number>`count(*)` })
-    .from(migrationRecordMaps)
-    .where(sql`${migrationRecordMaps.runId} = ${runId} and ${migrationRecordMaps.runAttempt} is null`);
-  return Number(row?.n ?? 0) > 0;
-}
-
-/** Records whose attempt is known. Used to assert that the decomposition adds up. */
-export async function attributedRecordCount(db: AppDb, runId: string): Promise<number> {
-  const [row] = await db
-    .select({ n: sql<number>`count(*)` })
-    .from(migrationRecordMaps)
-    .where(and(eq(migrationRecordMaps.runId, runId), isNotNull(migrationRecordMaps.runAttempt)));
-  return Number(row?.n ?? 0);
 }

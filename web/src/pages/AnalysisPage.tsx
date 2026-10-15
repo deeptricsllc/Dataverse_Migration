@@ -6,7 +6,6 @@ import type {
   FieldProfileDto,
 } from '@shared/domain';
 import { useQuery } from '@tanstack/react-query';
-import { FileSpreadsheet } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ErdDiagram } from '../components/ErdDiagram';
@@ -441,19 +440,5 @@ function FindingsTable({ findings, showTable }: { findings: AnalysisFindingDto[]
         ))}
       </tbody>
     </Table>
-  );
-}
-
-/** Shown on a migration plan: the workbook is how the mapping leaves and re-enters the tool. */
-export function MappingWorkbookLink({ planId }: { planId: string }) {
-  return (
-    <a
-      href={`/api/plans/${planId}/mapping.xlsx`}
-      download
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-    >
-      <FileSpreadsheet className="h-3.5 w-3.5" />
-      Mapping workbook
-    </a>
   );
 }

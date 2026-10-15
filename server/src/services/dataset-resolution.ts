@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { AppDb } from '../db/client';
 import { stagedTables } from '../db/schema';
 import type { environments } from '../db/schema';
@@ -134,13 +134,4 @@ export async function unresolvableDatasets(
     if (!resolution.resolves) out.push({ environment: env, resolution });
   }
   return out;
-}
-
-/** Used by the staged-source service to answer "does this environment hold anything" cheaply. */
-export async function stagedContentCount(db: AppDb, environmentId: string): Promise<number> {
-  const rows = await db
-    .select({ logicalName: stagedTables.logicalName })
-    .from(stagedTables)
-    .where(and(eq(stagedTables.environmentId, environmentId)));
-  return rows.length;
 }

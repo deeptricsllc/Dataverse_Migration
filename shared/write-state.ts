@@ -38,13 +38,6 @@ export type WriteState =
    */
   | 'RECONCILIATION_REQUIRED';
 
-export const WRITE_STATES: readonly WriteState[] = [
-  'INTENDED',
-  'CONFIRMED',
-  'UNKNOWN',
-  'RECONCILIATION_REQUIRED',
-];
-
 /**
  * States in which the record must not be written again.
  *
@@ -59,11 +52,6 @@ export const UNRESOLVED_WRITE_STATES: readonly WriteState[] = [
 
 export function isUnresolved(state: WriteState | null | undefined): boolean {
   return state != null && (UNRESOLVED_WRITE_STATES as readonly string[]).includes(state);
-}
-
-/** Whether a run may be called complete. It may not, while the fate of any record is unknown. */
-export function blocksCompletion(state: WriteState | null | undefined): boolean {
-  return isUnresolved(state);
 }
 
 export const WRITE_STATE_LABELS: Record<WriteState, { label: string; meaning: string }> = {
@@ -132,18 +120,6 @@ export function verdictOf(code: string | null | undefined): WriteVerdict {
   // A code may arrive as `CODE:platformCode`; the family is what matters.
   const family = code.split(':')[0] ?? code;
   return DEFINITELY_REJECTED.has(family) ? 'REJECTED' : 'AMBIGUOUS';
-}
-
-/**
- * Whether repeating this operation is safe when its outcome is unknown.
- *
- * An update is idempotent: the same values written to the same primary key a second time leave the
- * target exactly as the first attempt did. A create is not: it has no key to collide with until the
- * target assigns one. The asymmetry is the reason an interrupted update is recoverable and an
- * interrupted create may not be.
- */
-export function repeatIsSafe(operation: 'CREATE' | 'UPDATE'): boolean {
-  return operation === 'UPDATE';
 }
 
 /** What evidence could identify a record in the target without guessing. */

@@ -50,7 +50,3 @@ export function typeCompatibility(source: AttributeMeta, target: AttributeMeta):
   }
   return { compatible: false, note: `${s} cannot be converted to ${t}` };
 }
-
-export function isLookupType(t: AttributeType | null | undefined): boolean {
-  return !!t && LOOKUP.has(t);
-}
