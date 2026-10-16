@@ -87,10 +87,6 @@ export function can(role: WorkspaceRole, permission: Permission): boolean {
   return GRANTS[role].includes(permission);
 }
 
-export function permissionsFor(role: WorkspaceRole): readonly Permission[] {
-  return GRANTS[role];
-}
-
 /**
  * Roles stored before this model existed.
  *

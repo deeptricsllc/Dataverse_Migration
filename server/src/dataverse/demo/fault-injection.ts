@@ -46,16 +46,6 @@ export function armLostAnswer(fault: Omit<ArmedFault, 'seen'>): ArmedFault {
   return value;
 }
 
-/** What is armed for this workspace and environment, if anything. */
-export function armedFault(organizationId: string, environmentKey: string): ArmedFault | null {
-  return armed.get(keyOf(organizationId, environmentKey)) ?? null;
-}
-
-/** Disarms whatever is armed. Returns true when something was. */
-export function disarm(organizationId: string, environmentKey: string): boolean {
-  return armed.delete(keyOf(organizationId, environmentKey));
-}
-
 /**
  * Called by the demo connection after a record has been written.
  *

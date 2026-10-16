@@ -12,7 +12,7 @@ import {
 } from '../../../shared/metadata';
 import { nameSimilarity } from './mapping';
 import { typeCompatibility } from './type-compat';
-import { displayValue, normalizeForCompare } from './values';
+import { normalizeForCompare } from './values';
 
 /**
  * Reconciling two datasets: the pure part.
@@ -322,7 +322,3 @@ export function fieldGaps(
       .sort(),
   };
 }
-
-/** A value as it appears in a report, masking secured columns exactly as every other export does. */
-export const reportValue = (attr: AttributeMeta | undefined, record: DvRecord, field: string) =>
-  displayValue(attr, record.values[field] ?? undefined);

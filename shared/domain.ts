@@ -122,15 +122,6 @@ export const DEFAULT_SQL_PORT: Record<SqlConnectionType, number> = {
   MYSQL: 3306,
 };
 
-/** The schema a table belongs to when its name does not say. */
-export const DEFAULT_SQL_SCHEMA: Record<SqlConnectionType, string> = {
-  SQL_SERVER: 'dbo',
-  AZURE_SQL: 'dbo',
-  POSTGRES: 'public',
-  // MySQL has no schema layer: a "schema" IS a database, so a table name needs no qualifier.
-  MYSQL: '',
-};
-
 /** Connections of the same family share a connector implementation and a metadata dialect. */
 export type ProviderFamily = 'DATAVERSE' | 'SQL';
 
@@ -570,8 +561,6 @@ export interface FieldTransformDto {
   /** CONSTANT / DEFAULT_IF_NULL value. */
   value?: string | number | boolean | null;
 }
-
-export const DEFAULT_TRANSFORM: FieldTransformDto = { kind: 'DIRECT' };
 
 // ---------------------------------------------------------------------------
 // Transformation pipeline
@@ -3100,12 +3089,6 @@ export type RunTrigger = (typeof RUN_TRIGGERS)[number];
  */
 export const STAGED_SOURCE_KINDS = ['UPLOAD', 'ONEDRIVE', 'SHAREPOINT'] as const;
 export type StagedSourceKind = (typeof STAGED_SOURCE_KINDS)[number];
-
-export const STAGED_SOURCE_LABELS: Record<StagedSourceKind, string> = {
-  UPLOAD: 'Uploaded file',
-  ONEDRIVE: 'OneDrive / SharePoint file',
-  SHAREPOINT: 'SharePoint list',
-};
 
 /** One imported table, with how it was read and what was inferred about it. */
 export interface StagedTableDto {

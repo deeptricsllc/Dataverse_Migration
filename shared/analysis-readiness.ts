@@ -1,10 +1,4 @@
-import {
-  FINDING_CATEGORY_LABELS,
-  findingDeducts,
-  type Finding,
-  type FindingCategory,
-  type FindingSeverity,
-} from './findings';
+import { findingDeducts, type Finding, type FindingCategory, type FindingSeverity } from './findings';
 
 /**
  * How ready this data is to be migrated, and exactly why.
@@ -80,12 +74,6 @@ export const DIMENSION_FOR: Record<FindingCategory, ReadinessDimension | null> =
 const COST: Record<FindingSeverity, number> = { CRITICAL: 35, WARNING: 10, INFO: 2 };
 
 export type ReadinessBand = 'READY' | 'NEEDS_ATTENTION' | 'HIGH_RISK';
-
-export const READINESS_BAND_LABELS: Record<ReadinessBand, string> = {
-  READY: 'Ready',
-  NEEDS_ATTENTION: 'Needs attention',
-  HIGH_RISK: 'High risk',
-};
 
 export interface DimensionScore {
   dimension: ReadinessDimension;
@@ -345,20 +333,4 @@ function titleList(findings: Finding[]): string {
   const titles = findings.map((f) => f.title.replace(/\.$/, ''));
   if (titles.length <= 1) return titles[0] ?? '';
   return `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
-}
-
-/** Grouped for the findings workspace, worst first within each group. */
-export function groupByCategory(
-  findings: Finding[],
-): { category: FindingCategory; label: string; findings: Finding[] }[] {
-  const groups = new Map<FindingCategory, Finding[]>();
-  for (const f of findings) groups.set(f.category, [...(groups.get(f.category) ?? []), f]);
-  const rank: Record<FindingSeverity, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
-  return [...groups.entries()]
-    .map(([category, list]) => ({
-      category,
-      label: FINDING_CATEGORY_LABELS[category],
-      findings: [...list].sort((a, b) => rank[a.severity] - rank[b.severity]),
-    }))
-    .sort((a, b) => rank[a.findings[0]!.severity] - rank[b.findings[0]!.severity]);
 }

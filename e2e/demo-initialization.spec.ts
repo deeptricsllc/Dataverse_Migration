@@ -44,8 +44,18 @@ test('a workspace being prepared says so, and then stops saying it', async ({ pa
     await expect(preparing).toContainText('Demo data is being prepared');
   }
 
-  await expect(page.getByText('Customer Migration: Successful')).toBeVisible({ timeout: 180_000 });
-  await expect(page.getByText('Customer Migration: Data Quality Issues')).toBeVisible();
+  /*
+   * Both scenarios, both with the long budget.
+   *
+   * The second used to be asserted with the default timeout, on the assumption that once one
+   * scenario project is on screen the rest are too. They are seeded in sequence and the list renders
+   * as they arrive, so on a loaded machine the second can be several seconds behind the first --
+   * which made this a race that the first assertion had already spent its waiting on. Arriving is
+   * the condition; arriving together was never part of it.
+   */
+  for (const scenario of ['Customer Migration: Successful', 'Customer Migration: Data Quality Issues']) {
+    await expect(page.getByText(scenario)).toBeVisible({ timeout: 180_000 });
+  }
 
   // And once it is there, neither callout remains.
   await expect(page.getByTestId('demo-building')).toHaveCount(0);

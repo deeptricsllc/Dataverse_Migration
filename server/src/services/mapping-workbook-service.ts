@@ -2,7 +2,6 @@ import { asc, eq, inArray } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   MAPPING_SHEET_COLUMNS,
-  TRANSFORMATION_KINDS,
   type AnalysisRunDto,
   type FieldProfileDto,
   type MappingImportChangeDto,
@@ -787,59 +786,4 @@ export function describeRules(rules: TransformationRule[]): string {
       return `${rule.kind}(${ELLIPSIS})`;
     })
     .join(' > ');
-}
-
-type ParseResult = { ok: true; rules: TransformationRule[] } | { ok: false; reason: string };
-
-/** The inverse, for the kinds `describeRules` can state exactly. */
-export function parseRules(text: string): ParseResult {
-  const rules: TransformationRule[] = [];
-  for (const piece of text.split('>')) {
-    const token = piece.trim();
-    if (!token) continue;
-    const match = token.match(/^([A-Za-z_]+)\s*(?:\(([^)]*)\))?$/);
-    if (!match) return { ok: false, reason: `"${token}" is not a transformation` };
-    const kind = match[1].toUpperCase() as TransformationKind;
-    const raw = match[2];
-    if (!TRANSFORMATION_KINDS.includes(kind))
-      return { ok: false, reason: `"${match[1]}" is not a known rule` };
-    if (raw === ELLIPSIS || raw === '...') {
-      return { ok: false, reason: `${kind} is configured in the app, not in the sheet` };
-    }
-    if (NO_ARG.includes(kind)) {
-      if (raw) return { ok: false, reason: `${kind} takes no argument` };
-      rules.push({ kind });
-      continue;
-    }
-    const arg = SIMPLE_ARG[kind];
-    if (arg === 'number') {
-      const n = Number(raw);
-      if (!Number.isFinite(n) || n < 0)
-        return { ok: false, reason: `${kind} needs a number, got "${raw ?? ''}"` };
-      rules.push(kind === 'TO_DECIMAL' ? { kind, scale: n } : { kind, length: n });
-      continue;
-    }
-    if (arg === 'string') {
-      if (raw === undefined) return { ok: false, reason: `${kind} needs a value` };
-      rules.push({ kind, value: raw });
-      continue;
-    }
-    if (kind === 'SUBSTRING') {
-      const [start, length] = (raw ?? '').split(',').map((v) => Number(v.trim()));
-      if (!Number.isFinite(start) || !Number.isFinite(length)) {
-        return { ok: false, reason: 'SUBSTRING needs a start and a length, e.g. SUBSTRING(0,10)' };
-      }
-      rules.push({ kind, start, length });
-      continue;
-    }
-    if (kind === 'REPLACE') {
-      const idx = (raw ?? '').indexOf(',');
-      if (idx < 0)
-        return { ok: false, reason: 'REPLACE needs what to find and what to put, e.g. REPLACE(a,b)' };
-      rules.push({ kind, find: raw!.slice(0, idx), replaceWith: raw!.slice(idx + 1) });
-      continue;
-    }
-    return { ok: false, reason: `${kind} is configured in the app, not in the sheet` };
-  }
-  return { ok: true, rules };
 }

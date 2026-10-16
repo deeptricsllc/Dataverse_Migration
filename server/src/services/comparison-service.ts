@@ -1,4 +1,6 @@
 import { and, desc, eq, or } from 'drizzle-orm';
+import type { MigrationConnector } from '../connectors/types';
+import { release } from '../connectors/release';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type { ComparisonRunDto, TableDiff } from '../../../shared/domain';
@@ -76,6 +78,15 @@ export class ComparisonService {
       .set({ status: 'RUNNING', startedAt: new Date(), errorMessage: null })
       .where(eq(comparisonRuns.id, runId));
     log.info('Comparison started');
+    /*
+     * Declared out here so the `finally` can close them.
+     *
+     * A connector owns a connection pool, and this one runs the length of a whole comparison; the
+     * pool it leaves behind is reclaimed on an idle timer rather than when the work ends. Closing it
+     * here is what makes the connection count follow the work instead of trailing it.
+     */
+    let sConn: MigrationConnector | undefined;
+    let tConn: MigrationConnector | undefined;
     try {
       if (!run.createdByUserId) throw new Error('Comparison has no initiating user');
       const source = await this.environmentsSvc.getInOrganization(
@@ -86,10 +97,10 @@ export class ComparisonService {
         run.organizationId,
         run.targetEnvironmentId,
       );
-      const sConn = await this.connections.connectorFor(source, run.createdByUserId, {
+      sConn = await this.connections.connectorFor(source, run.createdByUserId, {
         comparisonRunId: runId,
       });
-      const tConn = await this.connections.connectorFor(target, run.createdByUserId, {
+      tConn = await this.connections.connectorFor(target, run.createdByUserId, {
         comparisonRunId: runId,
       });
 
@@ -185,6 +196,8 @@ export class ComparisonService {
         runId,
         details: { error: message },
       });
+    } finally {
+      await release(sConn, tConn);
     }
   }
 

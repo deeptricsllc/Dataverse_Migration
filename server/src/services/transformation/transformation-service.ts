@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { release } from '../../connectors/release';
 import type { Logger } from 'pino';
 import {
   isLossyRule,
@@ -189,92 +190,106 @@ export class TransformationService {
       .from(migrationPlanEntities)
       .where(and(eq(migrationPlanEntities.id, entityId), eq(migrationPlanEntities.planId, planId)));
     if (!entity) throw notFound('Plan table');
+    /*
+     * `metaFor` hands back the connectors it opened, so closing them is this method's job.
+     *
+     * The refusal below is the case that made it worth saying: an unmapped table threw before
+     * anything had used either connector, and both pools went with it unclosed. A preview is a
+     * screen action somebody repeats while they adjust a mapping, so the cheapest mistake to make
+     * here is also the one made most often.
+     */
     const { source, target, sConn, tConn } = await this.metaFor(ctx, plan, entity);
-    if (!target) throw badRequest('Map this table to a target table before previewing records');
+    try {
+      if (!target) throw badRequest('Map this table to a target table before previewing records');
 
-    const mappings = await this.db
-      .select()
-      .from(fieldMappings)
-      .where(eq(fieldMappings.planEntityId, entity.id))
-      .orderBy(asc(fieldMappings.sourceField));
-    const active = mappings.filter(
-      (m) => m.targetField && (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL'),
-    );
-    const sourceAttributes = new Map(source.attributes.map((a) => [a.logicalName, a]));
-    const targetAttributes = new Map(target.attributes.map((a) => [a.logicalName, a]));
-
-    const records: DvRecord[] = [];
-    for await (const page of sConn.queryRecords(
-      source,
-      active.map((m) => m.sourceField),
-      { pageSize: Math.min(limit, 50) },
-    )) {
-      records.push(...page);
-      if (records.length >= limit) break;
-    }
-    const sample = records.slice(0, limit);
-
-    // What the target holds today, matched the way the migration matches records.
-    const targetColumns = active.map((m) => m.targetField!);
-    const existing = new Map<string, DvRecord>();
-    if (sample.length && entity.matchStrategy === 'PRIMARY_ID') {
-      const found = await tConn.retrieveByIds(
-        target,
-        sample.map((r) => r.id),
-        targetColumns,
+      const mappings = await this.db
+        .select()
+        .from(fieldMappings)
+        .where(eq(fieldMappings.planEntityId, entity.id))
+        .orderBy(asc(fieldMappings.sourceField));
+      const active = mappings.filter(
+        (m) => m.targetField && (m.status === 'AUTO_MAPPED' || m.status === 'MANUAL'),
       );
-      for (const r of found) existing.set(r.id.toLowerCase(), r);
-    }
+      const sourceAttributes = new Map(source.attributes.map((a) => [a.logicalName, a]));
+      const targetAttributes = new Map(target.attributes.map((a) => [a.logicalName, a]));
 
-    const out: PreviewRecordDto[] = [];
-    for (const record of sample) {
-      const fields: PreviewFieldDto[] = [];
-      let blocked = false;
-      for (const m of active) {
-        const sAttr = sourceAttributes.get(m.sourceField);
-        const tAttr = targetAttributes.get(m.targetField!);
-        if (!sAttr || !tAttr) continue;
-        const raw = record.values[m.sourceField] ?? null;
-        const result = transformField({
-          value: raw,
-          source: sAttr,
-          target: tAttr,
-          rules: m.transformations,
-          legacyTransform: m.transform,
-          choiceMap: m.choiceMap,
-          context: { record, sourceAttributes },
-        });
-        if (!result.ok) blocked = true;
-        const current = existing.get(record.id.toLowerCase())?.values[m.targetField!] ?? null;
-        const transformed = result.ok ? display(result.value) : null;
-        fields.push({
-          field: m.sourceField,
-          targetField: m.targetField,
-          sourceValue: this.mask(sAttr, display(raw)),
-          transformedValue: this.mask(sAttr, transformed),
-          targetValue: this.mask(tAttr, display(current)),
-          applied: result.applied,
-          issues: result.issues,
-          changed: result.ok && display(current) !== transformed,
+      const records: DvRecord[] = [];
+      for await (const page of sConn.queryRecords(
+        source,
+        active.map((m) => m.sourceField),
+        { pageSize: Math.min(limit, 50) },
+      )) {
+        records.push(...page);
+        if (records.length >= limit) break;
+      }
+      const sample = records.slice(0, limit);
+
+      // What the target holds today, matched the way the migration matches records.
+      const targetColumns = active.map((m) => m.targetField!);
+      const existing = new Map<string, DvRecord>();
+      if (sample.length && entity.matchStrategy === 'PRIMARY_ID') {
+        const found = await tConn.retrieveByIds(
+          target,
+          sample.map((r) => r.id),
+          targetColumns,
+        );
+        for (const r of found) existing.set(r.id.toLowerCase(), r);
+      }
+
+      const out: PreviewRecordDto[] = [];
+      for (const record of sample) {
+        const fields: PreviewFieldDto[] = [];
+        let blocked = false;
+        for (const m of active) {
+          const sAttr = sourceAttributes.get(m.sourceField);
+          const tAttr = targetAttributes.get(m.targetField!);
+          if (!sAttr || !tAttr) continue;
+          const raw = record.values[m.sourceField] ?? null;
+          const result = transformField({
+            value: raw,
+            source: sAttr,
+            target: tAttr,
+            rules: m.transformations,
+            legacyTransform: m.transform,
+            choiceMap: m.choiceMap,
+            context: { record, sourceAttributes },
+          });
+          if (!result.ok) blocked = true;
+          const current = existing.get(record.id.toLowerCase())?.values[m.targetField!] ?? null;
+          const transformed = result.ok ? display(result.value) : null;
+          fields.push({
+            field: m.sourceField,
+            targetField: m.targetField,
+            sourceValue: this.mask(sAttr, display(raw)),
+            transformedValue: this.mask(sAttr, transformed),
+            targetValue: this.mask(tAttr, display(current)),
+            applied: result.applied,
+            issues: result.issues,
+            changed: result.ok && display(current) !== transformed,
+          });
+        }
+        const matched = existing.get(record.id.toLowerCase());
+        out.push({
+          sourceRecordId: record.id,
+          recordName: source.primaryNameAttribute
+            ? display(record.values[source.primaryNameAttribute])
+            : null,
+          targetRecordId: matched?.id ?? null,
+          action: blocked
+            ? 'BLOCKED'
+            : !matched
+              ? 'CREATE'
+              : fields.some((f) => f.changed)
+                ? 'UPDATE'
+                : 'UNCHANGED',
+          reason: blocked ? 'A transformation cannot produce a value for this record' : null,
+          fields,
         });
       }
-      const matched = existing.get(record.id.toLowerCase());
-      out.push({
-        sourceRecordId: record.id,
-        recordName: source.primaryNameAttribute ? display(record.values[source.primaryNameAttribute]) : null,
-        targetRecordId: matched?.id ?? null,
-        action: blocked
-          ? 'BLOCKED'
-          : !matched
-            ? 'CREATE'
-            : fields.some((f) => f.changed)
-              ? 'UPDATE'
-              : 'UNCHANGED',
-        reason: blocked ? 'A transformation cannot produce a value for this record' : null,
-        fields,
-      });
+      return out;
+    } finally {
+      await release(sConn, tConn);
     }
-    return out;
   }
 
   /**

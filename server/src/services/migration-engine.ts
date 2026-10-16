@@ -1,4 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
+import type { MigrationConnector } from '../connectors/types';
+import { release } from '../connectors/release';
 import type { Logger } from 'pino';
 import {
   DEFAULT_PLAN_OPTIONS,
@@ -239,6 +241,15 @@ export class MigrationEngine {
       .where(eq(migrationRuns.id, runId));
     log.info({ attempt: run.attempt }, 'Migration run started');
 
+    /*
+     * Declared out here so the `finally` can close them.
+     *
+     * A run holds both connectors for its whole length, which is the longest any connector lives
+     * in this product. Closing them when the run ends is what keeps a finished migration from
+     * still holding pool connections against the customer's target.
+     */
+    let sConn: MigrationConnector | undefined;
+    let tConn: MigrationConnector | undefined;
     try {
       if (!run.executedByUserId) throw new FatalRunError('Run has no executing user');
       const source = await this.environmentsSvc.getInOrganization(
@@ -252,13 +263,13 @@ export class MigrationEngine {
       // `maxRetries + 1` attempts: the option is how many times to retry, and the policy counts the
       // first try as one of its attempts.
       const attempts = { maxAttempts: (run.options.maxRetries ?? DEFAULT_PLAN_OPTIONS.maxRetries) + 1 };
-      const sConn = await this.connections.connectorFor(
+      sConn = await this.connections.connectorFor(
         source,
         run.executedByUserId,
         { migrationRunId: runId },
         attempts,
       );
-      const tConn = await this.connections.connectorFor(
+      tConn = await this.connections.connectorFor(
         target,
         run.executedByUserId,
         { migrationRunId: runId },
@@ -609,6 +620,8 @@ export class MigrationEngine {
         runId,
         details: { status: 'FAILED', error: message },
       });
+    } finally {
+      await release(sConn, tConn);
     }
   }
 

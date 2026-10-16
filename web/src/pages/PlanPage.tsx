@@ -432,7 +432,13 @@ export function MappingStep({
     onSuccess: onPlan,
   });
 
-  if (plan.entities.length === 0) return <EmptyState title="No tables in this plan" />;
+  if (plan.entities.length === 0)
+    return (
+      <EmptyState
+        title="No tables in this plan"
+        description="Choose the tables to migrate on the Tables step, then come back here to map their columns."
+      />
+    );
   const rows = (mappings.data?.mappings ?? []).filter(
     (m) => statusFilter === 'ALL' || m.status === statusFilter,
   );

@@ -4,13 +4,11 @@ import { DIMENSION_FOR, READINESS_DIMENSION_LABELS } from '../../../shared/analy
 import { FINDING_DISPOSITIONS, findingDeducts } from '../../../shared/findings';
 import { PROJECT_KINDS, SCHEDULE_MODES, STAGED_SOURCE_KINDS } from '../../../shared/domain';
 import { csvFileName, toCsv } from '../lib/csv';
+import { fieldNameSchema as fieldName, tableNameSchema as tableName } from './schemas';
 import type { Services } from '../services/container';
 
 const uuid = z.string().uuid();
 const idParams = z.object({ id: uuid });
-const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
-/** A SQL column or Dataverse attribute name, matching the other route module's rule. */
-const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 
 /**
  * Big enough for a mapping workbook or a source extract, small enough that nothing else fits.

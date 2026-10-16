@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import { release } from '../connectors/release';
 import type { DiagnosticCheckDto, DiagnosticsReportDto, DiagnosticStatus } from '../../../shared/domain';
 import type { MicrosoftIdentityService } from '../auth/microsoft-identity';
 import type { AppConfig } from '../config';
@@ -113,8 +114,15 @@ export class DiagnosticsService {
       }
       await timed(key, `${role} connection`, async () => {
         const conn = await this.connections.connectorFor(env, ctx.userId, { requestId: ctx.requestId });
-        const who = await conn.whoAmI();
-        return { status: 'PASS', message: `${env.displayName}: connected as Dataverse user ${who.userId}` };
+        try {
+          const who = await conn.whoAmI();
+          return {
+            status: 'PASS',
+            message: `${env.displayName}: connected as Dataverse user ${who.userId}`,
+          };
+        } finally {
+          await release(conn);
+        }
       });
     }
 
@@ -130,38 +138,50 @@ export class DiagnosticsService {
     } else {
       await timed('metadata', 'Metadata access', async () => {
         const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
-        const catalog = await this.metadata.getCatalog(probe.id, conn, true);
-        const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
-        if (!sample) return { status: 'WARN', message: 'The table catalog came back empty' };
-        const table = await this.metadata.getTable(probe.id, conn, sample.logicalName, true);
-        return {
-          status: 'PASS',
-          message: `${catalog.length} tables readable; ${sample.logicalName} exposes ${table?.attributes.length ?? 0} columns, ${table?.keys.length ?? 0} alternate key(s)`,
-        };
+        try {
+          const catalog = await this.metadata.getCatalog(probe.id, conn, true);
+          const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
+          if (!sample) return { status: 'WARN', message: 'The table catalog came back empty' };
+          const table = await this.metadata.getTable(probe.id, conn, sample.logicalName, true);
+          return {
+            status: 'PASS',
+            message: `${catalog.length} tables readable; ${sample.logicalName} exposes ${table?.attributes.length ?? 0} columns, ${table?.keys.length ?? 0} alternate key(s)`,
+          };
+        } finally {
+          await release(conn);
+        }
       });
 
       await timed('records', 'Record read permission', async () => {
         const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
-        const catalog = await this.metadata.getCatalog(probe.id, conn);
-        const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
-        if (!sample) return { status: 'NOT_TESTED', message: 'No table available to read' };
-        const count = await conn.countRecords(sample);
-        return {
-          status: 'PASS',
-          message: `${sample.logicalName}: ${count.count.toLocaleString()} record(s)${count.approximate ? ' (snapshot count)' : ''}`,
-        };
+        try {
+          const catalog = await this.metadata.getCatalog(probe.id, conn);
+          const sample = catalog.find((t) => t.logicalName === 'account') ?? catalog[0];
+          if (!sample) return { status: 'NOT_TESTED', message: 'No table available to read' };
+          const count = await conn.countRecords(sample);
+          return {
+            status: 'PASS',
+            message: `${sample.logicalName}: ${count.count.toLocaleString()} record(s)${count.approximate ? ' (snapshot count)' : ''}`,
+          };
+        } finally {
+          await release(conn);
+        }
       });
 
       await timed('users', 'User discovery', async () => {
         const conn = await this.connections.connectorFor(probe, ctx.userId, { requestId: ctx.requestId });
-        const users = await conn.listPrincipals('systemuser');
-        return users.length
-          ? { status: 'PASS', message: `${users.length} user(s) readable in ${probe.displayName}` }
-          : {
-              status: 'WARN',
-              message: 'No users were returned',
-              resolution: 'Reading systemuser records is required for ownership and audit preservation.',
-            };
+        try {
+          const users = await conn.listPrincipals('systemuser');
+          return users.length
+            ? { status: 'PASS', message: `${users.length} user(s) readable in ${probe.displayName}` }
+            : {
+                status: 'WARN',
+                message: 'No users were returned',
+                resolution: 'Reading systemuser records is required for ownership and audit preservation.',
+              };
+        } finally {
+          await release(conn);
+        }
       });
     }
 

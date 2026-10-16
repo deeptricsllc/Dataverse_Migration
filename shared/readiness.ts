@@ -141,9 +141,3 @@ export function assessVerdict(
         : 'Nothing found that should stop or surprise this migration.',
   };
 }
-
-export const READINESS_SEVERITY_LABELS: Record<ReadinessSeverity, string> = {
-  BLOCKER: 'Blocker',
-  WARNING: 'Warning',
-  INFORMATION: 'For information',
-};

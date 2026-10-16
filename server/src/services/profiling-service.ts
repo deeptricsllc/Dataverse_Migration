@@ -17,6 +17,7 @@
  * model only, so Dataverse, SQL Server and Azure SQL are profiled by the same code.
  */
 import type { Logger } from 'pino';
+import { release } from '../connectors/release';
 import type {
   DataQualityIssueDto,
   DataQualityRuleDto,
@@ -941,6 +942,8 @@ export class ProfilingService {
       return await this.run(ctx, env.id, conn, meta, input);
     } catch (err) {
       throw integrationError(err, 'Profiling');
+    } finally {
+      await release(conn);
     }
   }
 

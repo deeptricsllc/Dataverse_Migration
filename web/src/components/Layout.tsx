@@ -1,7 +1,5 @@
-import { CONNECTION_TYPE_LABELS, type ConnectionType } from '@shared/domain';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRight,
   Boxes,
   ChevronDown,
   Database,
@@ -18,7 +16,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { post, setCsrfToken } from '../lib/api';
-import { useSession, useWorkspace } from '../lib/session';
+import { useSession } from '../lib/session';
 import { PRODUCT_NAME, PRODUCT_SHORT_NAME, VENDOR_NAME } from '@shared/product';
 import { cx } from './ui';
 
@@ -125,65 +123,6 @@ function UserMenu() {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-function EnvCard({
-  role,
-  env,
-}: {
-  role: 'SOURCE' | 'TARGET';
-  env: { displayName: string; url: string; connectionType?: ConnectionType } | null;
-}) {
-  const isSource = role === 'SOURCE';
-  return (
-    <div
-      className={cx(
-        'min-w-0 flex-1 rounded-md border-l-4 bg-white px-3 py-1.5',
-        isSource ? 'border-l-[var(--color-source)]' : 'border-l-[var(--color-target)]',
-      )}
-      data-testid={`workspace-${role.toLowerCase()}`}
-    >
-      <div
-        className={cx(
-          'text-[10px] font-bold tracking-widest',
-          isSource ? 'text-[var(--color-source)]' : 'text-[var(--color-target)]',
-        )}
-      >
-        {role}
-      </div>
-      {env ? (
-        <>
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-slate-900">{env.displayName}</span>
-            <span className="whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
-              {CONNECTION_TYPE_LABELS[env.connectionType ?? 'DATAVERSE']}
-            </span>
-          </div>
-          <div className="truncate font-mono text-[11px] text-slate-500">{env.url}</div>
-        </>
-      ) : (
-        <div className="text-sm text-slate-400">Not selected</div>
-      )}
-    </div>
-  );
-}
-
-export function WorkspaceHeader() {
-  const { source, target, isLoading } = useWorkspace();
-  if (isLoading) return <div className="h-[58px]" />;
-  return (
-    <div className="flex items-center gap-3" aria-label="Migration workspace">
-      <EnvCard role="SOURCE" env={source} />
-      <ArrowRight className="h-5 w-5 flex-none text-slate-400" aria-label="migrates to" />
-      <EnvCard role="TARGET" env={target} />
-      <Link
-        to="/environments"
-        className="flex-none whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-      >
-        Change Environments
-      </Link>
     </div>
   );
 }

@@ -104,6 +104,13 @@ export function TeamPage() {
                     */}
                     {isAdmin && !m.isYou && !m.isLastAdmin ? (
                       <select
+                        /*
+                          Whose role this is. The table says so in the row above; a screen reader
+                          reads the control on its own, where "combo box, Administrator" names a
+                          value and not the person it belongs to -- on the one screen where picking
+                          the wrong row changes somebody else's access.
+                        */
+                        aria-label={`Role for ${m.displayName}`}
                         className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
                         value={m.role}
                         disabled={setRole.isPending}

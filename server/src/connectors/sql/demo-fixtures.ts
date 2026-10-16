@@ -44,8 +44,6 @@ export const DEMO_SQL_TARGET_ENVIRONMENT = {
   version: 'Microsoft SQL Server 2022 (RTM) — simulated',
 } as const;
 
-export const DEMO_SQL_TARGET_URL = `sqlserver://${DEMO_SQL_TARGET_ENVIRONMENT.host}:${DEMO_SQL_TARGET_ENVIRONMENT.port}/${DEMO_SQL_TARGET_ENVIRONMENT.database}`;
-
 export const DEMO_SQL_ENVIRONMENTS = [DEMO_SQL_ENVIRONMENT, DEMO_SQL_TARGET_ENVIRONMENT] as const;
 
 // ---------------------------------------------------------------------------

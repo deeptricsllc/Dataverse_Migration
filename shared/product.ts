@@ -17,9 +17,6 @@ export const VENDOR_NAME = 'DeepTrics';
 /** The sidebar's second line, and the shortest honest description of what it does. */
 export const PRODUCT_SHORT_NAME = 'Analysis & Migration';
 
-/** For a sentence that needs both, e.g. the footer and the terms. */
-export const PRODUCT_FULL_NAME = `${PRODUCT_NAME} · by ${VENDOR_NAME}`;
-
 /**
  * The application version.
  *

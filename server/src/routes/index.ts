@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { release } from '../connectors/release';
 import { z } from 'zod';
 import { explainFinding } from '../../../shared/validation-findings';
 import { AUDIT_CATEGORIES, SQL_CONNECTION_TYPES } from '../../../shared/domain';
@@ -25,13 +26,13 @@ import { verifyEvidencePackage } from '../services/evidence-verifier';
 import { accessRequestSchema } from '../services/access-request-service';
 import type { Services } from '../services/container';
 import { registerProjectRoutes } from './projects';
-import { transformationRulesSchema } from './schemas';
+import {
+  fieldNameSchema as fieldName,
+  tableNameSchema as tableName,
+  transformationRulesSchema,
+} from './schemas';
 
 const uuid = z.string().uuid();
-/** Dataverse logical name (`account`) or schema-qualified SQL table (`dbo.Customer`). */
-const tableName = z.string().regex(/^[A-Za-z0-9_.]{1,257}$/);
-/** A SQL column or Dataverse attribute name. */
-const fieldName = z.string().regex(/^[A-Za-z0-9_ #$@]{1,128}$/);
 const idParams = z.object({ id: uuid });
 
 /**
@@ -337,9 +338,13 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { refresh } = z.object({ refresh: z.enum(['true', 'false']).optional() }).parse(req.query);
     const env = await s.environments.getAccessible(req.ctx, id);
     const conn = await s.connections.connectorFor(env, req.ctx.userId, { requestId: req.id });
-    return s.metadata.getCatalog(env.id, conn, refresh === 'true').catch((err) => {
-      throw toApiError(err, 'Table discovery');
-    });
+    try {
+      return await s.metadata.getCatalog(env.id, conn, refresh === 'true').catch((err) => {
+        throw toApiError(err, 'Table discovery');
+      });
+    } finally {
+      await release(conn);
+    }
   });
 
   app.get('/api/environments/:id/tables/:table', async (req) => {
@@ -347,11 +352,15 @@ export async function registerRoutes(app: FastifyInstance, s: Services) {
     const { refresh } = z.object({ refresh: z.enum(['true', 'false']).optional() }).parse(req.query);
     const env = await s.environments.getAccessible(req.ctx, id);
     const conn = await s.connections.connectorFor(env, req.ctx.userId, { requestId: req.id });
-    const meta = await s.metadata.getTable(env.id, conn, table, refresh === 'true').catch((err) => {
-      throw toApiError(err, 'Metadata discovery');
-    });
-    if (!meta) throw new AppError(404, 'NOT_FOUND', 'Table not found');
-    return meta;
+    try {
+      const meta = await s.metadata.getTable(env.id, conn, table, refresh === 'true').catch((err) => {
+        throw toApiError(err, 'Metadata discovery');
+      });
+      if (!meta) throw new AppError(404, 'NOT_FOUND', 'Table not found');
+      return meta;
+    } finally {
+      await release(conn);
+    }
   });
 
   app.get('/api/environments/:id/tables/:table/profile', async (req) => {
