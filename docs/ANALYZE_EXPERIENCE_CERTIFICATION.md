@@ -4,8 +4,14 @@
 any demonstration that implies a live SharePoint, OneDrive, Azure SQL or Dataverse connection.** /
 
 The Analyze journey a first-time user walks completes end to end on deployed QA, and the report it
-produces is arithmetically true about the data it was given. Both pull requests are now merged to `main`,
-`main`'s own CI is green, and the merged build is what QA serves and what this certifies.
+produces is arithmetically true about the data it was given. `main`'s own CI is green, and the merged
+build is what QA serves and what this certifies.
+
+**Re-certified on 2026-10-16 against `main@21275f59dacf`.** The first version of this document named
+`main@6569192b50fd` and said that commit was what QA served. That was true when it was written and
+stopped being true at the next merge, which is the failure mode a provenance table exists to prevent --
+a certification that states a commit nobody is running is worse than one that states none. The run below
+is a fresh execution of both journeys against the live deployment, not an edit to the commit string.
 
 One limit remains, and it is not a defect in the journey: every connector except file import is
 simulated. A demonstration that imports a spreadsheet and analyses it is fully supported by the evidence
@@ -16,21 +22,22 @@ contradict it on screen.
 
 ## 1. What was certified, and where
 
-|                                      |                                                                                       |
-| ------------------------------------ | ------------------------------------------------------------------------------------- |
-| Deployment                           | `https://dataverse-migration-app-qa.up.railway.app` (Railway QA)                      |
-| Commit                               | `main@6569192b50fd` (`6569192b50fdd2c9bf07aa6fbc90282783bfceeb`) — the merge of PR #6 |
-| Railway deployment                   | upload of `main@6569192b50fd`; previous deployments `REMOVED`                         |
-| Earlier certified branch head        | `analyse-journey@1e4a8b62`, whose product tree `main` carries unchanged               |
-| Evidence run                         | both Analyze journeys, 2 passed, 45.2s                                                |
-| Console errors                       | 0                                                                                     |
-| Failed network requests (HTTP ≥ 400) | 0                                                                                     |
+|                                      |                                                                                                                           |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Deployment                           | `https://dataverse-migration-app-qa.up.railway.app` (Railway QA)                                                          |
+| Commit                               | `main@21275f59dacf` (`21275f59dacfb7ed3166e44fa88f475200e7769d`) — the merge of PR #13                                    |
+| Railway deployment                   | upload of `main@21275f59dacf` through `scripts/deploy.mjs`, which reads the commit from git rather than taking it by hand |
+| Served bundle                        | `assets/index-8HMUSNLs.js`, byte-identical to a local build of that commit                                                |
+| Evidence run                         | both Analyze journeys, 2 passed, 1.6m, against the deployment                                                             |
+| Screenshots                          | 21 at 1440×900 and 21 at 1920×1080, plus the exported findings CSV (17 findings)                                          |
+| Console errors                       | 0                                                                                                                         |
+| Failed network requests (HTTP ≥ 400) | 0                                                                                                                         |
 
 The deployed SHA was not taken on trust. The walkthrough reads `/api/settings` before it touches anything
 and fails if the commit the deployment reports is not a prefix of the candidate:
 
 ```
-[provenance] main@6569192b50fd
+[provenance] main@21275f59dacf
 ```
 
 This guard was added during this work (`95eafb4`). It already existed for the validation walkthrough; the
@@ -289,8 +296,9 @@ choose what to analyse, run it, read findings that are true about their data, se
 calculated, export the report, add a second source, and come back later to find it all still there — with
 no developer assistance and no console errors.
 
-**Partner demonstrations: yes, for the file-based journey.** Both pull requests are merged, `main`'s CI
-is green, and the merged build is what QA serves and what the evidence above was taken from. A
+**Partner demonstrations: yes, for the file-based journey.** `main`'s CI is green on
+`21275f59dacf`, and the build QA serves is the one the evidence above was taken from -- checked by the
+walkthrough itself, which reads `/api/settings` and fails if the deployment reports a different commit. A
 demonstration that imports a CSV, Excel or XML export and analyses it is supported end to end by this
 certification.
 
